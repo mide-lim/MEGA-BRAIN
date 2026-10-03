@@ -6,6 +6,7 @@ O backup MegaBrain é uma referência histórica. Seu conteúdo não comprova a 
 
 ## Documentação
 
+- [Piloto Paperclip e Codex](docs/PILOT.md)
 - [Referências históricas](docs/HISTORY.md)
 
 ## Validação local

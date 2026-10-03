@@ -15,3 +15,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, immutable commit
       - name: Check local documentation links
         run: python3 scripts/check_links.py
+      - name: Validate bounded task packets
+        run: python3 scripts/check_task_packets.py
+      - name: Test orchestration safety boundaries
+        run: python3 scripts/test_orchestration.py

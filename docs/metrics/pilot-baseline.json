@@ -1,0 +1,13 @@
+{
+  "task": "MEG-1",
+  "pull_request": "https://github.com/mide-lim/MEGA-BRAIN/pull/1",
+  "run_count": 1,
+  "elapsed_seconds": 135.1,
+  "billing_type": "subscription_included",
+  "input_tokens_accumulated": 301690,
+  "cached_input_tokens_included": 264192,
+  "uncached_input_tokens": 37498,
+  "output_tokens": 3210,
+  "quota_percent": null,
+  "interpretation": "Aggregated per-run counters, including repeated context. No reliable conversion to plan allowance percentage. One baseline task is insufficient to estimate capacity."
+}

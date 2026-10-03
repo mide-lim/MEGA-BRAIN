@@ -11,8 +11,8 @@ O operador deve publicar o baseline inicial e concluir os logins do ChatGPT e do
 - Um único agente, sem criação ou acionamento de outros agentes.
 - Acionamento manual pelo operador, com uma autorização por execução.
 - Concorrência máxima de 1 execução.
-- Até 2 chamadas ao modelo em qualquer janela de 24 horas, com intervalo mínimo de 1 hora entre chamadas.
-- Sem retry automático de modelo. Uma falha não autoriza uma nova chamada; qualquer nova execução depende de autorização e dos limites acima.
+- Até 2 execuções do Codex em qualquer janela de 24 horas, com intervalo mínimo de 1 hora entre execuções. Cada execução pode incluir várias requisições ao modelo; a cota da assinatura continua sendo o limite efetivo.
+- Sem autorização automática para uma nova execução do modelo. Uma falha consome a autorização de uso único; qualquer nova execução depende de autorização e dos limites acima.
 
 ## Validação com ferramentas convencionais
 

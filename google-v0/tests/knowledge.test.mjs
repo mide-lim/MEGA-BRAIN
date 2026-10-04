@@ -19,3 +19,5 @@ test('out-of-range evidence and oversized structures fail safely',()=>{
  assert.throws(()=>reviewKnowledge({...raw,context:'invented'},record));
  assert.throws(()=>reviewKnowledge({...raw,keywords:Array(21).fill(raw.keywords[0])},record));
 });
+
+ test('caption supplement is searchable without changing original model fields',async()=>{const {combinedKnowledge,reviewIdentity}=await import('../lib/knowledge.mjs');const v={id:'example',analysis_key:'results/instagram/example/run-123/analysis.json',analysis_generation:'7',analysis:{title:'Receita',knowledge:{context:'recipe',fields:[],keywords:[],missing_information:[]}},knowledge_supplement:{fields:[{name:'Queijo',value:'200 g Emmental',kind:'ingredient',evidence:[{source:'caption',excerpt:'200 g Emmental cheese'}]}],keywords:[]}};assert.equal(combinedKnowledge(v).fields.length,1);assert.equal(v.analysis.knowledge.fields.length,0);assert.equal(searchKnowledge(v,'Emmental'),true);assert.equal(reviewIdentity(v),'run-123@7');});

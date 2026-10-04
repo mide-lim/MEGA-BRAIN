@@ -27,9 +27,12 @@ export function reviewKnowledge(value,record){
  return {knowledge:{context:value.context,keywords,fields,missing_information:[...value.missing_information]},omitted};
 }
 export function searchKnowledge(video,query){
- const k=video.analysis?.knowledge;if(!k)return false;
+ const k=combinedKnowledge(video);if(!k)return false;
  const key=s=>String(s).normalize('NFD').replace(/\p{M}/gu,'').toLocaleLowerCase('pt-BR');
  const terms=key(query).trim().split(/\s+/).filter(Boolean);
  const haystack=key([video.analysis.title,contextLabels[k.context],...k.keywords.map(v=>v.term),...k.fields.flatMap(f=>[f.name,f.value,fieldLabels[f.kind]])].join(' '));
  return terms.every(t=>haystack.includes(t));
 }
+
+export function reviewIdentity(video){const match=video.analysis_key?.match(/results\/instagram\/[A-Za-z0-9_-]+\/([^/]+)\/analysis\.json$/);return match?match[1]+(video.analysis_generation?'@'+video.analysis_generation:''):'Sem revisão registrada';}
+export function combinedKnowledge(video){const k=video.analysis?.knowledge;if(!k)return null;const supplement=video.knowledge_supplement;return {...k,fields:[...k.fields,...(supplement?.fields??[])],keywords:[...k.keywords,...(supplement?.keywords??[])],missing_information:[...k.missing_information]};}

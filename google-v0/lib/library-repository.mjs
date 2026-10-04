@@ -8,6 +8,7 @@ export class LibraryRepository{
     return {videos:result.records.map(({data})=>({id:data.id,source_url:data.source_url,status:data.status,
       duration_seconds:data.duration_seconds,has_audio:data.has_audio,audio_status:data.audio_status,
       media_verified:data.media_verified,transcript:data.transcript??'',transcript_status:data.transcript_status??null,analysis:data.analysis??null,
+      source_caption:data.source_caption??null,knowledge_supplement:data.knowledge_supplement??null,analysis_key:data.analysis_key??null,analysis_generation:data.analysis_generation??null,
       analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at})),next_cursor:result.nextPageToken};
   }
   async video(id){if(!idPattern.test(id??''))throw new Error('Vídeo inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}

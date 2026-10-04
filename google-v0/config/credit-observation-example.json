@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "google_console_credit",
+  "billing_account": null,
+  "currency": "BRL",
+  "credit_id": null,
+  "observed_at": null,
+  "expires_at": "2026-11-23T00:00:00Z",
+  "remaining_cents": null,
+  "pending_account_cents": null
+}

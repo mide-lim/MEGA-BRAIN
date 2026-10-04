@@ -1,0 +1,30 @@
+name: Google v0 integration
+on:
+  push:
+    paths: ['google-v0/**', '.github/workflows/google-v0.yml']
+  pull_request:
+    paths: ['google-v0/**', '.github/workflows/google-v0.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: google-v0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - run: node --test tests/*.test.mjs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.19.0'
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: google-v0/web-google
+      - run: pnpm run build
+        working-directory: google-v0/web-google
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+      - run: node scripts/smoke-web.mjs

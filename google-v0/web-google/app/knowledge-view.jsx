@@ -1,0 +1,11 @@
+'use client';
+import {contextLabels,fieldLabels} from '../../lib/knowledge.mjs';
+export function KnowledgeDetails({knowledge}){
+ if(!knowledge)return null;
+ return <section className="knowledge-details"><span className="eyebrow">CONHECIMENTO EXTRAÍDO</span><h3>{contextLabels[knowledge.context]??'Conhecimento'}</h3><div className="keyword-tags">{knowledge.keywords.map((k,i)=><span key={i}>{k.term}</span>)}</div>{knowledge.fields.map((f,i)=><section className="knowledge-field" key={i}><small>{fieldLabels[f.kind]??'Informação'}</small><h4>{f.name}</h4><p>{f.value}</p>{f.evidence.map((e,j)=><blockquote key={j}><small>{e.source==='transcript'?'Transcrição':'Vídeo'} · {e.start_seconds}s–{e.end_seconds}s</small><br/>{e.excerpt}</blockquote>)}</section>)}{!!knowledge.missing_information.length&&<><h4>O que a fonte não informa</h4>{knowledge.missing_information.map((s,i)=><p key={i}>{s}</p>)}</>}</section>;
+}
+export function KnowledgeBook({videos,onOpen}){
+ const groups=Object.entries(contextLabels).map(([context,label])=>({label,videos:videos.filter(v=>v.analysis?.knowledge?.context===context)})).filter(g=>g.videos.length);
+ if(!groups.length)return <div className="empty"><h3>Seu livro começa com a nova análise.</h3><p>As análises anteriores continuam na biblioteca. O novo formato reunirá palavras-chave, informações específicas e evidências com a fonte de cada vídeo.</p></div>;
+ return <div className="knowledge-book">{groups.map(g=><section key={g.label}><h3>{g.label} <small>{g.videos.length} fontes</small></h3><div className="grid">{g.videos.map(v=><article className="knowledge-card" key={v.id}><h4>{v.analysis.title}</h4><div className="keyword-tags">{v.analysis.knowledge.keywords.map((k,i)=><span key={i}>{k.term}</span>)}</div><dl>{v.analysis.knowledge.fields.slice(0,5).map((f,i)=><div key={i}><dt>{f.name}</dt><dd>{f.value}</dd></div>)}</dl><small>{v.analysis.knowledge.fields.length} informações com evidência</small><div className="knowledge-actions"><button className="secondary" onClick={()=>onOpen(v)}>Ver conhecimento e vídeo</button>{/^https:\/\/(www\.)?instagram\.com\//.test(v.source_url??'')&&<a href={v.source_url} target="_blank" rel="noreferrer">Fonte no Instagram ↗</a>}</div></article>)}</div></section>)}</div>;
+}

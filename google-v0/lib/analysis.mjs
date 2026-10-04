@@ -1,7 +1,9 @@
+import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
-  type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality'],
+  type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
   properties:{
+    knowledge:knowledgeSchema,
     title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',items:{type:'STRING'}},
     useful_information:{type:'ARRAY',items:{type:'OBJECT',required:['claim','application','classification','evidence'],properties:{
       claim:{type:'STRING'},application:{type:'STRING'},classification:{type:'STRING',enum:['author_claim','visual_observation','interpretation']},
@@ -28,7 +30,7 @@ export function buildAnalysisRequest({record,bucket,preset,model}) {
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`}},
       {text:JSON.stringify({task:preset.user_instruction,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim()})}
     ]}],
-    generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:4096,responseMimeType:'application/json',responseSchema:reportSchema}
+    generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:preset.version==='megabrain-video-text-v3'?8192:4096,responseMimeType:'application/json',responseSchema:reportSchema}
   };
 }
 
@@ -65,6 +67,15 @@ export function reviewAnalysis(report,record) {
     catch{rejected.push(index);}
   }
   const reviewed={...report,useful_information:accepted,limitations:[...report.limitations]};
+  if(!normalize(record.transcript??'')){
+    reviewed.transcript_quality={assessment:'O STT não retornou texto reconhecido; não há transcrição para avaliar. Isso não comprova ausência de fala no vídeo.',uncertain_segments:[]};
+    const limitation='Transcrição vazia: resumo e categorias dependem da análise do vídeo; não há evidência textual do STT.';
+    if(!reviewed.limitations.includes(limitation))reviewed.limitations.push(limitation);
+  }
+  if(report.knowledge!==undefined){
+    const result=reviewKnowledge(report.knowledge,record);reviewed.knowledge=result.knowledge;
+    if(result.omitted)reviewed.limitations.push(`${result.omitted} campo(s) ou palavra(s)-chave omitido(s) por evidência inválida. O resultado original foi preservado.`);
+  }
   if(rejected.length)reviewed.limitations.push(`${rejected.length} informação(ões) útil(eis) omitida(s): evidência inválida ou citação não literal na transcrição. A resposta original foi preservada para revisão.`);
   return validateAnalysis(reviewed,record);
 }

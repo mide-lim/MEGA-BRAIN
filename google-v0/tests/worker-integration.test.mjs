@@ -19,6 +19,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   seed('videos/'+videoId,{id:videoId,source_url:'https://www.instagram.com/p/'+videoId+'/',media_verified:false,transcript:''});
   const report={title:'Tecnologia',summary:'Resumo com evidências',categories:['Tecnologia'],useful_information:[{claim:'Ideia do autor',application:'Estudar',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:1,excerpt:'Texto reconhecido'}]}],visual_observations:[],limitations:['Exemplo simulado'],transcript_quality:{assessment:'Clara',uncertain_segments:[]}};
   if(profile.noSpeech){report.useful_information[0].evidence[0].source='video';report.useful_information[0].evidence[0].excerpt='Texto na tela';}
+  report.knowledge={context:'technology',keywords:[{term:'Tecnologia',evidence:structuredClone(report.useful_information[0].evidence)}],fields:[{kind:'concept',name:'Conceito apresentado',value:'Texto de exemplo',evidence:structuredClone(report.useful_information[0].evidence)}],missing_information:[]};
   const api=new GoogleREST({project,buckets:[bucket],tokenProvider:async()=>'offline-test-token',fetchImpl:async(url,options)=>{
     const u=new URL(url);calls.push({url,method:options.method});
     if(u.hostname==='storage.googleapis.com'){
@@ -68,6 +69,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   assert.equal((await flow.run({videoId,stage:'analysis'})).status,'completed');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
   assert.equal(objects.size,4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
+  assert.equal((await store.get('videos/'+videoId)).data.analysis.knowledge.fields.length,1);
   assert.equal((await store.get('settings/financial')).data.spent_cents,30);
   assert.ok(calls.every(c=>!c.url.includes('megabrain-stt')&&!c.url.includes('cloudflare')));
   config.enabled=false;await assert.rejects(operations.analysis({video:{id:videoId},executionId:'fake'}),/desligadas/);

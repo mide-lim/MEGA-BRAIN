@@ -25,6 +25,18 @@ test('review omits unsupported claims without rewriting quotes or discarding val
 test('unverified media cannot start inference',()=>{
   assert.throws(()=>buildAnalysisRequest({record:{...record,media_verified:false},bucket:'megabrain-v0-media',preset}));
 });
+
+test('empty STT overrides invented quality without changing the original response',()=>{
+ const original=report();original.transcript_quality.assessment='Transcrição clara em inglês.';
+ const copy=structuredClone(original),empty={...record,transcript:'',transcript_status:'no_speech_recognized'};
+ const reviewed=reviewAnalysis(original,empty);
+ assert.equal(reviewed.useful_information.length,0);
+ assert.match(reviewed.transcript_quality.assessment,/não há transcrição para avaliar/);
+ assert.match(reviewed.transcript_quality.assessment,/não comprova ausência de fala/);
+ assert.ok(reviewed.limitations.some(v=>v.startsWith('Transcrição vazia:')));
+ assert.deepEqual(original,copy);
+ assert.deepEqual(reviewAnalysis(reviewed,empty),reviewed);
+});
 test('invented transcript citations and out-of-range timestamps are rejected',()=>{
   const r=report();assert.equal(validateAnalysis(r,record),r);
   r.useful_information[0].evidence[0].excerpt='Uma afirmação inventada';assert.throws(()=>validateAnalysis(r,record));

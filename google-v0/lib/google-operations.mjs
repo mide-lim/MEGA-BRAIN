@@ -79,6 +79,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       if(candidate?.finishReason!=='STOP')throw new Error('Resposta Gemini incompleta ou bloqueada.');
       const text=(candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join('');
       const report=reviewAnalysis(JSON.parse(text),video);
+      if(preset.version==='megabrain-video-text-v3'&&!report.knowledge)throw new Error('Conhecimento estruturado ausente na nova análise.');
       return result(video.id,'analysis',{analysis:report,analysis_key:key,analysis_generation:raw.generation},cost);
     }
   };

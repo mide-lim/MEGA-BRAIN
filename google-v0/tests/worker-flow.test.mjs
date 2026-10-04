@@ -50,3 +50,13 @@ test('empty recognition requires a persisted own transcription artifact before v
  row=await store.get('videos/Reel_1');await store.patch('videos/Reel_1',{transcript_key:`results/instagram/Reel_1/${executionId('Reel_1','transcription')}/transcription.json`,transcript_generation:'123'},{updateTime:row.updateTime});
  assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'completed');assert.equal(calls,1);
 });
+
+test('versioned reanalysis archives the previous report and executes only once',async()=>{
+ let calls=0;const operations={analysis:async()=>{calls++;return {video_id:'Reel_1',stage:'analysis',actual_cents:4,changes:{analysis:{title:'Nova análise'}}};}};
+ const {store}=fixture(operations);const row=await store.get('videos/Reel_1');await store.patch('videos/Reel_1',{analysis:{title:'Original'},analysis_key:'results/original.json',analysis_generation:'12'},{updateTime:row.updateTime});
+ const flow=new WorkerFlow({store,ledger:new FinancialLedger(store),operations,quotes:{analysis:10},analysisRevision:'megabrain-video-text-v3'});
+ const result=await flow.run({videoId:'Reel_1',stage:'analysis'});assert.equal(result.status,'completed');
+ assert.equal((await store.get('analyses/'+result.execution_id+'_previous')).data.analysis.title,'Original');
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).duplicate,true);assert.equal(calls,1);
+ assert.notEqual(result.execution_id,executionId('Reel_1','analysis'));
+});

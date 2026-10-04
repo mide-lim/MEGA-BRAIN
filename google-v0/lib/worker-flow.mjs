@@ -3,14 +3,19 @@ import {createHash} from 'node:crypto';
 const stages=['upload','transcription','analysis'];
 const validId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(id);
 export const completedEmptyTranscript=(video,videoId)=>video?.transcript_status==='no_speech_recognized'&&video.transcript===''&&video.transcript_key===`results/instagram/${videoId}/${executionId(videoId,'transcription')}/transcription.json`&&/^\d+$/.test(video.transcript_generation??'');
-export const executionId=(videoId,stage)=>'job_'+createHash('sha256').update(`${videoId}:${stage}:v0`).digest('hex');
+export const executionId=(videoId,stage,revision=null)=>{
+  if(revision!==null&&(stage!=='analysis'||revision!=='megabrain-video-text-v3'))throw new Error('Revisão de execução inválida.');
+  return 'job_'+createHash('sha256').update(`${videoId}:${stage}:${revision??'v0'}`).digest('hex');
+};
 const ownsResult=(result,id,stage)=>result?.video_id===id&&result?.stage===stage;
 const failureDiagnostic=error=>({operation_step:['read_media','extract_audio','persist_audio','submit_stt'].includes(error?.operation_step)?error.operation_step:'adapter_or_reservation',http_status:Number.isInteger(error?.status)?error.status:null,tool_code:Number.isInteger(error?.code)||typeof error?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(error.code)?error.code:null});
 
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.
 export class WorkerFlow {
-  constructor({store,ledger,operations,quotes,eligibleVideos=null,clock=()=>Date.now()}){
+  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,clock=()=>Date.now()}){
+    if(analysisRevision!==null&&analysisRevision!=='megabrain-video-text-v3')throw new Error('Revisão de análise inválida.');
+    this.analysisRevision=analysisRevision;
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
     Object.assign(this,{store,ledger,operations,quotes,clock});
     if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>20||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
@@ -26,7 +31,8 @@ export class WorkerFlow {
     if(stage!=='upload'&&video.data.media_verified!==true)return {status:'blocked',reason:'media_not_verified'};
     if(stage==='transcription'&&video.data.audio_status!=='present')return {status:'blocked',reason:'audio_not_verified'};
     if(stage==='analysis'&&(typeof video.data.transcript!=='string'||!video.data.transcript.trim())&&!completedEmptyTranscript(video.data,videoId))return {status:'blocked',reason:'transcript_missing'};
-    const id=executionId(videoId,stage),path=`jobs/${id}`;
+    const revision=stage==='analysis'?this.analysisRevision:null;
+    const id=executionId(videoId,stage,revision),path=`jobs/${id}`;
     const existing=await this.store.get(path);
     if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
     const maximumCents=this.quotes[stage];
@@ -39,7 +45,11 @@ export class WorkerFlow {
     let started=false;
     const save=async changes=>{const current=await this.store.get(path);await this.store.patch(path,changes,{updateTime:current.updateTime});};
     try{
-      await this.ledger.reserve({executionId:id,videoId,stage,maximumCents});
+      if(revision&&video.data.analysis){
+        const archive=await this.store.create(`analyses/${id}_previous`,{video_id:videoId,analysis:video.data.analysis,analysis_key:video.data.analysis_key??null,analysis_generation:video.data.analysis_generation??null,archived_at:new Date(this.clock()).toISOString()});
+        if(!archive.created)throw new Error('Histórico da análise já existe; conferir antes de executar.');
+      }
+      await this.ledger.reserve({executionId:id,videoId,stage,maximumCents,...(revision?{analysisRevision:revision}:{})});
       await save({status:'reserved'});
       await this.ledger.transition(id,'start');started=true;
       await save({status:'started'});

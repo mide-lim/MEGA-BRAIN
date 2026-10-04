@@ -55,6 +55,7 @@ export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImpo
         if(!state)return reply({configured:false,paused:true});
         const pending=Object.values(state.jobs??{});
         return reply({configured:true,paused:state.paused!==false,coverage_verified:state.coverage_verified===true,
+          billing_snapshot:state.billing_snapshot?Object.fromEntries(["project_usage_cents","account_usage_cents","account_net_cents","credit_remaining_cents","period_label","observed_label"].map(k=>[k,state.billing_snapshot[k]])):null,
           pilot_envelope_cents:state.pilot_envelope_cents,ongoing_commitment_cents:state.ongoing_commitment_cents,
           allocation_cents:state.allocation_cents,reserve_cents:state.reserve_cents,spent_cents:state.spent_cents,reserved_cents:state.reserved_cents,
           remaining_credit_cents:state.remaining_credit_cents,balance_observed_at:state.balance_observed_at,credit_expires_at:state.credit_expires_at,

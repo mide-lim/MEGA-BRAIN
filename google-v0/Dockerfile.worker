@@ -1,0 +1,15 @@
+FROM node:24.19.0-bookworm-slim@sha256:e5a8dee7bc1e6a215d224a7ef8206f7e77271bc3cabd5febf2beafac0674f174
+ENV NODE_ENV=production PORT=8080 PATH=/opt/worker-tools/bin:$PATH
+RUN apt-get update -qq && apt-get install -y --no-install-recommends ca-certificates ffmpeg=7:5.1.9-0+deb12u1 python3=3.11.2-1+b1 python3-venv=3.11.2-1+b1 && rm -rf /var/lib/apt/lists/*
+COPY worker-requirements.txt /tmp/worker-requirements.txt
+RUN python3 -m venv /opt/worker-tools && /opt/worker-tools/bin/pip install --no-cache-dir --no-deps --require-hashes -r /tmp/worker-requirements.txt && rm /tmp/worker-requirements.txt
+WORKDIR /app
+COPY --chown=node:node lib/analysis.mjs lib/controls.mjs lib/financial-ledger.mjs lib/firestore.mjs lib/google-operations.mjs lib/google-rest.mjs lib/links.mjs lib/media-inspector.mjs lib/media-tools.mjs lib/service-identity.mjs lib/storage.mjs lib/worker-auth.mjs lib/worker-flow.mjs lib/worker-http.mjs lib/worker-queue.mjs lib/worker-reservation-gate.mjs lib/worker-runtime.mjs /app/lib/
+COPY --chown=node:node scripts/serve-worker.mjs /app/scripts/serve-worker.mjs
+COPY --chown=node:node lib/ongoing-costs.mjs /app/lib/ongoing-costs.mjs
+COPY --chown=node:node lib/storage-capacity.mjs /app/lib/storage-capacity.mjs
+COPY --chown=node:node scripts/smoke-worker.mjs /app/scripts/smoke-worker.mjs
+COPY --chown=node:node config/analysis-preset.json /app/config/analysis-preset.json
+USER node
+EXPOSE 8080
+CMD ["node","scripts/serve-worker.mjs"]

@@ -1,0 +1,15 @@
+{
+  "project": "megabrain-v0-1017370021431",
+  "enabled": false,
+  "uploads_enabled": false,
+  "downloads_enabled": false,
+  "dispatch_enabled": false,
+  "pilot_video_ids": [],
+  "worker_origin": null,
+  "speech_location": "global",
+  "speech_model": null,
+  "language_codes": ["pt-BR"],
+  "gemini_model": null,
+  "quotes": {"upload": null, "transcription": null, "analysis": null},
+  "cost_accounting": "conservative_estimate_not_invoice"
+}

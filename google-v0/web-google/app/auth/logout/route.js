@@ -1,0 +1,2 @@
+import {NextResponse}from 'next/server';import {sameOrigin,settings}from '../../../lib/server.mjs';import {sessionCookie}from '../../../../lib/web-session.mjs';
+export async function POST(request){try{if(!sameOrigin(request))return new Response('Forbidden',{status:403});const r=NextResponse.redirect(settings().origin,{status:303});r.cookies.delete(sessionCookie);return r;}catch{return new Response('Unavailable',{status:503});}}

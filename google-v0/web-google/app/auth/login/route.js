@@ -1,0 +1,5 @@
+import {NextResponse}from 'next/server';import {randomBytes,createHash}from 'node:crypto';import {settings}from '../../../lib/server.mjs';import {sealSession,oauthCookie}from '../../../../lib/web-session.mjs';
+export async function GET(){try{const s=settings(),state=randomBytes(32).toString('base64url'),verifier=randomBytes(32).toString('base64url');
+  const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');url.search=new URLSearchParams({client_id:s.google_client_id,redirect_uri:s.origin+'/auth/callback',response_type:'code',scope:'openid email profile',state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256',prompt:'select_account'}).toString();
+  const response=NextResponse.redirect(url);response.cookies.set(oauthCookie,sealSession({state,verifier},s.session_secret,{origin:s.origin,kind:'oauth',ttl:600000}),{httpOnly:true,secure:true,sameSite:'lax',path:'/',maxAge:600});return response;
+}catch{return NextResponse.json({error:'Login Google da v0 ainda não configurado.'},{status:503});}}

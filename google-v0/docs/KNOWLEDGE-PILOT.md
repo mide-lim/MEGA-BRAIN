@@ -29,3 +29,9 @@ Proposta: até R$50 adicionais exclusivamente dos créditos Google, total preven
 ## Autorização recebida
 
 O proprietário autorizou as análises após a proposta de R$50 adicionais em créditos. Total preventivo R$200, restrito à revisão v3 dos 19 vídeos, concorrência 1. A ativação deve respeitar saldo recente e vencimento, parar em resultado incerto e preservar o prazo original de manutenção.
+
+## Resultado executado
+
+A amostra concluiu 19 revisões v3, com 110 campos e 81 palavras-chave extraídos. Contagens representam ocorrências por fonte. Uma extração permanece sinalizada para revisão por evidência textual incompatível com STT vazio. A busca por ingrediente e a abertura de detalhes/fonte foram conferidas no site autenticado.
+
+Fila e novos trabalhos pagos voltaram a ficar pausados, sem reserva de análise aberta. Mídias, STT e versões anteriores preservados. Backup incremental de resultados e documentos teve cópia de restauração conferida por hashes fora do Google. A nova análise é separada da expansão para 100 vídeos, que continua sem autorização.

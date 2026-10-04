@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+import os, sys, fcntl, json, time, subprocess, pathlib, hashlib
+args=sys.argv[1:]
+real='/usr/local/bin/codex'
+if args in [['--version'], ['-V'], ['--help'], ['login','status']]:
+    os.execv(real,[real]+args)
+
+def deny(message):
+    print('Pilot: '+message,file=sys.stderr)
+    sys.exit(78)
+
+if not args or args[0]!='exec':
+    deny('only one-task CLI exec is permitted')
+if any(arg in ['--dangerously-bypass-approvals-and-sandbox','--yolo'] or 'danger-full-access' in arg for arg in args):
+    deny('sandbox bypass is forbidden')
+root=pathlib.Path('/paperclip/pilot')
+repo=pathlib.Path('/workspaces/MEGA-BRAIN').resolve()
+with open(root/'launch.lock','a') as lock:
+    try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError: deny('global concurrency limit reached')
+    if os.environ.get('OPENAI_API_KEY'): deny('paid API credentials forbidden')
+    auth=pathlib.Path(os.environ.get('CODEX_HOME','/paperclip/.codex'))/'auth.json'
+    try: payload=json.loads(auth.read_text())
+    except Exception: deny('ChatGPT authentication required')
+    if payload.get('OPENAI_API_KEY') or not payload.get('tokens'):
+        deny('subscription login required')
+    now=time.time()
+    statefile=root/'launches.json'
+    try: state=json.loads(statefile.read_text()) if statefile.exists() else []
+    except Exception: deny('usage ledger unreadable')
+    recent=[t for t in state if now-t<86400]
+    if len(recent)>=2 or (recent and now-max(recent)<3600):
+        deny('two executions per rolling 24h, minimum one hour apart')
+    permit=root/'allow-once'
+    try: permission=json.loads(permit.read_text())
+    except Exception: deny('a valid one-shot Task Packet authorization is required')
+    if permission.get('role') not in ['worker','fix']: deny('independent reviewer runtime is not provisioned')
+    role=permission['role']
+    if permission.get('issueId')!=os.environ.get('PAPERCLIP_TASK_ID'):
+        deny('authorization belongs to another task')
+    if not isinstance(permission.get('expiresAt'),(int,float)) or now>=permission['expiresAt']:
+        deny('authorization expired')
+    packetfile=pathlib.Path(permission.get('packetPath','')).resolve()
+    if not packetfile.is_relative_to(repo/'tasks') or packetfile.suffix!='.json':
+        deny('packet must live in the current repository tasks directory')
+    try: raw=packetfile.read_bytes(); packet=json.loads(raw)
+    except Exception: deny('packet unreadable')
+    if hashlib.sha256(raw).hexdigest()!=permission.get('packetSha256'):
+        deny('packet changed after authorization')
+    if packet.get('paperclip_issue_id')!=permission['issueId']:
+        deny('packet task identity mismatch')
+    result=subprocess.run(['python3','/usr/local/bin/packet-preflight.py','--root',str(repo),'--packet',str(packetfile)],capture_output=True,text=True)
+    if result.returncode: deny('Task Packet preflight rejected the execution')
+    ledgerfile=root/'packet-launches.json'
+    try: ledger=json.loads(ledgerfile.read_text()) if ledgerfile.exists() else []
+    except Exception: deny('task execution ledger unreadable')
+    count=sum(1 for item in ledger if item.get('issueId')==permission['issueId'] and item.get('role')==role)
+    if count>=packet['execution_budget'][role+'_runs']:
+        deny('task execution budget exhausted')
+    if role=='fix' and packet['review']['status']!='changes_requested':
+        deny('fix requires a recorded request for changes')
+    permit.unlink()
+    statefile.write_text(json.dumps(recent+[now]))
+    ledger.append({'issueId':permission['issueId'],'role':role,'startedAt':now,'packetSha256':permission['packetSha256']})
+    ledgerfile.write_text(json.dumps(ledger))
+    child_env=dict(os.environ)
+    for name in ['DATABASE_URL','BETTER_AUTH_SECRET','POSTGRES_PASSWORD','PAPERCLIP_AGENT_JWT_SECRET']:
+        child_env.pop(name,None)
+    child_env['PAPERCLIP_TASK_PACKET_PATH']=str(packetfile)
+    try:
+        proc=subprocess.run([real]+args,env=child_env,timeout=packet['execution_budget']['timeout_minutes']*60)
+    except subprocess.TimeoutExpired:
+        print('Pilot: packet timeout reached',file=sys.stderr)
+        sys.exit(124)
+    sys.exit(proc.returncode)

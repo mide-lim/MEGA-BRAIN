@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "id": "MEG-2",
+  "paperclip_issue_id": "205f3bc2-683f-43d9-9780-ad7e1b21ceb4",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "e10ee0f138d5fe5b010de9ec9685afc70d99299e",
+  "objective": "Entregar regras operacionais, Task Packet verificável e revisão por risco sem novas execuções do Codex na VPS.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "AGENTS.md enxuto e links válidos",
+    "Packet válido e auditoria do diff dentro do escopo",
+    "Documentar risco, independência, limites globais e baseline",
+    "CI aprovado no commit final; revisão humana independente pendente antes de merge"
+  ],
+  "allowed_paths": [
+    "AGENTS.md",
+    "README.md",
+    "docs/AGENT_WORKFLOW.md",
+    "docs/TASK_PACKETS.md",
+    "docs/REVIEW_POLICY.md",
+    "docs/templates/",
+    "docs/adr/",
+    "docs/metrics/",
+    "tasks/MEG-2.json",
+    "scripts/check_task_packets.py",
+    ".github/workflows/docs.yml",
+    "ops/paperclip/",
+    "scripts/test_orchestration.py"
+  ],
+  "context": [
+    {
+      "path": "docs/PILOT.md",
+      "reason": "Preservar limites já validados",
+      "sections": [
+        "Limites de execução"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "README.md",
+      "reason": "Atualizar índice de documentação",
+      "sections": [
+        "Documentação"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-2.json --diff-base e10ee0f138d5fe5b010de9ec9685afc70d99299e --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "low"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Controles de fluxo exigem revisão independente; implementação convencional, sem nova execução de modelo."
+  }
+}

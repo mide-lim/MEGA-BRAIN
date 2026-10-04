@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "MEG-N",
+  "paperclip_issue_id": "<UUID da tarefa Paperclip>",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "<SHA completo de partida>",
+  "objective": "<Uma entrega delimitada>",
+  "risk": "low",
+  "acceptance_criteria": [
+    "<Critério verificável>"
+  ],
+  "allowed_paths": [
+    "<arquivo ou diretório relativo/>"
+  ],
+  "context": [
+    {
+      "path": "<arquivo relativo>",
+      "reason": "<Motivo>",
+      "sections": [
+        "<Seção ou intervalo de linhas>"
+      ],
+      "max_chars": 3000
+    }
+  ],
+  "validation_commands": [
+    "<Comando convencional>"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "low"
+  },
+  "review": {
+    "mode": "human",
+    "status": "pending",
+    "reason": "<Classificação de risco>"
+  }
+}

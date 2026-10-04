@@ -2,7 +2,7 @@ import {readFileSync}from 'node:fs';import {isAbsolute}from 'node:path';import {
 import {validateWebConfig}from '../../lib/web-config.mjs';import {openSession,sessionCookie}from '../../lib/web-session.mjs';
 import {serviceIdentity}from '../../lib/service-identity.mjs';import {GoogleREST}from '../../lib/google-rest.mjs';
 import {Firestore}from '../../lib/firestore.mjs';import {LibraryRepository}from '../../lib/library-repository.mjs';import {libraryAPI}from '../../lib/library-api.mjs';
-import {FinancialLedger}from '../../lib/financial-ledger.mjs';import {SignedMedia}from '../../lib/signed-media.mjs';import {mediaAPI}from '../../lib/media-api.mjs';
+import {boundedMedia}from '../../lib/bounded-media.mjs';
 export function settings(){
   const path=process.env.MEGABRAIN_V0_CONFIG;
   if(!path||!isAbsolute(path)||path.includes('/run/megabrain/')||path.includes('/opt/megabrain-pilot/'))throw new Error('Configuração própria da v0 ausente.');
@@ -16,8 +16,8 @@ export function routes(){
   if(!backend){const s=settings(),tokenProvider=serviceIdentity({project:s.project_id}),api=new GoogleREST({project:s.project_id,buckets:[s.media_bucket],tokenProvider});
     const store=new Firestore(api),repository=new LibraryRepository(store);
     backend=libraryAPI({repository,ledgerStore:store,authorize:authenticated,sameOrigin,linkImportEnabled:s.link_import_enabled===true});
-    mediaHandler=mediaAPI({repository,signer:new SignedMedia({project:s.project_id,bucket:s.media_bucket,tokenProvider}),ledger:new FinancialLedger(store),authorize:authenticated,
-      enabled:s.media_access_enabled===true,maximumCents:s.media_transfer_reservation_cents});}
+    mediaHandler=boundedMedia({repository,store,api,authorize:authenticated,enabled:s.media_access_enabled===true});}
   return backend;
 }
-export function mediaRoute(){routes();return mediaHandler;}
+export function mediaRoute(){routes();return mediaHandler.metadata;}
+export function mediaStreamRoute(){routes();return mediaHandler.stream;}

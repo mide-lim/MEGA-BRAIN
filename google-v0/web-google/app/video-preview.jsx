@@ -10,7 +10,7 @@ export default function VideoPreview({id,controls=false}){
   pending.current=true;setError('');try{
    const response=await fetch('/api/video/'+encodeURIComponent(id),{cache:'no-store'});const data=await response.json();
    if(!response.ok)throw new Error(data.error||'Vídeo indisponível.');
-   const url=new URL(data.url);if(url.protocol!=='https:'||url.hostname!=='storage.googleapis.com'||Date.parse(data.expires_at)<=Date.now())throw new Error('Autorização de vídeo inválida.');
+   if(data.url!=='/api/media/'+encodeURIComponent(id)||!Number.isFinite(Date.parse(data.expires_at))||Date.parse(data.expires_at)<=Date.now())throw new Error('Autorização de vídeo inválida.');
    cache.set(id,data);setSource(data.url);
   }catch(e){setError(e.message);}finally{pending.current=false;}
  }

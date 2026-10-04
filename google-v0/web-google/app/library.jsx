@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useState}from 'react';
 import VideoPreview from './video-preview.jsx';
+import {categoryList,categoryMatches}from '../../lib/category-display.mjs';
 const money=value=>Number.isFinite(value)?(value/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}):'Indisponível';
 export default function Library(){
  const [videos,setVideos]=useState([]),[cursor,setCursor]=useState(null),[controls,setControls]=useState(null),[financial,setFinancial]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[view,setView]=useState('Biblioteca'),[category,setCategory]=useState('Todos'),[selected,setSelected]=useState(null),[links,setLinks]=useState(''),[message,setMessage]=useState('');
@@ -15,8 +16,8 @@ export default function Library(){
  useEffect(()=>{load();},[]);
  async function change(changes){setBusy(true);setError('');try{const r=await json('/api/controls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',...changes})});setControls(r.automation);}catch(e){setError(e.message);}finally{setBusy(false);}}
  async function register(event){event.preventDefault();setBusy(true);setError('');setMessage('');try{const r=await json('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({links})});setLinks('');setMessage(`${r.created} novos links cadastrados; ${r.already_present} já estavam na biblioteca. Nenhum processamento foi iniciado pelo cadastro.`);await load();}catch(e){setError(e.message);}finally{setBusy(false);}}
- const categories=[...new Set(videos.flatMap(v=>v.analysis?.categories??[]))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
- const filtered=videos.filter(v=>(view!=='Precisa de atenção'||v.status==='needs_attention')&&(category==='Todos'||v.analysis?.categories?.includes(category)));
+ const categories=categoryList(videos);
+ const filtered=videos.filter(v=>(view!=='Precisa de atenção'||v.status==='needs_attention')&&categoryMatches(v,category));
  return <div className="shell"><aside><div className="brand">MEGA <span>BRAIN</span></div><small>SEU ACERVO DE CONHECIMENTO</small><nav>{['Biblioteca','Categorias','Precisa de atenção'].map(label=><button key={label} className={view===label?'active':''} onClick={()=>{setView(label);setCategory('Todos');}}>{label}</button>)}</nav><p className="environment">Google v0<br/>Ambiente independente</p><form action="/auth/logout" method="post"><button className="secondary">Sair</button></form></aside>
  <main><header><div><span className="eyebrow">BIBLIOTECA PESSOAL</span><h1>Conhecimento que fica.</h1><p>Guarde a fonte. Encontre as ideias. Explore o que merece ser aproveitado.</p></div><button className="secondary" onClick={()=>load()} disabled={busy}>Atualizar</button></header>
  {error&&<p role="alert" className="notice">{error}</p>}

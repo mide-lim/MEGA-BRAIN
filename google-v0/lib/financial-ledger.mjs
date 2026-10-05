@@ -12,7 +12,7 @@ function validate(state){
   if(state.pilot_envelope_cents!==undefined&&state.pilot_envelope_cents!==null&&(!cents(state.pilot_envelope_cents)||state.pilot_envelope_cents<1||state.pilot_envelope_cents>state.allocation_cents))throw new Error('Orçamento do piloto inválido.');
   let reserved=0;
   for(const [id,j]of Object.entries(state.jobs)){
-    if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||j.analysis_revision!=='megabrain-video-text-v3'))throw new Error('Revisão de análise inválida.');
+    if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
   }
@@ -55,7 +55,7 @@ export class FinancialLedger{
     return plan;
   }
   async reserve({executionId,videoId,stage,maximumCents,analysisRevision}){
-    if(analysisRevision!==undefined&&(stage!=='analysis'||analysisRevision!=='megabrain-video-text-v3'))throw new Error('Revisão de análise inválida.');
+    if(analysisRevision!==undefined&&(stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(executionId??'')||!idPattern.test(videoId??'')||!stages.has(stage)||!cents(maximumCents)||maximumCents===0)throw new Error('Reserva inválida.');
     const snapshot=await this.store.get(this.path);if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);

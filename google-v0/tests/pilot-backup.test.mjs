@@ -5,7 +5,7 @@ test('pilot backup restores independent media and documents and rejects corrupte
  const root=await mkdtemp(join(tmpdir(),'megabrain-backup-'));
  try{
   const bytes=Buffer.from('fixture-video-with-audio'),digest=createHash('sha256').update(bytes).digest('hex');
-  const docs=[{path:'settings/automation',data:{enabled:false},updateTime:'1'},{path:'settings/financial',data:{paused:true,jobs:{}},updateTime:'2'},{path:'videos/Reel_123',data:{id:'Reel_123',transcript:'Texto',analysis:{title:'Tema'}},updateTime:'3'}];
+  const docs=[{path:'settings/automation',data:{enabled:false},updateTime:'1'},{path:'settings/financial',data:{paused:true,jobs:{delivery:{stage:'media_access',status:'reserved'},uncertain:{stage:'analysis',status:'uncertain'}}},updateTime:'2'},{path:'videos/Reel_123',data:{id:'Reel_123',transcript:'Texto',analysis:{title:'Tema'}},updateTime:'3'}];
   let listCount=0;
   const store={list:async collection=>({records:docs.filter(d=>d.path.startsWith(collection+'/')).map(d=>({...d,data:++listCount>3?Object.fromEntries(Object.entries(d.data).reverse()):d.data})),nextPageToken:null})};
   const catalog=[{bucket:'megabrain-v0-1017370021431-media',name:'originals/instagram/Reel_123/original.mp4',generation:'1',bytes:bytes.length,sha256:digest}];

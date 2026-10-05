@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {buildAnalysisRequest,validateAnalysis,reviewAnalysis} from '../lib/analysis.mjs';
+import {buildAnalysisRequest,validateAnalysis,reviewAnalysis,analysisPublication} from '../lib/analysis.mjs';
 const preset=JSON.parse(readFileSync(new URL('../config/analysis-preset.json',import.meta.url)));
 const record={id:'DXVj0SkDesv',duration_seconds:60,media_verified:true,transcript:'Guardar a fonte facilita conferir a informação.'};
 const report=()=>({title:'Organização',summary:'Guardar referências',categories:['Conhecimento'],useful_information:[{claim:'Guardar a fonte ajuda na conferência.',application:'Preservar a referência original.',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:10,excerpt:record.transcript}]}],visual_observations:[],limitations:['Não verificado externamente.'],transcript_quality:{assessment:'Revisão necessária.',uncertain_segments:[]}});
@@ -41,4 +41,22 @@ test('invented transcript citations and out-of-range timestamps are rejected',()
   const r=report();assert.equal(validateAnalysis(r,record),r);
   r.useful_information[0].evidence[0].excerpt='Uma afirmação inventada';assert.throws(()=>validateAnalysis(r,record));
   r.useful_information[0].evidence[0].excerpt=record.transcript;r.useful_information[0].evidence[0].end_seconds=61;assert.throws(()=>validateAnalysis(r,record));
+});
+
+test('curation includes captured captions and rejects unsupported caption quotations',()=>{
+ const withCaption={...record,source_caption:{text:'Ingredientes: 200 g de queijo. Forno por 10 minutos.',capture_id:'captured-test'}};
+ const request=buildAnalysisRequest({record:withCaption,bucket:'megabrain-v0-media',preset});
+ assert.equal(JSON.parse(request.contents[0].parts[1].text).caption_raw,withCaption.source_caption.text);
+ const original=report();original.useful_information[0].evidence=[{source:'caption',start_seconds:0,end_seconds:0,excerpt:'200 g de queijo'}];
+ assert.equal(reviewAnalysis(original,withCaption).useful_information.length,1);
+ assert.equal(reviewAnalysis(original,record).useful_information.length,0);
+ original.useful_information[0].evidence[0].excerpt='300 g de queijo';
+ assert.equal(reviewAnalysis(original,withCaption).useful_information.length,0);
+});
+
+test('a new empty extraction cannot erase previously supported knowledge',()=>{
+ const previous={knowledge:{fields:[{name:'Supported'}]}};const r={knowledge:{fields:[]}};
+ assert.equal(analysisPublication(r,{analysis:previous}).accepted,false);
+ assert.equal(analysisPublication({knowledge:{fields:[{name:'New supported'}]}},{analysis:previous}).accepted,true);
+ assert.deepEqual(previous.knowledge.fields,[{name:'Supported'}]);
 });

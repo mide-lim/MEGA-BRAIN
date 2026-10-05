@@ -60,3 +60,19 @@ test('versioned reanalysis archives the previous report and executes only once',
  assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).duplicate,true);assert.equal(calls,1);
  assert.notEqual(result.execution_id,executionId('Reel_1','analysis'));
 });
+
+test('capacity failure blocks before a financial reservation or paid inference',async()=>{
+ let calls=0;const {flow,store}=fixture({prepareAnalysis:async()=>{throw Error('Capacity unavailable');},analysis:async()=>{calls++;}});
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'blocked');
+ assert.equal(calls,0);assert.equal((await store.get('settings/financial')).data.reserved_cents,0);
+});
+
+test('explicit recovery of a pre-inference block cannot replay a financial attempt',async()=>{
+ let blocked=true,calls=0;const {flow,store}=fixture({prepareAnalysis:async()=>{if(blocked)throw Error('No capacity');},analysis:async()=>{calls++;return {video_id:'Reel_1',stage:'analysis',actual_cents:4,changes:{analysis:{title:'Recovered'}}};}});
+ const first=await flow.run({videoId:'Reel_1',stage:'analysis'});assert.equal(first.status,'blocked');blocked=false;
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).duplicate,true);assert.equal(calls,0);
+ let j=await store.get('jobs/'+first.execution_id);await store.patch('jobs/'+first.execution_id,{status:'retry_ready'},{updateTime:j.updateTime});
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'completed');assert.equal(calls,1);
+ j=await store.get('jobs/'+first.execution_id);await store.patch('jobs/'+first.execution_id,{status:'retry_ready'},{updateTime:j.updateTime});
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).reason,'previous_financial_attempt');assert.equal(calls,1);
+});

@@ -9,7 +9,7 @@ export class LibraryRepository{
       duration_seconds:data.duration_seconds,has_audio:data.has_audio,audio_status:data.audio_status,
       media_verified:data.media_verified,transcript:data.transcript??'',transcript_status:data.transcript_status??null,analysis:data.analysis??null,
       source_caption:data.source_caption??null,knowledge_supplement:data.knowledge_supplement??null,analysis_key:data.analysis_key??null,analysis_generation:data.analysis_generation??null,
-      analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at})),next_cursor:result.nextPageToken};
+      analysis_quality_status:data.analysis_quality_status??null,analysis_candidate:data.analysis_candidate??null,candidate_analysis_key:data.candidate_analysis_key??null,candidate_analysis_generation:data.candidate_analysis_generation??null,analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at})),next_cursor:result.nextPageToken};
   }
   async video(id){if(!idPattern.test(id??''))throw new Error('Vídeo inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
   async registerLinks(input){

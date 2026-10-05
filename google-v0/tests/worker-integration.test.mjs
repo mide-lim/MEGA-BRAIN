@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {WorkerFlow} from '../lib/worker-flow.mjs';
 import {FinancialLedger,newLedger} from '../lib/financial-ledger.mjs';
@@ -47,6 +48,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
       const audioKey=[...objects.keys()].find(k=>k.endsWith('/audio.flac'));
       return Response.json({done:true,response:{results:{[`gs://${bucket}/${audioKey}`]:{inlineResult:{transcript:{results:[{alternatives:[{transcript:'Texto reconhecido'}]}]}}}}}});
     }
+    if(profile.location==='global')assert.equal(JSON.parse(JSON.parse(options.body).contents[0].parts[1].text).caption_raw,'Descrição do post: ferramenta de organização.');
     analyses++;assert.match(u.pathname,/generateContent$/);
     if(profile.gemini==='gemini-3.5-flash-lite'){const config=JSON.parse(options.body).generationConfig;assert.equal(config.thinkingConfig.thinkingLevel,'MINIMAL');assert.equal(config.temperature,undefined);}
     return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
@@ -56,7 +58,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   const capacity=new StorageCapacity(store),storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input)}),quotes={upload:10,transcription:10,analysis:10};
   const preset=JSON.parse(await readFile(new URL('../config/analysis-preset.json',import.meta.url)));
   const config={enabled:true,uploads_enabled:true,speech_model:profile.model,speech_location:profile.location,language_codes:['pt-BR'],gemini_model:profile.gemini,synchronous_short_audio:profile.synchronous===true,quotes};
-  const operations=googleOperations({api,storage,preset,config,gate:workerReservationGate(store,{clock:()=>now}),tools:{download:async()=>Buffer.from('simulated video'),extractAudio:async()=>Buffer.from('simulated flac')},inspect:async()=>({audio_status:'present',duration_seconds:10})});
+  const operations=googleOperations({api,storage,preset,config,gate:workerReservationGate(store,{clock:()=>now}),tools:{...(profile.location==='global'?{captureCaption:async()=>({text:'Descrição do post: ferramenta de organização.',capture_id:createHash('sha256').update('Descrição do post: ferramenta de organização.').digest('hex'),captured_at:new Date().toISOString()})}:{}),download:async()=>Buffer.from('simulated video'),extractAudio:async()=>Buffer.from('simulated flac')},inspect:async()=>({audio_status:'present',duration_seconds:10})});
   const flow=new WorkerFlow({store,operations,quotes,eligibleVideos:[videoId],ledger:new FinancialLedger(store,{clock:()=>now}),clock:()=>now});
   assert.equal((await flow.run({videoId:'Other_123',stage:'upload'})).reason,'outside_pilot');
   assert.equal((await flow.poll({videoId:'Other_123'})).reason,'outside_pilot');
@@ -68,7 +70,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   if(profile.noSpeech){const video=(await store.get('videos/'+videoId)).data;assert.equal(video.transcript_status,'no_speech_recognized');assert.equal(video.transcript,'');assert.ok(video.transcript_generation);}
   assert.equal((await flow.run({videoId,stage:'analysis'})).status,'completed');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
-  assert.equal(objects.size,4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
+  assert.equal(objects.size,profile.location==='global'?5:4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
   assert.equal((await store.get('videos/'+videoId)).data.analysis.knowledge.fields.length,1);
   assert.equal((await store.get('settings/financial')).data.spent_cents,30);
   assert.ok(calls.every(c=>!c.url.includes('megabrain-stt')&&!c.url.includes('cloudflare')));

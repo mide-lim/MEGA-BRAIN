@@ -17,7 +17,7 @@ export function workerRuntime(config,preset,{withHandler=false}={}){
   if(config?.project!=='megabrain-v0-1017370021431'||config.cost_accounting!=='conservative_estimate_not_invoice')throw new Error('Configuração independente do worker obrigatória.');
   const project=config.project,bucket=project+'-media';
   const api=new GoogleREST({project,buckets:[bucket],tokenProvider:serviceIdentity({project,account:'v0-worker'})});
-  const store=new Firestore(api),capacity=new StorageCapacity(store),storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input)}),ledger=new FinancialLedger(store);
+  const store=new Firestore(api),capacity=new StorageCapacity(store),storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input),reserveObject:input=>capacity.reserveResult(input)}),ledger=new FinancialLedger(store);
   const tools=mediaTools({downloadEnabled:config.downloads_enabled===true});
   const operations=googleOperations({api,storage,tools,preset,config,gate:workerReservationGate(store)});
   if(config.analysis_revision&&config.analysis_revision!==preset.version)throw new Error('Preset diverge da revisão autorizada.');

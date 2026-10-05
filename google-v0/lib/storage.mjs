@@ -6,12 +6,13 @@ function objectKey(key){
   return encodeURIComponent(key);
 }
 export class Storage {
-  constructor(api,bucket,{maxBytes=100000000,admitObject=null}={}){
+  constructor(api,bucket,{maxBytes=100000000,admitObject=null,reserveObject=null}={}){
     if(!api.buckets.has(bucket))throw new Error('Bucket não autorizado.');
     if(!Number.isSafeInteger(maxBytes)||maxBytes<1)throw new Error('Limite de arquivo inválido.');
-    this.api=api;this.bucket=bucket;this.maxBytes=maxBytes;this.admitObject=admitObject;
+    this.api=api;this.bucket=bucket;this.maxBytes=maxBytes;this.admitObject=admitObject;this.reserveObject=reserveObject;
     this.root=`https://storage.googleapis.com/storage/v1/b/${bucket}/o`;
   }
+  async reserveResult(key){objectKey(key);if(this.reserveObject)await this.reserveObject({bucket:this.bucket,key,maximumBytes:262144});}
   async metadata(key){
     try{return await this.api.request(`${this.root}/${objectKey(key)}`);}
     catch(error){if(error.status===404)return null;throw error;}

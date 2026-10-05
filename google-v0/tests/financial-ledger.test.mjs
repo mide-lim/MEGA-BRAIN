@@ -45,3 +45,13 @@ test('persistent commitments are recorded conditionally and block new reserves w
  assert.equal(reservationDecision({...ready(),allocation_cents:25100,ongoing_commitment_cents:101},{now,stage:'analysis',maximumCents:1}).ready,false);
  await assert.rejects(ledger.recordOngoingCosts({...estimates,daysUntilCleanup:100}));
 });
+
+test('new analysis revision permits one deliberate reanalysis while blocking replay and uncertain previous work',async()=>{
+ const db=store(ready()),ledger=new FinancialLedger(db,{clock:()=>now});await ledger.reserve(reservation);await ledger.transition('run1','start');await ledger.transition('run1','complete',{actualCents:100});
+ const revised={...reservation,executionId:'knowledge_v3_run1',analysisRevision:'megabrain-video-text-v3'};
+ await ledger.reserve(revised);await ledger.transition(revised.executionId,'start');await ledger.transition(revised.executionId,'complete',{actualCents:100});
+ await assert.rejects(ledger.reserve({...revised,executionId:'knowledge_v3_run2'}));
+ await assert.rejects(ledger.reserve({...revised,executionId:'invalid',stage:'transcription'}));
+ const blocked=store({...ready(),jobs:{run1:{video_id:'video1',stage:'analysis',maximum_cents:100,status:'uncertain'}},reserved_cents:100});
+ await assert.rejects(new FinancialLedger(blocked,{clock:()=>now}).reserve(revised));
+});

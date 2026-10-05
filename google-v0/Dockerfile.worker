@@ -7,6 +7,7 @@ WORKDIR /app
 COPY --chown=node:node lib/analysis.mjs lib/controls.mjs lib/financial-ledger.mjs lib/firestore.mjs lib/google-operations.mjs lib/google-rest.mjs lib/links.mjs lib/media-inspector.mjs lib/media-tools.mjs lib/service-identity.mjs lib/storage.mjs lib/worker-auth.mjs lib/worker-flow.mjs lib/worker-http.mjs lib/worker-queue.mjs lib/worker-reservation-gate.mjs lib/worker-runtime.mjs /app/lib/
 COPY --chown=node:node scripts/serve-worker.mjs /app/scripts/serve-worker.mjs
 COPY --chown=node:node lib/ongoing-costs.mjs /app/lib/ongoing-costs.mjs
+COPY --chown=node:node lib/knowledge.mjs /app/lib/knowledge.mjs
 COPY --chown=node:node lib/storage-capacity.mjs /app/lib/storage-capacity.mjs
 COPY --chown=node:node scripts/smoke-worker.mjs /app/scripts/smoke-worker.mjs
 COPY --chown=node:node config/analysis-preset.json /app/config/analysis-preset.json

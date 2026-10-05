@@ -1,5 +1,5 @@
 import {inspectMedia} from './media-inspector.mjs';
-import {buildAnalysisRequest,reviewAnalysis,analysisPublication} from './analysis.mjs';
+import {buildAnalysisRequest,reviewAnalysis} from './analysis.mjs';
 
 // Only WorkerFlow may call these adapters after claiming and starting a
 // financial reservation. The injected gate independently verifies that claim.
@@ -16,21 +16,11 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   const at=async(step,action)=>{try{return await action();}catch(error){error.operation_step=step;throw error;}};
   const submitSTT=(url,options)=>at('submit_stt',()=>api.request(url,options));
   const persist=(key,data)=>storage.writeImmutable(key,Buffer.from(JSON.stringify(data)),{contentType:'application/json',uploadsEnabled:true});
-  async function captionFor(video,executionId){
-    if(video.source_caption?.text)return {source_caption:video.source_caption,caption_status:'captured'};
-    if(typeof tools.captureCaption!=='function')return {caption_status:'unavailable'};
-    try{
-      const capture=await tools.captureCaption(video);
-      await persist(`results/instagram/${video.id}/${executionId}/caption.json`,capture);
-      return {source_caption:capture,caption_status:'captured'};
-    }catch{return {caption_status:'unavailable'};}
-  }
   function speechSettings(){
     if(!/^[a-z0-9_-]+$/.test(config.speech_model??'')||!['global','us'].includes(config.speech_location)||!Array.isArray(config.language_codes)||!config.language_codes.length||config.language_codes.length>3||config.language_codes.some(c=>!/^\w{2,3}-[A-Z]{2}$/.test(c))||(config.speech_model==='chirp_3'&&config.speech_location!=='us'))throw new Error('Modelo, idiomas e região STT precisam ser configurados.');
   }
   const speechOrigin=()=>config.speech_location==='us'?'https://us-speech.googleapis.com':'https://speech.googleapis.com';
   return {
-    async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
     async upload({video,executionId}){
       await admitted(executionId,'upload',video.id);const cost=budget('upload');
       const bytes=await tools.download(video),media=await inspect(bytes);
@@ -80,21 +70,16 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       await admitted(executionId,'analysis',video.id);const cost=budget('analysis');
       if(!/^gemini-[a-z0-9.-]+$/.test(config.gemini_model??''))throw new Error('Modelo Gemini precisa ser configurado.');
       if(video.video_key!==`originals/instagram/${video.id}/video.mp4`)throw new Error('Mídia fora do escopo.');
-      const caption=await captionFor(video,executionId);
-      const analysisRecord={...video,...caption};
-      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model});
-      const response=await at('submit_analysis',()=>api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:120000}));
+      const request=buildAnalysisRequest({record:video,bucket:storage.bucket,preset,model:config.gemini_model});
+      const response=await api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:120000});
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
-      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response}));
+      const raw=await persist(key,{preset_version:preset.version,model:config.gemini_model,response});
       const candidate=response.candidates?.[0];
       if(candidate?.finishReason!=='STOP')throw new Error('Resposta Gemini incompleta ou bloqueada.');
       const text=(candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join('');
-      const report=reviewAnalysis(JSON.parse(text),analysisRecord);
-      if(['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)&&!report.knowledge)throw new Error('Conhecimento estruturado ausente na nova análise.');
-      const publication=analysisPublication(report,video);
-      const changes=publication.accepted?{analysis:report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis,analysis_key:video.analysis_key,analysis_generation:video.analysis_generation,analysis_quality_status:'review_required',analysis_candidate:report,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
-      return result(video.id,'analysis',{...caption,...changes},cost);
+      const report=reviewAnalysis(JSON.parse(text),video);
+      return result(video.id,'analysis',{analysis:report,analysis_key:key,analysis_generation:raw.generation},cost);
     }
   };
 }

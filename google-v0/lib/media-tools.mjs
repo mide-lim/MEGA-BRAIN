@@ -1,4 +1,3 @@
-import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {mkdtemp,readFile,writeFile,stat,rm} from 'node:fs/promises';
@@ -16,16 +15,6 @@ async function temporary(action){
 }
 export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false}={}){
   return {
-    async captureCaption(video){
-      const links=parseReelLinks(video.source_url);
-      if(links.length!==1||links[0].id!==video.id)throw Error('Origem diverge do vídeo.');
-      const {stdout}=await run('yt-dlp',['--ignore-config','--no-playlist','--skip-download','--dump-single-json','--no-warnings','--retries','0','--extractor-retries','0','--socket-timeout','20','--',links[0].url],{timeout:45000,maxBuffer:1048576});
-      const metadata=JSON.parse(stdout);
-      if(metadata.display_id!==video.id&&metadata.id!==video.id)throw Error('Metadados divergem do Reel.');
-      const text=metadata.description;
-      if(typeof text!=='string'||!text.trim()||text.length>50000)throw Error('Legenda não disponível.');
-      return {text,capture_id:createHash('sha256').update(text).digest('hex'),captured_at:new Date().toISOString(),source_url:links[0].url,scope:'Post description supplied by Instagram extractor',method:'yt-dlp-metadata'};
-    },
     async download(video){
       if(!downloadEnabled)throw new Error('Downloads desligados.');
       const links=parseReelLinks(video.source_url);

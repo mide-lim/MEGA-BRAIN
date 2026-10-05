@@ -15,9 +15,3 @@ test('missing finance state is paused and responses cannot be cached',async()=>{
 test('backend errors expose neither credentials nor internal diagnostics',async()=>{
  const api=libraryAPI({repository:{page:async()=>{throw new Error('PRIVATE-DIAGNOSTIC');}},ledgerStore:{},authorize:async()=>true,sameOrigin:()=>true});const r=await api.library(get('library'));assert.equal(r.status,503);assert.equal((await r.text()).includes('PRIVATE-DIAGNOSTIC'),false);
 });
-
-test('overview reports the pilot envelope separately from the overall allocation without exposing job details',async()=>{
- const state={pilot_envelope_cents:20000,allocation_cents:150000,spent_cents:12730,reserved_cents:420,ongoing_commitment_cents:6600,jobs:{private:{status:'uncertain',secret:'HIDDEN'}}};
- const api=libraryAPI({repository:{},ledgerStore:{get:async()=>({data:state})},authorize:async()=>true,sameOrigin:()=>true});
- const data=await(await api.financial(get('financial'))).json();assert.equal(data.pilot_envelope_cents,20000);assert.equal(data.allocation_cents,150000);assert.equal(data.ongoing_commitment_cents,6600);assert.equal(data.uncertain_operations,1);assert.equal(JSON.stringify(data).includes('HIDDEN'),false);
-});

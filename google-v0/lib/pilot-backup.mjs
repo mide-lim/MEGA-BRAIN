@@ -27,7 +27,7 @@ function objectDescriptor(object){
  return {bucket,name:object.name,generation:object.generation,bytes:object.bytes,sha256:object.sha256};
 }
 function objectCatalog(objects){
- if(!Array.isArray(objects)||objects.length>200)throw new Error('Catálogo acima do limite do piloto.');
+ if(!Array.isArray(objects)||objects.length>100)throw new Error('Catálogo acima do limite do piloto.');
  const list=objects.map(objectDescriptor).sort((a,b)=>a.name.localeCompare(b.name));
  if(new Set(list.map(o=>o.name)).size!==list.length)throw new Error('Objeto duplicado.');
  return list;
@@ -37,7 +37,7 @@ export async function exportPilotBackup({store,objects,directory,queuePaused,clo
  if(!isAbsolute(directory)||queuePaused!==true)throw new Error('Backup exige destino absoluto e fila pausada conferida.');
  const initial=await documents(store);
  const settings=Object.fromEntries(initial.filter(d=>d.path.startsWith('settings/')).map(d=>[d.path,d.data]));
- if(settings['settings/automation']?.enabled!==false||settings['settings/financial']?.paused!==true||Object.values(settings['settings/financial']?.jobs??{}).some(j=>['upload','transcription','analysis'].includes(j.stage)&&['reserved','started'].includes(j.status)))throw new Error('Pausar e drenar execuções antes do backup.');
+ if(settings['settings/automation']?.enabled!==false||settings['settings/financial']?.paused!==true||Object.values(settings['settings/financial']?.jobs??{}).some(j=>['reserved','started'].includes(j.status)))throw new Error('Pausar e drenar execuções antes do backup.');
  const catalog=objectCatalog(await objects.list());
  // mkdir must fail for existing paths: no overwrite or deletion of previous backups.
  await mkdir(directory,{mode:0o700});await mkdir(join(directory,'objects'),{mode:0o700});

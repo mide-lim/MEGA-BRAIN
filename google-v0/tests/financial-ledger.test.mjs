@@ -55,3 +55,11 @@ test('new analysis revision permits one deliberate reanalysis while blocking rep
  const blocked=store({...ready(),jobs:{run1:{video_id:'video1',stage:'analysis',maximum_cents:100,status:'uncertain'}},reserved_cents:100});
  await assert.rejects(new FinancialLedger(blocked,{clock:()=>now}).reserve(revised));
 });
+
+test('credit authorization removes only the small pilot envelope and keeps account safeguards',()=>{
+ const state={...ready(),pilot_envelope_cents:null,spent_cents:16730,reserved_cents:750,jobs:{uncertain:{video_id:'video1',stage:'analysis',maximum_cents:750,status:'uncertain'}},ongoing_commitment_cents:6600};
+ const decision=reservationDecision(state,{now,maximumCents:750,stage:'analysis'});
+ assert.equal(decision.ready,true);assert.equal(decision.available_cents,100920);
+ assert.equal(reservationDecision({...state,remaining_credit_cents:30000},{now,maximumCents:1,stage:'analysis'}).ready,false);
+ assert.equal(reservationDecision({...state,balance_observed_at:null},{now,maximumCents:750,stage:'analysis'}).ready,false);
+});

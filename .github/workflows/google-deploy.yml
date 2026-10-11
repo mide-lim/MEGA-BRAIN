@@ -1,0 +1,143 @@
+name: Google manual deployment
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: 'Exact reviewed commit on main (40 hex characters)'
+        required: true
+        type: string
+      reviewed_baseline:
+        description: 'Protected review fingerprint (64 hex characters)'
+        required: true
+        type: string
+      mode:
+        description: 'Review permissions only, or publish and deploy'
+        required: true
+        default: review
+        type: choice
+        options: [review, deploy]
+permissions:
+  contents: read
+concurrency:
+  group: google-production-deploy
+  cancel-in-progress: false
+jobs:
+  manual:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: google-v0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require the reviewed main commit and protected configuration
+        working-directory: .
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REVIEWED_BASELINE: ${{ inputs.reviewed_baseline }}
+          DEPLOY_CONFIG: ${{ secrets.MEGABRAIN_DEPLOY_CONFIG }}
+          WIF_PROVIDER: ${{ secrets.MEGABRAIN_WIF_PROVIDER }}
+          CI_SERVICE_ACCOUNT: ${{ secrets.MEGABRAIN_CI_SERVICE_ACCOUNT }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          if not re.fullmatch(r'[a-f0-9]{40}', os.environ['SOURCE_COMMIT']) or os.environ['SOURCE_COMMIT'] != os.environ['GITHUB_SHA']:
+              sys.exit('Run from main at exactly the reviewed commit.')
+          if not re.fullmatch(r'[a-f0-9]{64}', os.environ['REVIEWED_BASELINE']):
+              sys.exit('A reviewed production fingerprint is required.')
+          if any(not os.environ[k] for k in ['DEPLOY_CONFIG', 'WIF_PROVIDER', 'CI_SERVICE_ACCOUNT']):
+              sys.exit('Protected deployment configuration is missing.')
+          PY
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.19.0'
+      - name: Deployment guard checks without cloud credentials
+        working-directory: .
+        run: python3 -m unittest discover -s ops -p 'test_*.py'
+      - name: Unit and integration checks without cloud credentials
+        run: node --test tests/*.test.mjs
+      - name: Prepare committed source and provenance
+        working-directory: .
+        run: python3 ops/prepare-release-context.py --output "$RUNNER_TEMP/megabrain-context"
+      - name: Build candidate images once
+        working-directory: .
+        run: |
+          set -eu
+          commit="$(git rev-parse HEAD)"
+          context="$RUNNER_TEMP/megabrain-context"
+          docker build --build-arg VCS_REF="$commit" -t megabrain-web:ci -f "$context/Dockerfile.web-google" "$context"
+          docker build --build-arg VCS_REF="$commit" -t megabrain-worker:ci -f "$context/Dockerfile.worker" "$context"
+      - name: Check worker image with synthetic media and no network
+        run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-worker.mjs
+      - name: Extract the built web image for anonymous-route checks
+        run: |
+          set -eu
+          container="$(docker create --network none megabrain-web:ci)"
+          trap 'docker rm -f "$container" >/dev/null' EXIT
+          mkdir -p web-google/.next/standalone
+          docker cp "$container":/app/. web-google/.next/standalone/
+          cp -R web-google/.next/standalone/web-google/.next/static web-google/.next/static
+          node scripts/smoke-web.mjs
+      - name: Verify image provenance
+        working-directory: .
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/megabrain-evidence"
+          cp "$RUNNER_TEMP/megabrain-context/config/release-source-manifest.json" "$RUNNER_TEMP/megabrain-evidence/"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          images = []
+          for image in ["megabrain-web:ci", "megabrain-worker:ci"]:
+              value = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
+              assert value["Config"]["Labels"]["org.opencontainers.image.revision"] == commit
+              container = subprocess.check_output(["docker", "create", "--network", "none", image], text=True).strip()
+              try:
+                  destination = pathlib.Path(os.environ["RUNNER_TEMP"]) / ("web-manifest.json" if "web" in image else "worker-manifest.json")
+                  subprocess.run(["docker", "cp", container + ":/app/release-source-manifest.json", str(destination)], check=True)
+                  embedded = json.loads(destination.read_text())
+                  expected = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "megabrain-context/config/release-source-manifest.json").read_text())
+                  assert embedded == expected
+              finally:
+                  subprocess.run(["docker", "rm", container], check=True, stdout=subprocess.DEVNULL)
+              images.append({"image": image, "local_image_config_id": value["Id"], "commit": commit})
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "megabrain-evidence/candidate-images.json"
+          path.write_text(json.dumps(images, indent=2) + "\n")
+          PY
+
+      - name: Authenticate with a temporary Google identity
+        id: google
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ secrets.MEGABRAIN_WIF_PROVIDER }}
+          service_account: ${{ secrets.MEGABRAIN_CI_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 1800s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Review or deploy the existing services
+        working-directory: .
+        env:
+          MEGABRAIN_DEPLOY_CONFIG: ${{ secrets.MEGABRAIN_DEPLOY_CONFIG }}
+          GOOGLE_ACCESS_TOKEN: ${{ steps.google.outputs.access_token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          REVIEWED_BASELINE: ${{ inputs.reviewed_baseline }}
+          DEPLOY_MODE: ${{ inputs.mode }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/megabrain-public-result"
+          python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
+      - name: Record the sanitized outcome
+        working-directory: .
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          outcome = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'megabrain-public-result/result.json').read_text())
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('Commit: ' + outcome['commit'] + '\n\nResult: ' + outcome['status'] + '\n')
+          PY

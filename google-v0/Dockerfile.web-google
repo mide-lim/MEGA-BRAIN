@@ -10,6 +10,9 @@ COPY web-google /app/web-google
 RUN pnpm run build
 
 FROM node:24.19.0-bookworm-slim@sha256:e5a8dee7bc1e6a215d224a7ef8206f7e77271bc3cabd5febf2beafac0674f174 AS runtime
+ARG VCS_REF
+LABEL org.opencontainers.image.source="https://github.com/mide-lim/MEGA-BRAIN" org.opencontainers.image.revision="$VCS_REF"
+ENV MEGABRAIN_SOURCE_COMMIT=$VCS_REF
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=8080
 WORKDIR /app
 COPY --from=build --chown=node:node /app/web-google/.next/standalone /app

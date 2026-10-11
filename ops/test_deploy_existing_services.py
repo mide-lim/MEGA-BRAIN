@@ -211,5 +211,35 @@ class GoogleValidationTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[0], "GET")
 
 
+class SmokeOriginTests(unittest.TestCase):
+    def test_accepts_cloud_run_host_formats_without_real_network(self):
+        class Response:
+            status = 200
+            def __init__(self, content):
+                self.content = content
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, size):
+                return self.content.encode()
+        for origin in ["https://example-service.run.app", "https://example-service-abc.a.run.app", "https://example-service-123.us-central1.run.app"]:
+            responses = [
+                Response('Entrar com Google <link href="/style.css">'), Response("body {}"),
+                *[deployment.urllib.error.HTTPError(origin, 401, "anonymous", {}, None) for _ in range(4)],
+                deployment.urllib.error.HTTPError(origin, 403, "invalid", {}, None),
+            ]
+            with patch.object(deployment.urllib.request, "urlopen", side_effect=responses) as network:
+                deployment.smoke_web(origin)
+            self.assertEqual(network.call_count, 7)
+
+    def test_rejects_external_or_ambiguous_origins_before_network(self):
+        for origin in ["http://example.run.app", "https://example.run.app.evil.test", "https://example..run.app", "https://user@example.run.app", "https://example.run.app/path", "https://example.run.app:443"]:
+            with patch.object(deployment.urllib.request, "urlopen") as network:
+                with self.assertRaises(deployment.DeploymentError):
+                    deployment.smoke_web(origin)
+                network.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -177,7 +177,7 @@ def publish(config, token, commit):
 
 def smoke_web(origin):
     # Only anonymous GETs; no import, processing, OAuth exchange, or model calls.
-    if not re.fullmatch(r"https://[a-z0-9-]+\.run\.app", origin):
+    if not re.fullmatch(r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app", origin):
         raise DeploymentError("Unexpected service origin")
     def read(path, expected):
         try:

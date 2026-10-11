@@ -1,0 +1,2 @@
+# Keep text checkouts consistent across development environments.
+google-v0/** text=auto eol=lf

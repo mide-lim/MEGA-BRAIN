@@ -1,14 +1,18 @@
 name: Google v0 integration
 on:
   push:
-    paths: ['google-v0/**', '.github/workflows/google-v0.yml']
+    paths: ['google-v0/**', 'ops/prepare-release-context.py', '.gitattributes', '.github/workflows/google-v0.yml']
   pull_request:
-    paths: ['google-v0/**', '.github/workflows/google-v0.yml']
+    paths: ['google-v0/**', 'ops/prepare-release-context.py', '.gitattributes', '.github/workflows/google-v0.yml']
 permissions:
   contents: read
+concurrency:
+  group: google-v0-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: google-v0
@@ -17,14 +21,60 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
-      - run: node --test tests/*.test.mjs
-      - uses: pnpm/action-setup@v4
+      - name: Unit and integration checks without cloud credentials
+        run: node --test tests/*.test.mjs
+      - name: Prepare committed source and provenance
+        working-directory: .
+        run: python3 ops/prepare-release-context.py --output "$RUNNER_TEMP/megabrain-context"
+      - name: Build candidate images once
+        working-directory: .
+        run: |
+          set -eu
+          commit="$(git rev-parse HEAD)"
+          context="$RUNNER_TEMP/megabrain-context"
+          docker build --build-arg VCS_REF="$commit" -t megabrain-web:ci -f "$context/Dockerfile.web-google" "$context"
+          docker build --build-arg VCS_REF="$commit" -t megabrain-worker:ci -f "$context/Dockerfile.worker" "$context"
+      - name: Check worker image with synthetic media and no network
+        run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-worker.mjs
+      - name: Extract the built web image for anonymous-route checks
+        run: |
+          set -eu
+          container="$(docker create --network none megabrain-web:ci)"
+          trap 'docker rm -f "$container" >/dev/null' EXIT
+          mkdir -p web-google/.next/standalone
+          docker cp "$container":/app/. web-google/.next/standalone/
+          cp -R web-google/.next/standalone/web-google/.next/static web-google/.next/static
+          node scripts/smoke-web.mjs
+      - name: Verify image provenance
+        working-directory: .
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/megabrain-evidence"
+          cp "$RUNNER_TEMP/megabrain-context/config/release-source-manifest.json" "$RUNNER_TEMP/megabrain-evidence/"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          images = []
+          for image in ["megabrain-web:ci", "megabrain-worker:ci"]:
+              value = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
+              assert value["Config"]["Labels"]["org.opencontainers.image.revision"] == commit
+              container = subprocess.check_output(["docker", "create", "--network", "none", image], text=True).strip()
+              try:
+                  destination = pathlib.Path(os.environ["RUNNER_TEMP"]) / ("web-manifest.json" if "web" in image else "worker-manifest.json")
+                  subprocess.run(["docker", "cp", container + ":/app/release-source-manifest.json", str(destination)], check=True)
+                  embedded = json.loads(destination.read_text())
+                  expected = json.loads((pathlib.Path(os.environ["RUNNER_TEMP"]) / "megabrain-context/config/release-source-manifest.json").read_text())
+                  assert embedded == expected
+              finally:
+                  subprocess.run(["docker", "rm", container], check=True, stdout=subprocess.DEVNULL)
+              images.append({"image": image, "local_image_config_id": value["Id"], "commit": commit})
+          path = pathlib.Path(os.environ["RUNNER_TEMP"]) / "megabrain-evidence/candidate-images.json"
+          path.write_text(json.dumps(images, indent=2) + "\n")
+          PY
+      - name: Save small provenance artifacts
+        uses: actions/upload-artifact@v4
         with:
-          version: '11.19.0'
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-        working-directory: google-v0/web-google
-      - run: pnpm run build
-        working-directory: google-v0/web-google
-        env:
-          NEXT_TELEMETRY_DISABLED: '1'
-      - run: node scripts/smoke-web.mjs
+          name: candidate-provenance
+          path: ${{ runner.temp }}/megabrain-evidence/
+          retention-days: 7
+          if-no-files-found: error

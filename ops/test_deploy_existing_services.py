@@ -186,5 +186,30 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(api.calls, [])
 
 
+class GoogleValidationTests(unittest.TestCase):
+    def test_validate_only_does_not_poll_an_unpersisted_operation(self):
+        api = deployment.Google(CONFIG, "dummy")
+        response = {"name": "projects/example-project/locations/us-central1/operations/unpersisted"}
+        with patch.object(api, "request", return_value=response) as request:
+            api.update("web", services()["web"], services()["web"]["template"]["containers"], validate_only=True)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args[0], "PATCH")
+        self.assertIn("validateOnly=true", request.call_args.args[1])
+
+    def test_validate_only_rejects_an_immediate_error(self):
+        api = deployment.Google(CONFIG, "dummy")
+        with patch.object(api, "request", return_value={"error": {"code": 7}}):
+            with self.assertRaisesRegex(deployment.DeploymentError, "validation failed"):
+                api.update("web", services()["web"], services()["web"]["template"]["containers"], validate_only=True)
+
+    def test_real_update_still_waits_for_the_persisted_operation(self):
+        api = deployment.Google(CONFIG, "dummy")
+        response = {"name": "projects/example-project/locations/us-central1/operations/persisted"}
+        with patch.object(api, "request", side_effect=[response, {"done": True}]) as request:
+            api.update("web", services()["web"], services()["web"]["template"]["containers"])
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args.args[0], "GET")
+
+
 if __name__ == "__main__":
     unittest.main()

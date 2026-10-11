@@ -14,6 +14,8 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=8080
 WORKDIR /app
 COPY --from=build --chown=node:node /app/web-google/.next/standalone /app
 COPY --from=build --chown=node:node /app/web-google/.next/static /app/web-google/.next/static
+COPY --chown=node:node config/release-source-manifest.json /app/release-source-manifest.json
+RUN node -e 'const m=require("./release-source-manifest.json"); if (!/^[a-f0-9]{40}$/.test(m.commit) || m.commit !== process.env.MEGABRAIN_SOURCE_COMMIT) process.exit(1)'
 USER node
 EXPOSE 8080
 CMD ["node","web-google/server.js"]

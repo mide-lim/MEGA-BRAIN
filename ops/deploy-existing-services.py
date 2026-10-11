@@ -125,6 +125,11 @@ class Google:
             url += "&validateOnly=true"
         body = {"name": current["name"], "etag": current["etag"], "template": {"containers": containers}}
         operation = self.request("PATCH", url, body)
+        if validate_only:
+            # Cloud Run validates without persisting this operation; do not poll it.
+            if operation.get("error"):
+                raise DeploymentError("Cloud Run validation failed")
+            return
         if operation.get("done"):
             if operation.get("error"):
                 raise DeploymentError("Cloud Run validation or update failed")

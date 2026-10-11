@@ -1,9 +1,9 @@
 name: Google v0 integration
 on:
   push:
-    paths: ['google-v0/**', 'ops/prepare-release-context.py', '.gitattributes', '.github/workflows/google-v0.yml']
+    paths: ['google-v0/**', 'ops/**', '.gitattributes', '.github/workflows/google-v0.yml', '.github/workflows/google-deploy.yml']
   pull_request:
-    paths: ['google-v0/**', 'ops/prepare-release-context.py', '.gitattributes', '.github/workflows/google-v0.yml']
+    paths: ['google-v0/**', 'ops/**', '.gitattributes', '.github/workflows/google-v0.yml', '.github/workflows/google-deploy.yml']
 permissions:
   contents: read
 concurrency:
@@ -21,6 +21,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.19.0'
+      - name: Parse deployment workflow syntax
+        working-directory: .
+        run: ruby -r yaml -e 'YAML.load_file(".github/workflows/google-deploy.yml")'
+      - name: Deployment guard checks without cloud credentials
+        working-directory: .
+        run: python3 -m unittest discover -s ops -p 'test_*.py'
       - name: Unit and integration checks without cloud credentials
         run: node --test tests/*.test.mjs
       - name: Prepare committed source and provenance

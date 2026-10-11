@@ -12,6 +12,7 @@ O backup MegaBrain é uma referência histórica. Seu conteúdo não comprova a 
 - [Task Packets](docs/TASK_PACKETS.md)
 - [Revisão por risco](docs/REVIEW_POLICY.md)
 - [Referências históricas](docs/HISTORY.md)
+- [Alinhamento após manutenção — 11/10/2026](docs/MAINTENANCE-2026-10-11.md)
 
 ## Validação local
 

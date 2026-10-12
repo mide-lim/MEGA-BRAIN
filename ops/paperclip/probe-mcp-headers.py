@@ -15,7 +15,7 @@ for name,kind in names.items():
     assert transport["http_headers"]["Authorization"]==header, "CLI dropped Authorization"
     url=server["url"]; target=urlparse(url)
     assert target.scheme=="http" and target.hostname=="127.0.0.1" and target.port==3100
-    assert target.path in ["/api/mcp/project-tools","/api/mcp/runtime-tools"]
+    assert target.path=={"projects":"/api/mcp/project-tools","connections":"/mcp/runtime-tools"}[kind]
     servers[kind]={"url":url,"authorization":header}
 token=servers["projects"]["authorization"][7:]
 part=token.split(".")[1]

@@ -36,8 +36,10 @@ while time.monotonic()<deadline:
         terminal=runs[0];break
     time.sleep(1)
 assert terminal is not None, "No terminal fixture run"
+if terminal.get("errorCode")!="pilot_admission_rejected":
+    print(api("heartbeat-runs/"+terminal["id"]+"/log").get("content","")[-4000:])
 assert terminal["status"]=="failed", terminal["status"]
-assert terminal["errorCode"]=="pilot_admission_rejected", terminal.get("errorCode")
+assert terminal["errorCode"]=="pilot_admission_rejected", (terminal.get("errorCode"), terminal.get("error"))
 # Observe beyond the two upstream 30-second retry windows.
 for second in range(75):
     runs=api("companies/"+cid+"/heartbeat-runs?agentId="+aid+"&limit=20")

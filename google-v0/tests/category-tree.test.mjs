@@ -54,7 +54,7 @@ test('comparison normalizes case, accents and spaces and counts each source once
 test('mixed domains retain unknown-label fallback and empty categories stay empty',()=>{
  const mixed=video(['Desenvolvimento de Software','Marketing','Tema fictício não coberto']);
  assert.deepEqual(categoryPaths(mixed),[development,marketing,fallback]);
- assert.deepEqual(categoryPaths(video(['Negócios','Branding'])),[fallback]);
+ assert.deepEqual(categoryPaths(video(['Negócios','Branding'])),[marketing]);
  assert.deepEqual(categoryPaths(video([])),[]);
  assert.deepEqual(categoryPaths({}),[]);
  const tree=categoryTree([mixed]);

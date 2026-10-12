@@ -10,7 +10,7 @@ import {Storage} from '../lib/storage.mjs';
 import {StorageCapacity,newCapacity} from '../lib/storage-capacity.mjs';
 import {readFile} from 'node:fs/promises';
 
-for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-offline-model'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true,noSpeech:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',readFault:true}])test(`Google adapters integrate upload, async STT and validated Gemini (${profile.location}, ${profile.readFault?'read-fault':profile.noSpeech?'no-speech':profile.synchronous?'sync':'batch'}) with durable reservations`,async()=>{
+for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-offline-model'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true,noSpeech:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',readFault:true},{location:'global',model:'offline_model',gemini:'gemini-offline-model',invalidCategory:true}])test(`Google adapters integrate upload, async STT and validated Gemini (${profile.location}, ${profile.invalidCategory?'invalid-category':profile.readFault?'read-fault':profile.noSpeech?'no-speech':profile.synchronous?'sync':'batch'}) with durable reservations`,async()=>{
   const project='megabrain-v0-1017370021431',bucket=project+'-media',videoId='Reel_123',now=Date.now();let version=0,submits=0,analyses=0,polls=0,injectReadFault=false;
   const docs=new Map(),objects=new Map(),calls=[];
   const seed=(path,data)=>docs.set(path,{data:structuredClone(data),updateTime:String(++version)});
@@ -18,7 +18,8 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   seed('settings/automation',{enabled:true,transcription_enabled:true,analysis_enabled:true});
   seed('settings/financial',{...newLedger(),paused:false,coverage_verified:true,ongoing_commitment_cents:0,ongoing_costs_observed_at:new Date(now).toISOString(),ongoing_costs_valid_until:new Date(now+86400000).toISOString(),remaining_credit_cents:172411,balance_observed_at:new Date(now).toISOString(),credit_expires_at:new Date(now+30*86400000).toISOString(),enabled_stages:{upload:true,transcription:true,analysis:true}});
   seed('videos/'+videoId,{id:videoId,source_url:'https://www.instagram.com/p/'+videoId+'/',media_verified:false,transcript:''});
-  const report={title:'Tecnologia',summary:'Resumo com evidências',categories:['Tecnologia'],useful_information:[{claim:'Ideia do autor',application:'Estudar',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:1,excerpt:'Texto reconhecido'}]}],visual_observations:[],limitations:['Exemplo simulado'],transcript_quality:{assessment:'Clara',uncertain_segments:[]}};
+  const report={title:'Tecnologia',summary:'Resumo com evidências',categories:['tecnologia-geral'],useful_information:[{claim:'Ideia do autor',application:'Estudar',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:1,excerpt:'Texto reconhecido'}]}],visual_observations:[],limitations:['Exemplo simulado'],transcript_quality:{assessment:'Clara',uncertain_segments:[]}};
+  if(profile.invalidCategory)report.categories=['Unknown category'];
   if(profile.noSpeech){report.useful_information[0].evidence[0].source='video';report.useful_information[0].evidence[0].excerpt='Texto na tela';}
   report.knowledge={context:'technology',keywords:[{term:'Tecnologia',evidence:structuredClone(report.useful_information[0].evidence)}],fields:[{kind:'concept',name:'Conceito apresentado',value:'Texto de exemplo',evidence:structuredClone(report.useful_information[0].evidence)}],missing_information:[]};
   const api=new GoogleREST({project,buckets:[bucket],tokenProvider:async()=>'offline-test-token',fetchImpl:async(url,options)=>{
@@ -50,6 +51,8 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     }
     if(profile.location==='global')assert.equal(JSON.parse(JSON.parse(options.body).contents[0].parts[1].text).caption_raw,'Descrição do post: ferramenta de organização.');
     analyses++;assert.match(u.pathname,/generateContent$/);
+    const generated=JSON.parse(options.body);assert.ok(generated.generationConfig.responseSchema.properties.categories.items.enum.includes('tecnologia-geral'));
+    assert.ok(!generated.generationConfig.responseSchema.properties.categories.items.enum.includes('Unknown category'));
     if(profile.gemini==='gemini-3.5-flash-lite'){const config=JSON.parse(options.body).generationConfig;assert.equal(config.thinkingConfig.thinkingLevel,'MINIMAL');assert.equal(config.temperature,undefined);}
     return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
   }});
@@ -68,7 +71,15 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   if(profile.synchronous){assert.equal((await flow.run({videoId,stage:'transcription'})).status,'completed');assert.equal(polls,0);}
   else{assert.equal((await flow.run({videoId,stage:'transcription'})).status,'waiting');assert.equal((await flow.poll({videoId})).status,'waiting');assert.equal((await flow.poll({videoId})).status,'completed');}
   if(profile.noSpeech){const video=(await store.get('videos/'+videoId)).data;assert.equal(video.transcript_status,'no_speech_recognized');assert.equal(video.transcript,'');assert.ok(video.transcript_generation);}
+  if(profile.invalidCategory){
+    const failure=await flow.run({videoId,stage:'analysis'});assert.equal(failure.status,'uncertain');
+    assert.equal((await store.get('videos/'+videoId)).data.analysis,undefined);
+    assert.ok([...objects.keys()].some(k=>k.endsWith('/analysis.json')));
+    await flow.run({videoId,stage:'analysis'});assert.equal(analyses,1);return;
+  }
   assert.equal((await flow.run({videoId,stage:'analysis'})).status,'completed');
+  assert.deepEqual((await store.get('videos/'+videoId)).data.analysis.categories,['tecnologia-geral']);
+  assert.equal((await store.get('videos/'+videoId)).data.analysis.category_taxonomy_version,'categories-v1');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
   assert.equal(objects.size,profile.location==='global'?5:4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
   assert.equal((await store.get('videos/'+videoId)).data.analysis.knowledge.fields.length,1);

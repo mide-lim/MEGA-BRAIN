@@ -11,6 +11,7 @@ COPY --chown=node:node lib/analysis.mjs lib/controls.mjs lib/financial-ledger.mj
 COPY --chown=node:node scripts/serve-worker.mjs /app/scripts/serve-worker.mjs
 COPY --chown=node:node lib/ongoing-costs.mjs /app/lib/ongoing-costs.mjs
 COPY --chown=node:node lib/knowledge.mjs /app/lib/knowledge.mjs
+COPY --chown=node:node lib/category-taxonomy.mjs /app/lib/category-taxonomy.mjs
 COPY --chown=node:node lib/storage-capacity.mjs /app/lib/storage-capacity.mjs
 COPY --chown=node:node scripts/smoke-worker.mjs /app/scripts/smoke-worker.mjs
 COPY --chown=node:node config/analysis-preset.json /app/config/analysis-preset.json

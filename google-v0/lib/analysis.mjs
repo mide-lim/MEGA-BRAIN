@@ -1,10 +1,11 @@
+import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
   properties:{
     knowledge:knowledgeSchema,
-    title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',items:{type:'STRING'}},
+    title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',minItems:1,maxItems:categoryIds.length,items:{type:'STRING',enum:[...categoryIds]}},
     useful_information:{type:'ARRAY',items:{type:'OBJECT',required:['claim','application','classification','evidence'],properties:{
       claim:{type:'STRING'},application:{type:'STRING'},classification:{type:'STRING',enum:['author_claim','visual_observation','interpretation']},
       evidence:{type:'ARRAY',items:{type:'OBJECT',required:['source','start_seconds','end_seconds','excerpt'],properties:{
@@ -27,21 +28,22 @@ export function buildAnalysisRequest({record,bucket,preset,model}) {
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
   return {
-    systemInstruction:{parts:[{text:preset.system_instruction}]},
+    systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. Use uma ou mais categorias pertinentes, sem duplicatas. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:reportSchema}
   };
 }
 
 const normalize=text=>text.normalize('NFC').replace(/\s+/g,' ').replace(/([\p{Script=Han}\d])\s+(?=[\p{Script=Han}\d])/gu,'$1').trim();
-export function validateAnalysis(report,record) {
+export function validateAnalysis(report,record,{requireCategoryIds=false}={}) {
   const fail=message=>{throw new Error(message);};
   for(const field of ['title','summary']) if(typeof report?.[field]!=='string'||!report[field].trim())fail(`Campo obrigatório: ${field}.`);
   for(const field of ['categories','visual_observations','limitations']) if(!Array.isArray(report[field])||!report[field].every(v=>typeof v==='string'))fail(`Campo inválido: ${field}.`);
   if(!report.categories.length||report.categories.some(v=>!v.trim()))fail('Categorias vazias.');
+  if(requireCategoryIds)validateCategoryIds(report.categories);
   const quality=report.transcript_quality;
   if(!quality||typeof quality.assessment!=='string'||!Array.isArray(quality.uncertain_segments)||!quality.uncertain_segments.every(v=>typeof v==='string'))fail('Qualidade da transcrição ausente.');
   if(!Array.isArray(report.useful_information))fail('Informações úteis inválidas.');
@@ -61,15 +63,16 @@ export function validateAnalysis(report,record) {
 
 // Keep the original model response intact. An unsupported useful-information
 // item is omitted from the published report, never rewritten into a quotation.
-export function reviewAnalysis(report,record) {
-  validateAnalysis({...report,useful_information:[]},record);
+export function reviewAnalysis(report,record,{requireCategoryIds=false}={}) {
+  validateAnalysis({...report,useful_information:[]},record,{requireCategoryIds});
   if(!Array.isArray(report.useful_information))throw new Error('Informações úteis inválidas.');
   const accepted=[],rejected=[];
   for(const [index,item] of report.useful_information.entries()){
-    try{validateAnalysis({...report,useful_information:[item]},record);accepted.push(item);}
+    try{validateAnalysis({...report,useful_information:[item]},record,{requireCategoryIds});accepted.push(item);}
     catch{rejected.push(index);}
   }
   const reviewed={...report,useful_information:accepted,limitations:[...report.limitations]};
+  if(requireCategoryIds)reviewed.category_taxonomy_version=taxonomyVersion;
   if(!normalize(record.transcript??'')){
     reviewed.transcript_quality={assessment:'O STT não retornou texto reconhecido; não há transcrição para avaliar. Isso não comprova ausência de fala no vídeo.',uncertain_segments:[]};
     const limitation='Transcrição vazia: resumo e categorias dependem da análise do vídeo; não há evidência textual do STT.';
@@ -82,7 +85,7 @@ export function reviewAnalysis(report,record) {
     if(result.omitted)reviewed.limitations.push(`${result.omitted} campo(s) ou palavra(s)-chave omitido(s) por evidência inválida. O resultado original foi preservado.`);
   }
   if(rejected.length)reviewed.limitations.push(`${rejected.length} informação(ões) útil(eis) omitida(s): evidência inválida ou citação não literal na transcrição. A resposta original foi preservada para revisão.`);
-  return validateAnalysis(reviewed,record);
+  return validateAnalysis(reviewed,record,{requireCategoryIds});
 }
 
 export function analysisPublication(report,record){

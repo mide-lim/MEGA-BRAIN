@@ -42,19 +42,25 @@ A future upstream release requires a new audited overlay and tests.
 [CI](../../.github/workflows/paperclip-control.yml) builds the candidate image on
 GitHub, checks compiled JavaScript syntax and exercises the actual image's
 scheduling, outcome classification and recovery functions with synthetic inputs.
-The integration harness executes their relevant boundaries with dependencies
-stubbed; it does not bootstrap the HTTP server or connect PostgreSQL.
+The boundary harness uses stubbed dependencies. A second harness boots the
+actual candidate server and a temporary PostgreSQL instance on an internal
+network, with no published ports, production mounts or model credentials.
+It substitutes the launcher with a rejecting fixture, triggers one synthetic
+task, observes 75 seconds after failure, and checks both successor runs and
+pending wake requests. These synthetic agents and budgets exist only in the
+disposable database. All containers, anonymous volumes and the test network
+are removed by the harness.
 
 Launcher regression tests never start Codex. The image test runs with no network,
 no runtime data mounts and a read-only filesystem. Credentials and production
 data are unnecessary.
 
-CI success does not prove all Paperclip scheduler paths are disabled. The
-single-use permit remains the final barrier to a model invocation.
-Before agent activation, independently review all automated wake paths and
-validate a synthetic task against the staged server with an isolated database:
-a rejected admission must produce no successor run or queued wake request.
-That full server validation remains a deployment gate.
+CI validates the rejection/recovery case on the full candidate server; it does
+not prove every possible automated wake path is disabled. Independently review
+those paths before activation. The single-use permit remains the final barrier
+to a model invocation. Repeat the isolated server test on the exact image
+digest selected for promotion. A rejected admission must produce no successor
+run or queued wake request.
 
 ## Review and promotion
 

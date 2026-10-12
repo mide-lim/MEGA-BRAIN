@@ -35,3 +35,6 @@ jobs:
           docker run --rm --network none --read-only --entrypoint node \
             --mount type=bind,src="${{ github.workspace }}/ops/paperclip/test-image-boundaries.cjs",dst=/tmp/test-image-boundaries.cjs,readonly \
             paperclip-control-candidate /tmp/test-image-boundaries.cjs
+
+      - name: Exercise full server and isolated PostgreSQL without a model
+        run: python3 ops/paperclip/test-server-isolated.py --image paperclip-control-candidate

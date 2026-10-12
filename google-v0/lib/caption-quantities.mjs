@@ -21,14 +21,18 @@ const escapePattern=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const unitPattern=[...units.keys()].sort((a,b)=>b.length-a.length).map(escapePattern).join('|');
 const numberPattern='\\d+(?:[.,]\\d+)?';
 const unitEnd='(?![\\p{L}])';
-function quantities(text,procedure){
+const locativeArticle=/\b(para|em|sobre|dentro de)\s+(?:um|uma)\s+(?=(?:recipiente|tigela|frigideira|travessa|panela|refratario)\b)/g;
+const containers='(?:recipientes?|tigelas?|frigideiras?|travessas?|panelas?|refratarios?|containers?|bowls?|dish(?:es)?|pans?|pots?|trays?)';
+const containerAdjective='(?:(?:small|large|medium|pequen[oa]s?|grandes?|medi[oa]s?)\\s+)?';
+function quantities(text,procedure,ignoreArticles=true){
  let invalid=false;
  let normalized=String(text).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
  // List markers are not quantities and cannot justify "one minute".
  if(procedure)normalized=normalized.replace(/^\s*\d+[.)]\s+/gm,'');
  // Ignore only locative articles before a closed set of cooking containers.
  // "um minuto", "uma colher" and every digit still require numeric support.
- if(procedure)normalized=normalized.replace(/\b(para|em|sobre|dentro de)\s+(?:um|uma)\s+(?=(?:recipiente|tigela|frigideira|travessa|panela|refratario)\b)/g,'$1 ');
+ const hasContainerArticle=procedure&&new RegExp(locativeArticle.source).test(normalized);
+ if(procedure&&ignoreArticles)normalized=normalized.replace(locativeArticle,'$1 ');
  normalized=normalized.replace(/([¼½¾])/g,(_,v)=>' '+({'¼':'1/4','½':'1/2','¾':'3/4'}[v]));
  normalized=normalized.replace(/(?:(\d+)\s+)?(\d+)\s*\/\s*(\d+)/g,(_,whole,numerator,denominator)=>{
   if(Number(denominator)===0){invalid=true;return '';}
@@ -41,15 +45,22 @@ function quantities(text,procedure){
  const numbers=(normalized.match(new RegExp(numberPattern,'g'))??[]).map(n=>Number(n.replace(',','.')));
  const measures=[...normalized.matchAll(new RegExp('('+numberPattern+')\\s*('+unitPattern+')'+unitEnd,'gu'))]
   .map(m=>({number:Number(m[1].replace(',','.')),unit:units.get(m[2])}));
- return {invalid,numbers,measures};
+ const containerCounts=procedure?[...normalized.matchAll(new RegExp('('+numberPattern+')\\s+'+containerAdjective+containers+unitEnd,'gu'))].map(m=>Number(m[1].replace(',','.'))):[];
+ const hasPluralContainer=procedure&&/\b(?:recipientes|tigelas|frigideiras|travessas|panelas|refratarios|containers|bowls|dishes|pans|pots|trays)\b/.test(normalized);
+ return {invalid,numbers,measures,containerCounts,hasContainerArticle,hasPluralContainer};
 }
 export function supportedCaptionNumbers(field){
  if(!['ingredient','quantity','preparation_time','serving_count','procedure'].includes(field.kind)||!field.evidence?.length||field.evidence.some(e=>e.source!=='caption'))return true;
  const procedure=field.kind==='procedure';
  // Parse excerpts separately: fragments cannot create a new measure at a join.
- const sources=field.evidence.map(e=>quantities(e.excerpt,procedure));
+ const sources=field.evidence.map(e=>quantities(e.excerpt,procedure,false));
  const value=quantities(field.value,procedure);
  if(value.invalid||sources.some(s=>s.invalid))return false;
+ const sourceCounts=sources.flatMap(s=>s.containerCounts);
+ // A singular article cannot hide an explicit plural count. Conflicting or
+ // mixed counts remain omitted for review rather than guessed from context.
+ if(value.hasContainerArticle&&(sourceCounts.some(n=>n!==1)||sources.some(s=>s.hasPluralContainer)))return false;
+ if(value.containerCounts.some(n=>!sourceCounts.includes(n)))return false;
  const known=sources.flatMap(s=>s.numbers),measures=sources.flatMap(s=>s.measures);
  return value.numbers.every(n=>known.includes(n))&&value.measures.every(m=>measures.some(s=>s.number===m.number&&s.unit===m.unit));
 }

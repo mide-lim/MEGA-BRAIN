@@ -66,3 +66,34 @@ test('explicit abbreviation spellings preserve multilingual measures without pun
  assert.equal(supportedCaptionNumbers(field('3 colheres de sopa','3стXл')),false);
  assert.equal(supportedCaptionNumbers(field('3 xícaras','3 xicarao')),false);
 });
+
+
+test('singular container articles cannot contradict explicit source counts',()=>{
+ for(const quote of ['Divide the mixture into two bowls.','Divida a mistura em duas tigelas.','Divide into 2 bowls and wait one minute.','Divide into two large bowls.'])
+  assert.equal(supportedCaptionNumbers(field('Dividir a mistura em uma tigela.',quote)),false,quote);
+ assert.equal(supportedCaptionNumbers(field('Dividir em 1 tigela.','Divide into two bowls and wait one minute.')),false);
+ assert.equal(supportedCaptionNumbers(field('Transferir para um recipiente.','Transfer to a dish.')),true);
+ assert.equal(supportedCaptionNumbers(field('Transferir para uma tigela.','Transfer into one bowl.')),true);
+ // A field can preserve the source count explicitly rather than ignore it.
+ assert.equal(supportedCaptionNumbers(field('Dividir em duas tigelas.','Divide into two bowls.')),true);
+ assert.equal(supportedCaptionNumbers(field('Dividir em três tigelas.','Divide into two bowls.')),false);
+});
+
+test('mixed container counts remain ambiguous for a singular locative article',()=>{
+ assert.equal(supportedCaptionNumbers(field('Transferir para um recipiente.','Use one bowl and two pans.')),false);
+});
+
+test('reviewKnowledge omits the conflicting count without changing the original field',()=>{
+ const quote='Divide the mixture into two bowls.';
+ const f=field('Dividir a mistura em uma tigela.',quote);
+ const k={context:'recipe',keywords:[],fields:[f],missing_information:[]};const copy=structuredClone(k);
+ const result=reviewKnowledge(k,{duration_seconds:15,source_caption:{capture_id:'fictional',text:quote}});
+ assert.equal(result.omitted,1);assert.equal(result.knowledge.fields.length,0);assert.deepEqual(k,copy);
+});
+
+
+test('plural containers do not become singular when a count phrase needs review',()=>{
+ for(const quote of ['Divide into two ceramic bowls.','Distribute among bowls.','Divida em duas tigelas pequenas.'])
+  assert.equal(supportedCaptionNumbers(field('Dividir em uma tigela.',quote)),false,quote);
+ assert.equal(supportedCaptionNumbers(field('Colocar dois ovos em uma tigela.','Place two eggs in a bowl.')),true);
+});

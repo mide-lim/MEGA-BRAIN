@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "profile": "bounded-worker-v1",
+  "files": {
+    "SKILL.md": "1e826a08ec4b85380b2dea1b748c1c0444f0f017c433360b16960099e42c1420",
+    "references/decisions.md": "8cfdcd69a8d42f74c43eabb8f772c4c263d79f89d6afc78f3d552676b320df1c",
+    "references/delivery.md": "51b4dcce7c28975f3f8040f61f327d917c1512116df63bef67e4689e52c8a3b4",
+    "references/modes.md": "1f91c02a046b8954d22ab63982f35e9cf45a1a66428cdad5de282c6f71dff2c2",
+    "references/task-and-status.md": "cb83384c6a4d3371daa7bfb07af37f048837e14a7b72948b6c4eddc75a4c5a55",
+    "references/secrets-and-tools.md": "3c69dee23b0ba4cfc1d9721fa8b75a3f68698c52fa5e2964f56d40be47fcac89"
+  }
+}

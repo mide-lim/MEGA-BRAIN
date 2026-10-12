@@ -19,7 +19,7 @@ api("companies/"+cid,{"requireBoardApprovalForNewAgents":False},"PATCH")
 heartbeat={"enabled":False,"intervalSec":0,"wakeOnDemand":False,"maxConcurrentRuns":1,"maxDailyRuns":10,"maxTurnContinuation":{"enabled":False,"maxAttempts":0}}
 agent=api("companies/"+cid+"/agents",{
     "name":"Synthetic rejected pilot","adapterType":"codex_local",
-    "adapterConfig":{"command":"/usr/local/bin/codex-pilot","engine":"cli","cwd":"/tmp/pilot-fixture","timeoutSec":30,"env":{"CODEX_HOME":{"type":"plain","value":"/tmp/pilot-fixture/codex-home"}}},
+    "adapterConfig":{"command":"/usr/local/bin/codex-pilot","engine":"cli","paperclipSkillProfile":"bounded-worker-v1","cwd":"/tmp/pilot-fixture","timeoutSec":30,"env":{"CODEX_HOME":{"type":"plain","value":"/tmp/pilot-fixture/codex-home"}}},
     "runtimeConfig":{"heartbeat":heartbeat},
 })
 aid=agent["id"]
@@ -49,4 +49,6 @@ calls=Path("/tmp/pilot-attempts").read_text().splitlines()
 assert calls==["exec"], calls
 mcp=json.loads(Path("/tmp/mcp-probe-result.json").read_text())
 assert mcp=={"cliParsedServers":2,"authenticatedToolLists":2,"deniedRequests":10,"modelCalls":0}
-print(json.dumps({"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75,"mcp":mcp}))
+profile=json.loads(Path("/tmp/profile-probe-result.json").read_text())
+assert profile["profile"]=="bounded-worker-v1" and profile["coreCharacters"]<7000
+print(json.dumps({"profile":profile,"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75,"mcp":mcp}))

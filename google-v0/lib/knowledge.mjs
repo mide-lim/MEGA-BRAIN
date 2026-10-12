@@ -1,3 +1,5 @@
+import {supportedCaptionNumbers} from './caption-quantities.mjs';
+export {supportedCaptionNumbers} from './caption-quantities.mjs';
 export const contexts=['recipe','technology','health','travel','business','home','general'];
 export const fieldKinds=['recipe_name','ingredient','quantity','preparation_time','serving_count','procedure','tool','concept','problem','requirement','place','activity','price','material','product','practice','benefit_claim','caution','reference','other'];
 export const fieldLabels={recipe_name:'Receita',ingredient:'Ingrediente',quantity:'Quantidade',preparation_time:'Tempo de preparo',serving_count:'Rendimento',procedure:'Etapa',tool:'Ferramenta',concept:'Conceito',problem:'Problema resolvido',requirement:'Requisito',place:'Lugar',activity:'Atividade',price:'Preço mencionado',material:'Material',product:'Produto',practice:'Prática',benefit_claim:'Benefício alegado',caution:'Cuidado',reference:'Referência citada',other:'Informação'};
@@ -19,11 +21,6 @@ function evidence(items,record){
   if(!['transcript','video'].includes(e.source)||typeof e.excerpt!=='string'||!e.excerpt.trim()||e.excerpt.length>1200||!Number.isFinite(e.start_seconds)||!Number.isFinite(e.end_seconds)||e.start_seconds<0||e.end_seconds<e.start_seconds||e.end_seconds>record.duration_seconds)throw Error('Evidência de conhecimento inválida.');
   if(e.source==='transcript'&&(!text||!text.includes(normalize(e.excerpt))))throw Error('Citação de conhecimento não consta na transcrição.');
  }
-}
-export function supportedCaptionNumbers(field){
- if(!['ingredient','quantity','preparation_time','serving_count','procedure'].includes(field.kind)||!field.evidence?.length||field.evidence.some(e=>e.source!=='caption'))return true;
- const numerals=text=>{const words={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,uno:1,una:1,due:2,tre:3,quattro:4,cinque:5,sei:6,sette:7,otto:8,nove:9,dieci:10,mezza:0.5,mezzo:0.5,um:1,uma:1,dois:2,duas:2,tres:3,quatro:4,cinco:5,seis:6,sete:7,oito:8,nove:9,dez:10,meia:0.5,meio:0.5};const normalized=String(text).normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/1\s*\/\s*2|½/g,'0.5').replace(/\b[a-z]+\b/g,w=>words[w]===undefined?w:String(words[w]));return (normalized.match(/\d+(?:[.,]\d+)?/g)??[]).map(n=>Number(n.replace(',','.')));};
- const known=numerals(field.evidence.map(e=>e.excerpt).join(' '));return numerals(field.value).every(n=>known.includes(n));
 }
 export function reviewKnowledge(value,record){
  if(!value||!contexts.includes(value.context)||!Array.isArray(value.keywords)||value.keywords.length>20||!Array.isArray(value.fields)||value.fields.length>40||!Array.isArray(value.missing_information)||value.missing_information.length>20||value.missing_information.some(s=>typeof s!=='string'||s.length>1000))throw Error('Estrutura de conhecimento inválida.');

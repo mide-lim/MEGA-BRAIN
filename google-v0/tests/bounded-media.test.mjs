@@ -28,5 +28,5 @@ test('metadata/HEAD do not consume transfer and metadata exposes no Google beare
 });
 test('category display merges case, accents and curated language aliases without altering reports',()=>{
  const videos=[{analysis:{categories:['culinária','Receitas']}},{analysis:{categories:['Culinária','receitas','Productivity','Tools']}}];const copy=JSON.stringify(videos);
- assert.deepEqual(categoryList(videos),['Culinária','Ferramentas','Produtividade','Receitas']);assert.equal(categoryMatches(videos[0],'Culinária'),true);assert.equal(JSON.stringify(videos),copy);
+ assert.deepEqual(categoryList(videos),['Ferramentas','Produtividade','Receitas e preparo']);assert.equal(categoryMatches(videos[0],'Culinária'),true);assert.equal(JSON.stringify(videos),copy);
 });

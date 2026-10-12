@@ -1,12 +1,12 @@
 import {categoryDefinitions,categoryKey,categoryLabel,resolveCategories} from './category-taxonomy.mjs';
 export const categoryName=categoryLabel;
 export function categoryList(videos){const names=new Map();for(const v of videos)for(const c of v.analysis?.categories??[]){const name=categoryName(c);if(name&&!names.has(categoryKey(name)))names.set(categoryKey(name),name);}return [...names.values()].sort((a,b)=>a.localeCompare(b,'pt-BR'));}
-export function categoryMatches(video,selected){return selected==='Todos'||(video.analysis?.categories??[]).some(c=>categoryKey(categoryName(c))===categoryKey(selected));}
+export function categoryMatches(video,selected){return selected==='Todos'||(video.analysis?.categories??[]).some(c=>categoryKey(categoryName(c))===categoryKey(categoryName(selected)));}
 
 // Reads legacy labels and new official IDs without rewriting either analysis.
 export function categoryPaths(video){
- const {ids}=resolveCategories(video.analysis?.categories??[]);
- return categoryDefinitions.filter(c=>ids.includes(c.id)).map(({group,name})=>({group,name}));
+ const {primaryId}=resolveCategories(video.analysis?.categories??[]);
+ return categoryDefinitions.filter(c=>c.id===primaryId).map(({group,name})=>({group,name}));
 }
 export function categoryTree(videos){
  const paths=videos.map(categoryPaths);

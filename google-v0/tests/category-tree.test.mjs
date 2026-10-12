@@ -5,8 +5,8 @@ test('hierarchy deduplicates counts, preserves categories and retains unknown th
  const videos=[{analysis:{categories:['Receitas','Receitas Culinárias','Nutrição']}},{analysis:{categories:['Programação','Productivity']}},{analysis:{categories:['Tema novo']}}];
  const original=JSON.stringify(videos),tree=categoryTree(videos);
  assert.equal(tree.find(g=>g.name==='Alimentação').count,1);
- assert.equal(tree.find(g=>g.name==='Alimentação').children.find(c=>c.name==='Receitas').count,1);
- assert.ok(hierarchyMatches(videos[0],'Alimentação','Nutrição'));
+ assert.equal(tree.find(g=>g.name==='Alimentação').children.find(c=>c.name==='Receitas e preparo').count,1);
+ assert.ok(!hierarchyMatches(videos[0],'Alimentação','Nutrição e suplementação'));
  assert.ok(!hierarchyMatches(videos[1],'Alimentação'));
  assert.ok(hierarchyMatches(videos[2],'Outros temas','A organizar'));
  assert.equal(JSON.stringify(videos),original);
@@ -34,7 +34,7 @@ test('existing terms retain coverage under the renamed branches',()=>{
  for(const term of ['Marketing digital','Redes sociais','Dropshipping'])
   assert.deepEqual(categoryPaths(video([term])),[marketing]);
  assert.deepEqual(categoryPaths(video(['productivity'])),[path('Tecnologia','Ferramentas e produtividade')]);
- assert.deepEqual(categoryPaths(video(['Comida japonesa'])),[path('Alimentação','Receitas')]);
+ assert.deepEqual(categoryPaths(video(['Comida japonesa'])),[path('Alimentação','Receitas e preparo')]);
 });
 
 test('comparison normalizes case, accents and spaces and counts each source once',()=>{
@@ -51,9 +51,9 @@ test('comparison normalizes case, accents and spaces and counts each source once
  assert.ok(hierarchyMatches(videos[1],marketing.group,marketing.name));
 });
 
-test('mixed domains retain unknown-label fallback and empty categories stay empty',()=>{
+test('mixed domains navigate by primary destination; empty categories stay empty',()=>{
  const mixed=video(['Desenvolvimento de Software','Marketing','Tema fictício não coberto']);
- assert.deepEqual(categoryPaths(mixed),[development,marketing,fallback]);
+ assert.deepEqual(categoryPaths(mixed),[development]);
  assert.deepEqual(categoryPaths(video(['Negócios','Branding'])),[marketing]);
  assert.deepEqual(categoryPaths(video([])),[]);
  assert.deepEqual(categoryPaths({}),[]);
@@ -70,7 +70,7 @@ test('navigation leaves all source data, candidate analysis and supplement untou
  const snapshot=JSON.stringify(record);
  const freeze=value=>{if(value&&typeof value==='object'){Object.freeze(value);Object.values(value).forEach(freeze);}};
  freeze(record);
- assert.deepEqual(categoryPaths(record),[development,marketing,fallback]);
+ assert.deepEqual(categoryPaths(record),[marketing]);
  categoryTree([record]);hierarchyMatches(record,marketing.group,marketing.name);
  assert.equal(JSON.stringify(record),snapshot);
 });

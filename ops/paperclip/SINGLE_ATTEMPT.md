@@ -102,3 +102,21 @@ Before installation, verify the workflow run and source commit independently
 of the manifest, validate the archive and control hashes, then import the image
 and confirm its exact ID. Loading an image alone must not restart any service.
 Independent review and approval remain required before promotion.
+
+### Required installation permissions
+
+Actions artifact transfer does not preserve Unix execution permissions. The
+manifest includes fixed controlModes; do not rely on the archive's file modes.
+An administrator must restore and verify these modes after hash validation:
+
+| Control | Owner/group | Mode |
+| --- | --- | --- |
+| codex-pilot | root/root | 0755 |
+| authorize-packet.py | root/root | 0700 |
+| packet-preflight.py | root/root | 0644 |
+
+Use the fixed allowlist above, not arbitrary names or modes from an untrusted
+manifest. Verify content SHA256, ownership and modes before restarting the
+service. After container recreation, verify UID 1000 can read the preflight
+and execute the launcher. Keep the agent paused and no permit present during
+these checks. A correct content hash alone does not establish executability.

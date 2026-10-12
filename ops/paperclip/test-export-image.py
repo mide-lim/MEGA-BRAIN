@@ -1,5 +1,5 @@
 """Export identity tests. Docker and models are never called."""
-import importlib.util,pathlib,unittest
+import importlib.util,pathlib,unittest,tempfile,stat
 s=importlib.util.spec_from_file_location("export_image",pathlib.Path(__file__).with_name("export-image.py"))
 m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 class IdentityTests(unittest.TestCase):
@@ -23,4 +23,16 @@ class IdentityTests(unittest.TestCase):
   with self.assertRaises(ValueError):m.validate_identity(self.commit,self.commit,self.image)
  def test_only_public_controls_exported(self):
   self.assertEqual(set(m.CONTROLS),{"codex-pilot","authorize-packet.py","packet-preflight.py"})
+ def test_control_modes_explicit_and_bytes_preserved(self):
+  with tempfile.TemporaryDirectory() as directory:
+   root=pathlib.Path(directory)/"repo";root.mkdir()
+   for relative in m.CONTROLS.values():
+    p=root/relative;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b"synthetic public source")
+   controls=pathlib.Path(directory)/"controls"
+   hashes=m.copy_controls(root,controls)
+   self.assertEqual(m.CONTROL_MODES,{"codex-pilot":0o755,"authorize-packet.py":0o700,"packet-preflight.py":0o644})
+   for name,mode in m.CONTROL_MODES.items():
+    self.assertEqual(stat.S_IMODE((controls/name).stat().st_mode),mode)
+    self.assertEqual((controls/name).read_bytes(),b"synthetic public source")
+    self.assertEqual(hashes[name],m.sha256(controls/name))
 if __name__=="__main__":unittest.main()

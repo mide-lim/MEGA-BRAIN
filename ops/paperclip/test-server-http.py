@@ -45,4 +45,6 @@ for second in range(75):
     time.sleep(1)
 calls=Path("/tmp/pilot-attempts").read_text().splitlines()
 assert calls==["exec"], calls
-print(json.dumps({"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75}))
+mcp=json.loads(Path("/tmp/mcp-probe-result.json").read_text())
+assert mcp=={"cliParsedServers":2,"authenticatedToolLists":2,"deniedRequests":10,"modelCalls":0}
+print(json.dumps({"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75,"mcp":mcp}))

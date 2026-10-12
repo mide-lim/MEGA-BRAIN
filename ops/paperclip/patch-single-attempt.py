@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    "packages/adapters/codex-local/src/server/codex-home.ts": "d013f3334e7a7822dcf0aa4c5753c68be9d79fe4b49d964a4d3f8d57bd72a353",
     "server/src/services/heartbeat.ts": "ca824cac19a745bf96931eef59fb84408c795ecb8922b4d092044f1dec056ec5",
     "server/dist/services/heartbeat.js": "2e1b0ad8d773172b9d4a888aa32cc10efb519b9e1326b532969ef1f83c9b5e58",
     "server/src/services/recovery/service.ts": "fdcf5cb37d08bd9eb49d8a28580a770485a37306822052b9d18f71c7f3bb6d56",
@@ -35,6 +36,8 @@ def replace_once(text, old, new):
     return text.replace(old, new, 1)
 
 def transform(path, text):
+    if path.endswith("codex-home.ts"):
+        return replace_once(text, "`headers = { Authorization =", "`http_headers = { Authorization =")
     if path.endswith(("heartbeat.ts", "heartbeat.js")):
         if path.endswith(".js"):
             anchor = "async function scheduleBoundedRetryForRun(run, agent, opts) {"

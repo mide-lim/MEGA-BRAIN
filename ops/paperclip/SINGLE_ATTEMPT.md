@@ -120,3 +120,11 @@ manifest. Verify content SHA256, ownership and modes before restarting the
 service. After container recreation, verify UID 1000 can read the preflight
 and execute the launcher. Keep the agent paused and no permit present during
 these checks. A correct content hash alone does not establish executability.
+
+## Compatibilidade de autenticação dos MCPs internos
+
+O overlay também corrige o campo gerado pelo adaptador Codex de `headers` para `http_headers`, reconhecido pelo CLI fixado. O SHA256 do gerador upstream é conferido antes de qualquer escrita. Os valores e as verificações de identidade dos tokens permanecem no mecanismo upstream. Uma edição manual da configuração não basta, pois o adaptador a gera novamente em cada execução.
+
+A fixture isolada inspeciona os cabeçalhos com o CLI real, sem chamar um modelo, e consulta as listas de ferramentas dos dois MCPs com tokens apenas do banco descartável. Também verifica recusas sem token, com token inválido, vencido, de outro run e do tipo de autenticação inadequado. Nenhuma ferramenta de escrita é chamada. Tokens não são impressos e credenciais de produção não são montadas.
+
+Os testes de uma tentativa e ausência de sucessor continuam obrigatórios. A correção deve receber revisão independente e aprovação conforme [política de revisão](../../docs/REVIEW_POLICY.md) antes de instalar. A redução do contexto das skills fica em uma mudança separada.

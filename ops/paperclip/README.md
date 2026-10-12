@@ -1,6 +1,6 @@
 # Controle de execução na VPS
 
-Estes arquivos registram a implementação instalada em `/opt/paperclip`. Não contêm credenciais.
+Estes arquivos registram controles de execução para `/opt/paperclip`. A presença no repositório não comprova que a versão está instalada. Não contêm credenciais.
 
 - `codex-pilot`: launcher montado somente para leitura no contêiner; exige login ChatGPT, trava global, packet válido, hash, tarefa, orçamento e autorização de uso único. Aceita execução Worker e correção explicitamente solicitada; recusa app-server e bypass do sandbox.
 - `authorize-packet.py`: helper root para emitir uma autorização; valida packet, tarefa Paperclip, commit base, histórico e limites. `--dry-run` não cria autorização. Nunca inicia o agente.
@@ -11,3 +11,5 @@ A cópia de `scripts/check_task_packets.py` em `/opt/paperclip/packet-preflight.
 O runtime atual não provisiona Reviewer. Uma revisão por modelo exigirá sessão e ambiente de leitura independentes antes de habilitar o papel. Não criar autorizações para esse papel com o helper atual.
 
 [Fluxo](../../docs/AGENT_WORKFLOW.md)
+
+[Proposta de controle de tentativa única](SINGLE_ATTEMPT.md) — requer revisão independente e promoção administrativa.

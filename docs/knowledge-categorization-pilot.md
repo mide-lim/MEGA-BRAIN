@@ -58,6 +58,8 @@ Somente após revisar o inventário e este documento:
 
 Exemplos de fixtures devem ser identificados como fictícios. Não transformar os exemplos em evidência de cobertura da amostra real.
 
+Os [critérios de aceite e casos sintéticos](category-mapping-acceptance.md) detalham o baseline e as expectativas propostas para revisão antes do PR de comportamento.
+
 ## Critérios de aceite desta etapa documental
 
 - Conceitos distintos e vinculados ao schema observado.

@@ -23,9 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Test launcher and task policy without Codex
-        run: python3 scripts/test_orchestration.py
+        run: |
+          python3 scripts/test_orchestration.py
+          python3 ops/paperclip/test-export-image.py
       - name: Build fixed upstream with reviewed control overlay
-        run: docker build --file ops/paperclip/Dockerfile.single-attempt --tag paperclip-control-candidate .
+        run: |
+          docker build --file ops/paperclip/Dockerfile.single-attempt \
+            --label org.opencontainers.image.revision="${{ github.sha }}" \
+            --label org.opencontainers.image.source=https://github.com/mide-lim/MEGA-BRAIN \
+            --tag paperclip-control-candidate .
       - name: Validate compiled JavaScript
         run: |
           docker run --rm --network none --read-only --entrypoint node paperclip-control-candidate --check /app/server/dist/services/heartbeat.js
@@ -38,3 +44,16 @@ jobs:
 
       - name: Exercise full server and isolated PostgreSQL without a model
         run: python3 ops/paperclip/test-server-isolated.py --image paperclip-control-candidate
+
+      - name: Export tested image and reviewed controls on main only
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: python3 ops/paperclip/export-image.py --commit "${{ github.sha }}" --output release
+      - name: Upload temporary installation bundle
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: paperclip-release-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1

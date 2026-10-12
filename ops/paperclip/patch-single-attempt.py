@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 EXPECTED = {
+    "packages/adapters/codex-local/src/server/execute.ts": "d2681e44c91cfd3384dbeac9bd6e520a511b53f86b8270c1a93cce8eaeed5571",
     "packages/adapters/codex-local/src/server/codex-home.ts": "d013f3334e7a7822dcf0aa4c5753c68be9d79fe4b49d964a4d3f8d57bd72a353",
     "server/src/services/heartbeat.ts": "ca824cac19a745bf96931eef59fb84408c795ecb8922b4d092044f1dec056ec5",
     "server/dist/services/heartbeat.js": "2e1b0ad8d773172b9d4a888aa32cc10efb519b9e1326b532969ef1f83c9b5e58",
@@ -36,6 +37,15 @@ def replace_once(text, old, new):
     return text.replace(old, new, 1)
 
 def transform(path, text):
+    if path.endswith("codex-local/src/server/execute.ts"):
+        text = replace_once(text, 'import { resolveCodexDesiredSkillNames } from "./skills.js";', 'import { resolveCodexDesiredSkillNames } from "./skills.js";\nimport { assertBoundedWorkerEligibility, selectBoundedWorkerProfile, verifyBoundedWorkerProfileMounted } from "/app/skill-profiles/bounded-worker/profile.mjs";')
+        text = replace_once(text, 'export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {', 'export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {\n  assertBoundedWorkerEligibility({ config: ctx.config, agent: ctx.agent });')
+        text = replace_once(text, '  const codexSkillEntries = (await readPaperclipRuntimeSkillEntries(config, __moduleDir))', '  const rawCodexSkillEntries = (await readPaperclipRuntimeSkillEntries(config, __moduleDir))')
+        anchor = '  const desiredSkillNames = resolveCodexDesiredSkillNames(config, codexSkillEntries);'
+        text = replace_once(text, anchor, '  const codexSkillEntries = await selectBoundedWorkerProfile({ config, agent, remote: executionTargetIsRemote, connectorSkillDigest, entries: rawCodexSkillEntries });\n' + anchor)
+        anchor = '    const timeoutSec = resolveAdapterExecutionTargetTimeoutSec('
+        text = replace_once(text, anchor, '    await verifyBoundedWorkerProfileMounted({ config, skillsHome: codexSkillsDir });\n' + anchor)
+        return text
     if path.endswith("codex-home.ts"):
         return replace_once(text, "`headers = { Authorization =", "`http_headers = { Authorization =")
     if path.endswith(("heartbeat.ts", "heartbeat.js")):

@@ -43,6 +43,12 @@ jobs:
             --mount type=bind,src="${{ github.workspace }}/ops/paperclip/test-image-boundaries.cjs",dst=/tmp/test-image-boundaries.cjs,readonly \
             paperclip-control-candidate /tmp/test-image-boundaries.cjs
 
+      - name: Verify bounded skill selection and actual upstream mount without a model
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev --entrypoint node \
+            --mount type=bind,src="${{ github.workspace }}/ops/paperclip/test-bounded-profile.mjs",dst=/tmp/test-bounded-profile.mjs,readonly \
+            paperclip-control-candidate --import /app/server/node_modules/tsx/dist/loader.mjs /tmp/test-bounded-profile.mjs
+
       - name: Exercise full server and isolated PostgreSQL without a model
         run: python3 ops/paperclip/test-server-isolated.py --image paperclip-control-candidate
 

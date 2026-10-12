@@ -21,7 +21,7 @@ export function workerRuntime(config,preset,{withHandler=false}={}){
   const tools=mediaTools({downloadEnabled:config.downloads_enabled===true});
   const operations=googleOperations({api,storage,tools,preset,config,gate:workerReservationGate(store)});
   if(config.analysis_revision&&config.analysis_revision!==preset.version)throw new Error('Preset diverge da revisão autorizada.');
-  const flow=new WorkerFlow({store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null});
+  const flow=new WorkerFlow({store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null});
   if(!withHandler)return flow;
   const queue=new WorkerQueue({api,store,workerOrigin:config.worker_origin,enabled:config.dispatch_enabled===true});
   return workerHandler({flow,queue,authorize:workerAuthorization({audience:config.worker_origin})});

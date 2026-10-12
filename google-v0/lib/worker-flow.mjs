@@ -1,3 +1,4 @@
+import {validateBatch} from './batch-budget.mjs';
 import {createHash} from 'node:crypto';
 
 const stages=['upload','transcription','analysis'];
@@ -13,17 +14,19 @@ const failureDiagnostic=error=>({operation_step:['read_media','extract_audio','p
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.
 export class WorkerFlow {
-  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,clock=()=>Date.now()}){
+  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,clock=()=>Date.now()}){
     if(analysisRevision!==null&&!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision))throw new Error('Revisão de análise inválida.');
-    this.analysisRevision=analysisRevision;
+    this.analysisRevision=analysisRevision;this.batchId=batchId;
+    if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
     Object.assign(this,{store,ledger,operations,quotes,clock});
-    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>20||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
+    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?30:20)||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
   async run({videoId,stage}){
     if(!validId(videoId)||!stages.includes(stage))throw new Error('Tarefa fora do escopo.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
+    if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
     const controls=(await this.store.get('settings/automation'))?.data;
     if(!controls?.enabled||(stage==='transcription'&&!controls.transcription_enabled)||(stage==='analysis'&&!controls.analysis_enabled))return {status:'paused'};
     const video=await this.store.get(`videos/${videoId}`);
@@ -74,6 +77,7 @@ export class WorkerFlow {
   async poll({videoId}){
     if(!validId(videoId))throw new Error('Vídeo inválido.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
+    if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
     const stage='transcription',id=executionId(videoId,stage),path=`jobs/${id}`,snapshot=await this.store.get(path);
     if(snapshot?.data.status!=='waiting')return {status:snapshot?.data.status??'absent'};
     if(typeof this.operations.pollTranscription!=='function')throw new Error('Consulta STT indisponível.');

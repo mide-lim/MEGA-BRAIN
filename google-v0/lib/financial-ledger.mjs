@@ -1,3 +1,4 @@
+import {batchLimits,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
 import {ongoingCostPlan} from './ongoing-costs.mjs';
 // One versioned Firestore document makes reservation and claim atomic.
 // A timeout never permits replay of a paid operation.
@@ -7,9 +8,11 @@ const stages=new Set(['upload','transcription','analysis','media_access']);
 const cents=value=>Number.isSafeInteger(value)&&value>=0;
 function validate(state){
   if(!state||state.schema_version!==1||!['allocation_cents','reserve_cents','spent_cents','reserved_cents','remaining_credit_cents'].every(k=>cents(state[k])))throw new Error('Controle financeiro inválido.');
-  if(!state.jobs||typeof state.jobs!=='object'||Array.isArray(state.jobs)||Object.keys(state.jobs).length>100)throw new Error('Livro do piloto inválido ou completo.');
+  if(!state.jobs||typeof state.jobs!=='object'||Array.isArray(state.jobs)||Object.keys(state.jobs).length>(state.batch?batchLimits.jobs:100))throw new Error('Livro do piloto inválido ou completo.');
   if(state.ongoing_commitment_cents!==undefined&&!cents(state.ongoing_commitment_cents))throw new Error('Compromisso persistente inválido.');
   if(state.pilot_envelope_cents!==undefined&&state.pilot_envelope_cents!==null&&(!cents(state.pilot_envelope_cents)||state.pilot_envelope_cents<1||state.pilot_envelope_cents>state.allocation_cents))throw new Error('Orçamento do piloto inválido.');
+  if(Buffer.byteLength(JSON.stringify(state))>600000)throw new Error('Livro excede tamanho seguro do piloto.');
+  if(state.batch){validateBatch(state.batch);batchUsage(state);}else if(Object.values(state.jobs).some(j=>j?.batch_id!==undefined))throw new Error('Execução de lote sem configuração.');
   let reserved=0;
   for(const [id,j]of Object.entries(state.jobs)){
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
@@ -22,7 +25,7 @@ export function newLedger(){return {schema_version:1,allocation_cents:150000,res
   coverage_verified:false,balance_observed_at:null,credit_expires_at:null,balance_max_age_seconds:3600,expiry_margin_hours:72,
   ongoing_commitment_cents:0,ongoing_storage_planned_bytes:0,ongoing_costs_observed_at:null,ongoing_costs_valid_until:null,
   paused:true,enabled_stages:{upload:false,transcription:false,analysis:false,media_access:false},jobs:{}};}
-export function reservationDecision(state,{now=Date.now(),maximumCents,stage}={}){
+export function reservationDecision(state,{now=Date.now(),maximumCents,stage,videoId}={}){
   validate(state);const reasons=[];
   if(!cents(maximumCents)||maximumCents===0||!stages.has(stage))reasons.push('Estimativa positiva e etapa válidas são obrigatórias.');
   if(state.paused!==false||state.enabled_stages?.[stage]!==true)reasons.push('Etapa pausada ou desligada.');
@@ -36,7 +39,8 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage}={}
   // remaining_credit_cents must conservatively include account-wide consumption.
   const accountAvailable=Math.min(state.remaining_credit_cents,state.allocation_cents-state.spent_cents)-state.reserve_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
   const pilotAvailable=state.pilot_envelope_cents==null?accountAvailable:state.pilot_envelope_cents-state.spent_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
-  const available=Math.min(accountAvailable,pilotAvailable);
+  const batch=batchDecision(state,{videoId,maximumCents});reasons.push(...batch.reasons);
+  const available=Math.min(accountAvailable,pilotAvailable,batch.available_cents);
   if(!Number.isSafeInteger(available)||maximumCents>available)reasons.push('Reserva insuficiente.');
   return {ready:reasons.length===0,reasons,available_cents:Math.max(0,available),uploads_enabled:stage==='upload'&&state.enabled_stages.upload===true,
     media_access_enabled:stage==='media_access'&&state.enabled_stages.media_access===true,
@@ -60,11 +64,12 @@ export class FinancialLedger{
     const snapshot=await this.store.get(this.path);if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
-    if(Object.values(state.jobs).some(j=>j.video_id===videoId&&j.stage===stage&&j.status!=='cancelled'&&(['reserved','started','uncertain'].includes(j.status)||j.analysis_revision===analysisRevision)))throw new Error('Etapa do vídeo já reservada, concluída ou com resultado incerto.');
-    if(Object.keys(state.jobs).length>=100)throw new Error('Livro do piloto completo; reconciliação necessária.');
-    const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage});if(!decision.ready)throw new Error(decision.reasons.join(' '));
+    if(Object.values(state.jobs).some(j=>j.video_id===videoId&&j.stage===stage&&j.status!=='cancelled'&&(state.batch||['reserved','started','uncertain'].includes(j.status)||j.analysis_revision===analysisRevision)))throw new Error('Etapa do vídeo já reservada, concluída ou com resultado incerto.');
+    if(Object.keys(state.jobs).length>=(state.batch?batchLimits.jobs:100))throw new Error('Livro do piloto completo; reconciliação necessária.');
+    const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage,videoId});if(!decision.ready)throw new Error(decision.reasons.join(' '));
     const job={video_id:videoId,stage,maximum_cents:maximumCents,status:'reserved',created_at:new Date(this.clock()).toISOString()};
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;
+    if(state.batch)job.batch_id=state.batch.id;
     await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents},{updateTime:snapshot.updateTime});
     return {...decision,execution_id:executionId};
   }
@@ -75,7 +80,7 @@ export class FinancialLedger{
     const updated={...job},changes={};
     if(action==='start'){
       if(job.status!=='reserved')throw new Error('Execução não pode ser repetida.');
-      const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage});
+      const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
       if(!decision.ready)throw new Error(decision.reasons.join(' '));updated.status='started';
     }else if(action==='uncertain'){
       if(job.status!=='started')throw new Error('Apenas execução iniciada pode ficar incerta.');updated.status='uncertain';changes.paused=true;

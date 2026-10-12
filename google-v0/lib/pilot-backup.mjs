@@ -27,7 +27,7 @@ function objectDescriptor(object){
  return {bucket,name:object.name,generation:object.generation,bytes:object.bytes,sha256:object.sha256};
 }
 function objectCatalog(objects){
- if(!Array.isArray(objects)||objects.length>200)throw new Error('Catálogo acima do limite do piloto.');
+ if(!Array.isArray(objects)||objects.length>400)throw new Error('Catálogo acima do limite do piloto.');
  const list=objects.map(objectDescriptor).sort((a,b)=>a.name.localeCompare(b.name));
  if(new Set(list.map(o=>o.name)).size!==list.length)throw new Error('Objeto duplicado.');
  return list;

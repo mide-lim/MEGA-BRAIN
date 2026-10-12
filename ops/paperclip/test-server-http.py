@@ -36,8 +36,10 @@ while time.monotonic()<deadline:
         terminal=runs[0];break
     time.sleep(1)
 assert terminal is not None, "No terminal fixture run"
+if terminal.get("errorCode")!="pilot_admission_rejected":
+    print(api("heartbeat-runs/"+terminal["id"]+"/log").get("content","")[-4000:])
 assert terminal["status"]=="failed", terminal["status"]
-assert terminal["errorCode"]=="pilot_admission_rejected", terminal.get("errorCode")
+assert terminal["errorCode"]=="pilot_admission_rejected", (terminal.get("errorCode"), terminal.get("error"))
 # Observe beyond the two upstream 30-second retry windows.
 for second in range(75):
     runs=api("companies/"+cid+"/heartbeat-runs?agentId="+aid+"&limit=20")
@@ -45,4 +47,6 @@ for second in range(75):
     time.sleep(1)
 calls=Path("/tmp/pilot-attempts").read_text().splitlines()
 assert calls==["exec"], calls
-print(json.dumps({"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75}))
+mcp=json.loads(Path("/tmp/mcp-probe-result.json").read_text())
+assert mcp=={"cliParsedServers":2,"authenticatedToolLists":2,"deniedRequests":10,"modelCalls":0}
+print(json.dumps({"companyId":cid,"agentId":aid,"runs":1,"fakeLauncherCalls":1,"errorCode":terminal["errorCode"],"observationSeconds":75,"mcp":mcp}))

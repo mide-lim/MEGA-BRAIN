@@ -23,12 +23,15 @@ try:
     else: raise AssertionError("Fixture PostgreSQL did not become ready")
     # No ports are published. Trusted mode is confined to loopback inside this container.
     command("docker","run","-d","--name",server,"--network",network,
+            "-e","PAPERCLIP_AGENT_JWT_SECRET=synthetic-mcp-fixture-secret-only",
             "-e","DATABASE_URL=postgres://fixture:synthetic-test-only@db:5432/fixture",
             "-e","HOST=127.0.0.1","-e","PORT=3100","-e","PAPERCLIP_HOME=/paperclip",
             "-e","PAPERCLIP_DEPLOYMENT_MODE=local_trusted","-e","PAPERCLIP_DEPLOYMENT_EXPOSURE=private",
             "-e","PAPERCLIP_MIGRATION_AUTO_APPLY=true","-e","SERVE_UI=false",
             "--mount","type=bind,src="+str(root/"fixture-codex-pilot")+",dst=/usr/local/bin/codex-pilot,readonly",
             "--mount","type=bind,src="+str(root/"test-server-http.py")+",dst=/tmp/test-server-http.py,readonly",
+            "--mount","type=bind,src="+str(root/"probe-mcp-headers.py")+",dst=/tmp/probe-mcp-headers.py,readonly",
+            "--mount","type=bind,src="+str(root/"mint-fixture-tokens.mjs")+",dst=/tmp/mint-fixture-tokens.mjs,readonly",
             args.image)
     created.append(("container",server))
     command("docker","exec",server,"mkdir","-p","/tmp/pilot-fixture/codex-home")

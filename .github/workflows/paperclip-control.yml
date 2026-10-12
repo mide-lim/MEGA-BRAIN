@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 scripts/test_orchestration.py
           python3 ops/paperclip/test-export-image.py
+          python3 ops/paperclip/test-mcp-header-patch.py
       - name: Build fixed upstream with reviewed control overlay
         run: |
           docker build --file ops/paperclip/Dockerfile.single-attempt \

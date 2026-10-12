@@ -144,6 +144,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_paid_api_and_sandbox_bypass(self):
         self.assertEqual(self.run_launcher(extra_env={"OPENAI_API_KEY": "fixture"}), 78)
+        self.assertFalse((self.pilot / "allow-once").exists())
         for args in (["exec", "--yolo"], ["exec", "--sandbox=danger-full-access"], ["app-server"]):
             self.assertEqual(self.run_launcher(args=args), 78)
         self.assertEqual(self.model_calls, 0)

@@ -18,19 +18,7 @@ repo=pathlib.Path('/workspaces/MEGA-BRAIN').resolve()
 with open(root/'launch.lock','a') as lock:
     try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError: deny('global concurrency limit reached')
-    if os.environ.get('OPENAI_API_KEY'): deny('paid API credentials forbidden')
-    auth=pathlib.Path(os.environ.get('CODEX_HOME','/paperclip/.codex'))/'auth.json'
-    try: payload=json.loads(auth.read_text())
-    except Exception: deny('ChatGPT authentication required')
-    if payload.get('OPENAI_API_KEY') or not payload.get('tokens'):
-        deny('subscription login required')
     now=time.time()
-    statefile=root/'launches.json'
-    try: state=json.loads(statefile.read_text()) if statefile.exists() else []
-    except Exception: deny('usage ledger unreadable')
-    recent=[t for t in state if now-t<86400]
-    if len(recent)>=2 or (recent and now-max(recent)<3600):
-        deny('two executions per rolling 24h, minimum one hour apart')
     permit=root/'allow-once'
     try: permission=json.loads(permit.read_text())
     except Exception: deny('a valid one-shot Task Packet authorization is required')
@@ -51,6 +39,18 @@ with open(root/'launch.lock','a') as lock:
         deny('packet task identity mismatch')
     # A validated permit allows one admission attempt, even if preflight fails.
     permit.unlink()
+    if os.environ.get('OPENAI_API_KEY'): deny('paid API credentials forbidden')
+    auth=pathlib.Path(os.environ.get('CODEX_HOME','/paperclip/.codex'))/'auth.json'
+    try: payload=json.loads(auth.read_text())
+    except Exception: deny('ChatGPT authentication required')
+    if payload.get('OPENAI_API_KEY') or not payload.get('tokens'):
+        deny('subscription login required')
+    statefile=root/'launches.json'
+    try: state=json.loads(statefile.read_text()) if statefile.exists() else []
+    except Exception: deny('usage ledger unreadable')
+    recent=[t for t in state if now-t<86400]
+    if len(recent)>=2 or (recent and now-max(recent)<3600):
+        deny('two executions per rolling 24h, minimum one hour apart')
     result=subprocess.run(['python3','/usr/local/bin/packet-preflight.py','--root',str(repo),'--packet',str(packetfile)],capture_output=True,text=True)
     if result.returncode: deny('Task Packet preflight rejected the execution')
     ledgerfile=root/'packet-launches.json'

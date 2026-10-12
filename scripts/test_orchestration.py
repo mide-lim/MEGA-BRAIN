@@ -114,6 +114,26 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(self.run_launcher(), 78)
         self.assertEqual(self.model_calls, 0)
 
+    def test_preflight_failure_consumes_permit_without_model(self):
+        self.preflight_result = 1
+        self.assertEqual(self.run_launcher(), 78)
+        self.assertFalse((self.pilot / "allow-once").exists())
+        self.preflight_result = 0
+        self.assertEqual(self.run_launcher(permit=False), 78)
+        self.assertEqual(self.model_calls, 0)
+
+    def test_two_entries_in_rolling_window(self):
+        (self.pilot / "launches.json").write_text(json.dumps([96000, 92000]))
+        self.assertEqual(self.run_launcher(), 78)
+        self.assertEqual(self.model_calls, 0)
+
+    def test_concurrent_entry_denied(self):
+        import fcntl
+        with open(self.pilot / "launch.lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(self.run_launcher(), 78)
+        self.assertEqual(self.model_calls, 0)
+
     def test_global_and_task_limits(self):
         (self.pilot / "launches.json").write_text(json.dumps([99000]))
         self.assertEqual(self.run_launcher(), 78)
@@ -124,8 +144,78 @@ class LauncherTests(unittest.TestCase):
 
     def test_paid_api_and_sandbox_bypass(self):
         self.assertEqual(self.run_launcher(extra_env={"OPENAI_API_KEY": "fixture"}), 78)
+        self.assertFalse((self.pilot / "allow-once").exists())
         for args in (["exec", "--yolo"], ["exec", "--sandbox=danger-full-access"], ["app-server"]):
             self.assertEqual(self.run_launcher(args=args), 78)
         self.assertEqual(self.model_calls, 0)
+
+class AuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        import types
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        (self.repo / "tasks").mkdir(parents=True)
+        self.state = self.root / "state"
+        self.state.mkdir()
+        self.packet = json.loads((ROOT / "tasks/MEG-2.json").read_text())
+        self.packet["execution_budget"]["worker_runs"] = 1
+        self.file = self.repo / "tasks/MEG-2.json"
+        self.file.write_text(json.dumps(self.packet))
+        self.ids = self.root / "ids.json"
+        self.ids.write_text(json.dumps({"projectId": "fixture-project", "agentId": "fixture-agent"}))
+        self.api_calls = []
+        def api(path):
+            self.api_calls.append(path)
+            if path.startswith("issues/"):
+                return {"projectId":"fixture-project", "identifier": self.packet["id"], "status":"todo"}
+            return {"status":"paused"}
+        self.module = types.ModuleType("admin_api")
+        self.module.api = api
+        self.source = (ROOT / "ops/paperclip/authorize-packet.py").read_text()
+        self.source = self.source.replace("'/srv/paperclip/workspaces/MEGA-BRAIN'", repr(str(self.repo))).replace("'/srv/paperclip/data/pilot'", repr(str(self.state))).replace("'/opt/paperclip/pilot.json'", repr(str(self.ids)))
+        self.worker_code = 0
+        self.root_code = 0
+        self.commands = []
+
+    def run_authorizer(self):
+        from contextlib import redirect_stdout
+        def run(command, **kwargs):
+            self.commands.append(command)
+            if command[0] == "python3":
+                return subprocess.CompletedProcess(command, self.root_code)
+            if "git" in command:
+                return subprocess.CompletedProcess(command, 0, stdout=self.packet["base_commit"] + "\n")
+            self.assertIn("--user", command)
+            self.assertIn("1000:1000", command)
+            return subprocess.CompletedProcess(command, self.worker_code)
+        with patch.dict(sys.modules, {"admin_api": self.module}), patch.object(sys, "argv", ["authorize-packet.py", "--packet", str(self.file), "--role", "worker", "--dry-run"]), patch("subprocess.run", side_effect=run), patch("time.time", return_value=100000), redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as result:
+                exec(compile(self.source, "authorize-packet.py", "exec"), {"__name__":"__main__"})
+        return result.exception.code
+
+    def test_root_pass_worker_fail_no_authorization(self):
+        self.worker_code = 1
+        self.assertEqual(self.run_authorizer(), "Worker UID preflight failed; no authorization created")
+        self.assertFalse((self.state / "allow-once").exists())
+        self.assertEqual(self.api_calls, [])
+
+    def test_worker_pass_dry_run_never_emits_permit(self):
+        self.assertEqual(self.run_authorizer(), 0)
+        self.assertFalse((self.state / "allow-once").exists())
+        self.assertEqual(sum("1000:1000" in command and "python3" in command for command in self.commands), 1)
+
+    def test_global_limit_prevents_authorization(self):
+        (self.state / "launches.json").write_text(json.dumps([92000, 96000]))
+        self.assertEqual(self.run_authorizer(), "Global execution limit reached")
+        self.assertFalse((self.state / "allow-once").exists())
+
+    def test_root_failure_stops_before_worker(self):
+        self.root_code = 1
+        self.assertEqual(self.run_authorizer(), "Preflight failed; no authorization created")
+        self.assertEqual(len(self.commands), 1)
+        self.assertEqual(self.api_calls, [])
+
 
 if __name__ == "__main__": unittest.main()

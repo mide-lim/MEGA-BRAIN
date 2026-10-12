@@ -13,6 +13,9 @@ if not packetfile.is_relative_to(repo/'tasks') or packetfile.suffix!='.json':
     raise SystemExit('Packet must be under the MEGA-BRAIN tasks directory')
 result=subprocess.run(['python3','/opt/paperclip/packet-preflight.py','--root',str(repo),'--packet',str(packetfile)])
 if result.returncode: raise SystemExit('Preflight failed; no authorization created')
+container_packet='/workspaces/MEGA-BRAIN/'+str(packetfile.relative_to(repo))
+worker_check=subprocess.run(['docker','exec','--user','1000:1000','--workdir','/workspaces/MEGA-BRAIN','paperclip-paperclip-1','python3','/usr/local/bin/packet-preflight.py','--root','/workspaces/MEGA-BRAIN','--packet',container_packet])
+if worker_check.returncode: raise SystemExit('Worker UID preflight failed; no authorization created')
 raw=packetfile.read_bytes();packet=json.loads(raw)
 if packet['execution_budget'][args.role+'_runs']<1:
     raise SystemExit('Packet has no budget for the selected model role; no authorization created')

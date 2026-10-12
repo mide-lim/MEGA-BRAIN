@@ -6,6 +6,7 @@ on:
       - 'scripts/test_orchestration.py'
       - '.github/workflows/paperclip-control.yml'
   push:
+    branches: [main]
     paths:
       - 'ops/paperclip/**'
       - 'scripts/test_orchestration.py'

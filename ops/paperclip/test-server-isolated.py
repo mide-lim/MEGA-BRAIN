@@ -31,7 +31,7 @@ try:
             "--mount","type=bind,src="+str(root/"test-server-http.py")+",dst=/tmp/test-server-http.py,readonly",
             args.image)
     created.append(("container",server))
-    command("docker","exec",server,"mkdir","-p","/tmp/pilot-fixture")
+    command("docker","exec",server,"mkdir","-p","/tmp/pilot-fixture/codex-home")
     output=command("docker","exec",server,"python3","/tmp/test-server-http.py",timeout=240)
     record=json.loads(output.strip().splitlines()[-1])
     # Synthetic UUID only, validated before SQL interpolation.
@@ -41,7 +41,9 @@ try:
     assert pending=="0", "A wake request remains queued: "+pending
     record["pendingWakeRequests"]=0
     print("PASS full server/database fixture: "+json.dumps(record))
-except Exception:
+except Exception as error:
+    if isinstance(error, subprocess.CalledProcessError):
+        print((error.stdout or "")[-8000:], (error.stderr or "")[-8000:])
     # This instance contains synthetic data only; tail helps CI diagnose startup failures.
     if ("container",server) in created:
         result=subprocess.run(["docker","logs","--tail","60",server],capture_output=True,text=True)

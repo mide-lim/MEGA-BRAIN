@@ -19,7 +19,7 @@ api("companies/"+cid,{"requireBoardApprovalForNewAgents":False},"PATCH")
 heartbeat={"enabled":False,"intervalSec":0,"wakeOnDemand":False,"maxConcurrentRuns":1,"maxDailyRuns":10,"maxTurnContinuation":{"enabled":False,"maxAttempts":0}}
 agent=api("companies/"+cid+"/agents",{
     "name":"Synthetic rejected pilot","adapterType":"codex_local",
-    "adapterConfig":{"command":"/usr/local/bin/codex-pilot","engine":"cli","cwd":"/tmp/pilot-fixture","timeoutSec":30},
+    "adapterConfig":{"command":"/usr/local/bin/codex-pilot","engine":"cli","cwd":"/tmp/pilot-fixture","timeoutSec":30,"env":{"CODEX_HOME":{"type":"plain","value":"/tmp/pilot-fixture/codex-home"}}},
     "runtimeConfig":{"heartbeat":heartbeat},
 })
 aid=agent["id"]

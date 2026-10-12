@@ -1,58 +1,64 @@
-// One controlled vocabulary for generation and navigation. Legacy terms are
-// editorial mappings, not claims that their meanings are identical.
-export const taxonomyVersion='categories-v1';
+// Controlled destinations. Original labels and secondary subjects remain in the analysis.
+export const taxonomyVersion='categories-v2';
 export const categoryKey=value=>String(value).normalize('NFD').replace(/\p{M}/gu,'').trim().replace(/\s+/g,' ').toLocaleLowerCase('pt-BR');
 export const categoryDefinitions=Object.freeze([
- ['receitas','Alimentação','Receitas',['receitas','panificacao','culinaria japonesa']],
- ['culinaria','Alimentação','Culinária',['culinaria','gastronomia','culinaria saudavel','dicas de restaurantes']],
- ['nutricao','Alimentação','Nutrição',['nutricao','saude e nutricao','suplementacao','alimentacao saudavel']],
- ['sustentabilidade-alimentar','Alimentação','Sustentabilidade',['alimentacao sustentavel']],
- ['desenvolvimento-software','Tecnologia','Desenvolvimento de software',['programacao','desenvolvimento backend','algoritmos','desenvolvimento de software']],
- ['inteligencia-artificial','Tecnologia','Inteligência artificial',['inteligencia artificial','automacao']],
- ['ferramentas-produtividade','Tecnologia','Ferramentas e produtividade',['ferramentas','produtividade']],
- ['hardware-setup','Tecnologia','Hardware e setup',['hardware','setup','gadgets']],
- ['design-digital','Tecnologia','Design digital',['design']],
- ['tecnologia-geral','Tecnologia','Tecnologia geral',['tecnologia']],
- ['exercicio-fisico','Saúde e bem-estar','Exercício físico',['fitness','hipertrofia','musculacao','saude e fitness']],
- ['bem-estar','Saúde e bem-estar','Bem-estar',['saude e bem-estar']],
- ['marketing-comunicacao','Trabalho e negócios','Marketing e comunicação',['marketing digital','redes sociais','dropshipping','marketing','branding']],
- ['carreira','Trabalho e negócios','Carreira',['carreira']],
- ['casa-decoracao','Casa e estilo','Casa e decoração',['arquitetura e decoracao','decoracao','utilidades domesticas','casa e arquitetura']],
- ['faca-voce-mesmo','Casa e estilo','Faça você mesmo',['faca voce mesmo']],
- ['moda-acessorios','Casa e estilo','Moda e acessórios',['moda','estilo','acessorios']],
- ['destinos-experiencias','Viagens e lugares','Destinos e experiências',['dicas de viagem','rio de janeiro','viagens e turismo','dicas de restaurantes']],
- ['a-organizar','Outros temas','A organizar',[]]
-].map(([id,group,name,terms])=>Object.freeze({id,group,name,terms:Object.freeze(terms)})));
+ ['receitas','Alimentação','Receitas e preparo',['receitas','panificacao','culinaria japonesa','culinaria','culinaria saudavel','receitas e preparo'],'Ensinar receitas e técnicas de preparo. Ingredientes saudáveis não tornam uma receita uma aula de nutrição.'],
+ ['nutricao','Alimentação','Nutrição e suplementação',['nutricao','saude e nutricao','suplementacao','alimentacao saudavel','nutricao e suplementacao'],'Explicar alimentação, nutrientes, dietas ou suplementos; não apenas mencionar ingredientes de uma receita.'],
+ ['sustentabilidade-alimentar','Alimentação','Sustentabilidade',['alimentacao sustentavel'],'Ensinar redução de desperdício e impacto ambiental da alimentação.'],
+ ['desenvolvimento-software','Tecnologia','Desenvolvimento de software',['programacao','desenvolvimento backend','algoritmos','desenvolvimento de software'],'Ensinar programação, arquitetura ou projetos de software.'],
+ ['inteligencia-artificial','Tecnologia','Inteligência artificial',['inteligencia artificial','automacao'],'Explicar ou construir sistemas de IA; o mero uso de IA em marketing não basta.'],
+ ['ferramentas-produtividade','Tecnologia','Ferramentas e produtividade',['ferramentas','produtividade'],'Organizar trabalho e aumentar produtividade com ferramentas de uso geral.'],
+ ['hardware-setup','Tecnologia','Hardware e setup',['hardware','setup','gadgets'],'Apresentar ou montar equipamentos e acessórios tecnológicos.'],
+ ['design-digital','Tecnologia','Design digital',['design'],'Criar ou inspecionar tipografia, cores e interfaces, inclusive com ferramentas de design.'],
+ ['tecnologia-geral','Tecnologia','Tecnologia geral',['tecnologia'],'Conteúdo tecnológico sem um destino específico adequado; não acumular com outro destino.'],
+ ['exercicio-fisico','Saúde e bem-estar','Exercício físico',['fitness','hipertrofia','musculacao','saude e fitness'],'Ensinar exercícios, treino e execução de movimentos. Suplementos pertencem a Nutrição e suplementação.'],
+ ['bem-estar','Saúde e bem-estar','Bem-estar',['saude e bem-estar'],'Práticas de bem-estar; não incluir receitas apenas por serem descritas como saudáveis.'],
+ ['marketing-comunicacao','Trabalho e negócios','Marketing e comunicação',['marketing digital','redes sociais','dropshipping','marketing','branding'],'Ensinar anúncios, comunicação e crescimento de marcas, inclusive usando ferramentas de IA.'],
+ ['carreira','Trabalho e negócios','Carreira',['carreira'],'Orientar decisões de carreira e busca de trabalho; projetos técnicos permanecem em Desenvolvimento de software.'],
+ ['casa-decoracao','Casa e estilo','Casa e decoração',['arquitetura e decoracao','decoracao','utilidades domesticas','casa e arquitetura'],'Apresentar soluções para espaços, arquitetura e decoração.'],
+ ['faca-voce-mesmo','Casa e estilo','Faça você mesmo',['faca voce mesmo'],'Ensinar a fabricar ou reparar objetos; a aplicação decorativa pode ser assunto secundário.'],
+ ['moda-acessorios','Casa e estilo','Moda e acessórios',['moda','estilo','acessorios'],'Ensinar uso, combinação ou escolha de roupas e acessórios; estratégia de marca pertence a Marketing.'],
+ ['destinos-experiencias','Viagens e lugares','Destinos e experiências',['dicas de viagem','rio de janeiro','viagens e turismo'],'Recomendar destinos, passeios e experiências; estabelecimentos para comer têm destino próprio.'],
+ ['onde-comer','Viagens e lugares','Onde comer',['dicas de restaurantes','restaurantes','onde comer'],'Recomendar restaurantes, cafés e estabelecimentos; preparo de pratos pertence a Receitas e preparo.'],
+ ['a-organizar','Outros temas','A organizar',[],'Usar sozinho e somente quando nenhum destino servir.']
+].map(([id,group,name,terms,scope])=>Object.freeze({id,group,name,terms:Object.freeze(terms),scope})));
 export const categoryIds=Object.freeze(categoryDefinitions.map(c=>c.id));
 const byId=new Map(categoryDefinitions.map(c=>[c.id,c]));
 const aliases=new Map([['productivity','Produtividade'],['tools','Ferramentas'],['receitas culinarias','Receitas'],['comida japonesa','Culinária japonesa']]);
 export function categoryLabel(value){
  if(typeof value!=='string'||!value.trim())return null;
- const text=value.trim().replace(/\s+/g,' ');
- return byId.get(text)?.name??aliases.get(categoryKey(text))??text.charAt(0).toLocaleUpperCase('pt-BR')+text.slice(1);
+ const raw=value.trim().replace(/\s+/g,' '),text=aliases.get(categoryKey(raw))??raw;
+ const id=categoryKey(text)==='culinaria'?'receitas':categoryKey(text);
+ return byId.get(id)?.name??text.charAt(0).toLocaleUpperCase('pt-BR')+text.slice(1);
 }
 const topicTerms=new Set(['paes','cafe da manha','inovacao','esportes','pratos principais','petiscos']);
 const broadGroups=new Map([['casa','Casa e estilo'],['negocios','Trabalho e negócios'],['saude','Saúde e bem-estar']]);
 const termsById=new Map(categoryDefinitions.map(c=>[c.id,new Set(c.id==='a-organizar'?[categoryKey(c.name)]:c.terms)]));
 export function resolveCategories(values=[]){
  const terms=values.map(value=>({value,key:categoryKey(categoryLabel(value)??'')}));
- const found=new Set();
- for(const c of categoryDefinitions)if(terms.some(t=>t.value===c.id||termsById.get(c.id).has(t.key)))found.add(c.id);
+ const ordered=[];
+ for(const t of terms)for(const c of categoryDefinitions)if(t.value===c.id||termsById.get(c.id).has(t.key))if(!ordered.includes(c.id))ordered.push(c.id);
+ const found=new Set(ordered.filter(id=>id!=='a-organizar'));
  const groups=new Set(categoryDefinitions.filter(c=>found.has(c.id)).map(c=>c.group));
  const topics=[],unresolved=[];
  for(const t of terms){
   if(!t.key)continue;
   if(categoryDefinitions.some(c=>t.value===c.id||termsById.get(c.id).has(t.key)))continue;
   if(topicTerms.has(t.key)){topics.push(t.value);continue;}
-  // A broad label does not invent a narrower child. It is covered only when
-  // another label already establishes a path in that group.
   if(broadGroups.has(t.key)&&groups.has(broadGroups.get(t.key)))continue;
   unresolved.push(t.value);
  }
- if(unresolved.length||(topics.length&&!found.size))found.add('a-organizar');
- return {ids:categoryIds.filter(id=>found.has(id)),topics,unresolved};
+ // Label review is separate from navigation: unresolved labels never add a
+ // second destination to an already classified source.
+ if(!found.size&&terms.some(t=>t.key))found.add('a-organizar');
+ // Legacy categories were ordered broad-to-specific. Prefer a specific route
+ // over the two generic destinations; otherwise preserve source order.
+ const specific=ordered.filter(id=>found.has(id)&&id!=='tecnologia-geral'&&!(id==='destinos-experiencias'&&found.has('onde-comer')));
+ const primaryId=specific[0]??ordered.find(id=>found.has(id))??(found.has('a-organizar')?'a-organizar':null);
+ return {ids:categoryIds.filter(id=>found.has(id)),primaryId,topics,unresolved};
 }
 export function validateCategoryIds(values){
- if(!Array.isArray(values)||!values.length||values.length>categoryIds.length||values.some(id=>!byId.has(id))||new Set(values).size!==values.length)throw Error('Categorias devem usar identificadores oficiais únicos.');
+ if(!Array.isArray(values)||!values.length||values.length>2||values.some(id=>!byId.has(id))||new Set(values).size!==values.length)throw Error('Categorias devem usar identificadores oficiais únicos; no máximo dois.');
+ if(values.length>1&&(values.includes('a-organizar')||values.includes('tecnologia-geral')))throw Error('Categorias gerais devem ser usadas sozinhas.');
 }
-export function categoryOptions(){return categoryDefinitions.map(({id,group,name})=>({id,group,name}));}
+export function categoryOptions(){return categoryDefinitions.map(({id,group,name,scope})=>({id,group,name,scope}));}

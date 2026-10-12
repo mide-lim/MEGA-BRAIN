@@ -79,7 +79,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   }
   assert.equal((await flow.run({videoId,stage:'analysis'})).status,'completed');
   assert.deepEqual((await store.get('videos/'+videoId)).data.analysis.categories,['tecnologia-geral']);
-  assert.equal((await store.get('videos/'+videoId)).data.analysis.category_taxonomy_version,'categories-v1');
+  assert.equal((await store.get('videos/'+videoId)).data.analysis.category_taxonomy_version,'categories-v2');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
   assert.equal(objects.size,profile.location==='global'?5:4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
   assert.equal((await store.get('videos/'+videoId)).data.analysis.knowledge.fields.length,1);

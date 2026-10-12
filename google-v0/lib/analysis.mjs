@@ -5,7 +5,7 @@ export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
   properties:{
     knowledge:knowledgeSchema,
-    title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',minItems:1,maxItems:categoryIds.length,items:{type:'STRING',enum:[...categoryIds]}},
+    title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:[...categoryIds]}},
     useful_information:{type:'ARRAY',items:{type:'OBJECT',required:['claim','application','classification','evidence'],properties:{
       claim:{type:'STRING'},application:{type:'STRING'},classification:{type:'STRING',enum:['author_claim','visual_observation','interpretation']},
       evidence:{type:'ARRAY',items:{type:'OBJECT',required:['source','start_seconds','end_seconds','excerpt'],properties:{
@@ -28,7 +28,7 @@ export function buildAnalysisRequest({record,bucket,preset,model}) {
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
   return {
-    systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. Use uma ou mais categorias pertinentes, sem duplicatas. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
+    systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
       {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}

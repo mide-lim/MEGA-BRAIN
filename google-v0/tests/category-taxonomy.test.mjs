@@ -19,7 +19,7 @@ test('every generated ID has a readable navigation path, including fallback',()=
  assert.throws(()=>validateCategoryIds(['Receitas']));
 });
 test('legacy decisions reuse existing branches and keep narrower subjects as topics',()=>{
- const routes=[['Casa e Arquitetura',['casa-decoracao']],['Alimentação Saudável',['nutricao']],['Viagens e Turismo',['destinos-experiencias']],['Dicas de Restaurantes',['culinaria','destinos-experiencias']],['Gadgets',['hardware-setup']],['Branding',['marketing-comunicacao']]];
+ const routes=[['Casa e Arquitetura',['casa-decoracao']],['Alimentação Saudável',['nutricao']],['Viagens e Turismo',['destinos-experiencias']],['Dicas de Restaurantes',['onde-comer']],['Gadgets',['hardware-setup']],['Branding',['marketing-comunicacao']]];
  for(const [term,ids] of routes)assert.deepEqual(resolveCategories([term]).ids,ids,term);
  for(const term of ['Pães','Café da Manhã','Inovação','Esportes','Pratos Principais','Petiscos']){
   const r=resolveCategories(['receitas',term]);
@@ -32,8 +32,8 @@ test('broad labels never invent narrow categories, and new unknown labels stay p
  assert.deepEqual(resolveCategories(['Negócios','Branding']).ids,['marketing-comunicacao']);
  assert.deepEqual(resolveCategories(['Casa','Faça você mesmo']).ids,['faca-voce-mesmo']);
  assert.deepEqual(resolveCategories(['Saúde','Fitness']).ids,['exercicio-fisico']);
- assert.deepEqual(resolveCategories(['Saúde','Nutrição']).ids,['nutricao','a-organizar']);
- assert.deepEqual(resolveCategories(['Tema desconhecido','Marketing']).ids,['marketing-comunicacao','a-organizar']);
+ assert.deepEqual(resolveCategories(['Saúde','Nutrição']).ids,['nutricao']);
+ assert.deepEqual(resolveCategories(['Tema desconhecido','Marketing']).ids,['marketing-comunicacao']);
  // Broad sustainability must not silently acquire a food-specific route.
  assert.deepEqual(resolveCategories(['Sustentabilidade']).ids,['a-organizar']);
 });
@@ -61,4 +61,47 @@ test('request, runtime and navigation use the same catalog while legacy review s
  assert.throws(()=>reviewAnalysis(report(['receitas','receitas']),record,{requireCategoryIds:true}));
  assert.doesNotThrow(()=>reviewAnalysis(report(['Legacy label']),record));
  assert.doesNotThrow(()=>reviewAnalysis(report(['a-organizar']),record,{requireCategoryIds:true}));
+});
+
+test('a destination is not duplicated by unresolved labels or the explicit fallback',()=>{
+ for(const categories of [['Saúde','Esportes','Nutrição'],['a-organizar','nutricao','Unknown']]){
+  assert.deepEqual(categoryPaths(video(categories)),[{group:'Alimentação',name:'Nutrição e suplementação'}]);
+  assert.ok(resolveCategories(categories).unresolved.length);
+ }
+ assert.deepEqual(resolveCategories(['Unknown']).ids,['a-organizar']);
+ assert.deepEqual(resolveCategories(['Unknown']).unresolved,['Unknown']);
+});
+test('navigation follows purpose with broad legacy labels and secondary subjects preserved',()=>{
+ const cases=[
+  [['Receitas','Culinária','Alimentação Saudável'],'receitas'],
+  [['Receitas','Saúde e Bem-Estar'],'receitas'],
+  [['Viagens e Turismo','Gastronomia','Dicas de Restaurantes'],'onde-comer'],
+  [['Negócios','Tecnologia','Marketing'],'marketing-comunicacao'],
+  [['Tecnologia','Desenvolvimento de Software','Carreira'],'desenvolvimento-software'],
+  [['Casa','Faça você mesmo','Decoração'],'faca-voce-mesmo'],
+  [['Negócios','Marketing','Moda'],'marketing-comunicacao'],
+  [['nutricao','receitas'],'nutricao'],
+  [['culinaria'],'receitas'],
+  [['Tecnologia'],'tecnologia-geral'],
+  [['Viagens e Turismo'],'destinos-experiencias'],
+  [['Gastronomia'],'a-organizar']
+ ];
+ const sources=cases.map(([labels])=>video(labels)),copy=structuredClone(sources);
+ for(const [labels,id] of cases){
+  assert.equal(resolveCategories(labels).primaryId,id);
+  assert.equal(categoryPaths(video(labels)).length,1);
+ }
+ assert.equal(categoryTree(sources).reduce((sum,g)=>sum+g.count,0),sources.length);
+ assert.equal(categoryTree(sources).flatMap(g=>g.children).reduce((sum,c)=>sum+c.count,0),sources.length);
+ assert.deepEqual(sources,copy);
+});
+test('generation bounds additional categories and keeps general destinations exclusive',()=>{
+ assert.throws(()=>validateCategoryIds(['a-organizar','nutricao']));
+ assert.throws(()=>validateCategoryIds(['tecnologia-geral','design-digital']));
+ assert.throws(()=>validateCategoryIds(['receitas','nutricao','bem-estar']));
+ assert.throws(()=>validateCategoryIds(['culinaria']));
+ assert.doesNotThrow(()=>validateCategoryIds(['nutricao','exercicio-fisico']));
+ const req=buildAnalysisRequest({record,bucket:'synthetic-bucket',preset:{version:'synthetic',system_instruction:'Synthetic',user_instruction:'Synthetic'}});
+ assert.equal(req.generationConfig.responseSchema.properties.categories.maxItems,2);
+ assert.ok(categoryOptions().every(c=>c.scope));
 });

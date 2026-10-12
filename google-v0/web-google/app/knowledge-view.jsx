@@ -1,4 +1,5 @@
 'use client';
+import {categoryPaths} from '../../lib/category-display.mjs';
 import {contextLabels,fieldLabels,combinedKnowledge} from '../../lib/knowledge.mjs';
 export function KnowledgeDetails({knowledge}){
  if(!knowledge)return null;
@@ -7,5 +8,5 @@ export function KnowledgeDetails({knowledge}){
 }
 export function KnowledgeBook({videos,onOpen}){
  if(!videos.length)return <div className="empty">Nenhum conhecimento encontrado nesta seleção.</div>;
- return <div className="grid knowledge-book">{videos.map(v=>{const k=combinedKnowledge(v);return <article className="knowledge-card" key={v.id}><small>{contextLabels[k.context]??'Conhecimento'}</small><h4>{v.analysis.title}</h4><div className="keyword-tags">{k.keywords.slice(0,4).map((word,i)=><span key={i}>{word.term}</span>)}{k.keywords.length>4&&<span>+{k.keywords.length-4}</span>}</div>{k.fields.length?<><p className="knowledge-preview"><strong>{k.fields[0].name}: </strong>{k.fields[0].value}</p><small>{k.fields.length} informações com evidência</small></>:<p className="notice">Extração pendente de revisão.</p>}<div className="knowledge-actions"><button className="secondary" onClick={()=>onOpen(v)}>Explorar conhecimento e vídeo</button></div></article>;})}</div>;
+ return <div className="grid knowledge-book">{videos.map(v=>{const k=combinedKnowledge(v),destination=categoryPaths(v)[0];return <article className="knowledge-card" key={v.id}><small>{destination?`${destination.group} / ${destination.name}`:'Sem categoria'}</small><h4>{v.analysis.title}</h4><div className="keyword-tags">{k.keywords.slice(0,4).map((word,i)=><span key={i}>{word.term}</span>)}{k.keywords.length>4&&<span>+{k.keywords.length-4}</span>}</div>{k.fields.length?<><p className="knowledge-preview"><strong>{k.fields[0].name}: </strong>{k.fields[0].value}</p><small>{k.fields.length} informações com evidência</small></>:<p className="notice">Extração pendente de revisão.</p>}<div className="knowledge-actions"><button className="secondary" onClick={()=>onOpen(v)}>Explorar conhecimento e vídeo</button></div></article>;})}</div>;
 }

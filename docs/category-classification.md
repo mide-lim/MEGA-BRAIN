@@ -1,36 +1,38 @@
 # Classificação por categorias oficiais
 
-A navegação e as próximas análises usam o catálogo de `google-v0/lib/category-taxonomy.mjs`. Ele contém IDs estáveis, nomes de exibição e destinos de rótulos antigos. Não cria novos ramos; aproveita os nomes integrados no PR 17.
+O catálogo `google-v0/lib/category-taxonomy.mjs` define IDs, nomes, limites de uso e compatibilidade. A versão `categories-v2` organiza a navegação por um destino principal por fonte. Categorias e Livro usam o mesmo destino, inclusive no cartão do Livro.
+
+## Destinos claros
+
+| Destino | Finalidade |
+| --- | --- |
+| Alimentação / Receitas e preparo | Ensinar receitas e técnicas culinárias. Unifica Receitas e Culinária. |
+| Alimentação / Nutrição e suplementação | Explicar alimentação, nutrientes, dietas e suplementos. Mencionar proteína numa receita não basta. |
+| Viagens e lugares / Onde comer | Recomendar restaurantes, cafés e estabelecimentos. Não é preparo de comida. |
+
+Os demais destinos têm seu limite descrito em `scope` no catálogo e no pedido de análise. O ID `receitas` permanece estável; o antigo ID `culinaria` é aceito na leitura e encaminhado para Receitas e preparo, mas não é mais gerado. `nutricao` permanece estável. Onde comer ganha o ID `onde-comer`.
 
 ## Novas análises
 
-O pedido ao Gemini inclui opções de categoria derivadas do catálogo. O schema restringe `categories` aos IDs oficiais. A entrada de resposta no worker verifica IDs, lista não vazia e duplicatas antes de publicar. A resposta bruta continua preservada pelo fluxo existente. A análise revisada recebe `category_taxonomy_version`.
+O primeiro ID de `categories` representa a finalidade principal do vídeo. Prefere-se uma categoria; no máximo uma segunda pode registrar outro assunto substancial e independente. Ingredientes, ferramenta usada, setor de uma marca e menções incidentais ficam nas palavras-chave. Apenas o destino principal participa da árvore: categorias secundárias não multiplicam os resultados.
 
-Uma fonte pode receber várias categorias. Quando a árvore não servir, o modelo deve usar `a-organizar`. Assuntos específicos permanecem nas palavras-chave com evidências. Escolher um ID válido não prova que o enquadramento está correto; a revisão editorial continua necessária.
+O schema e a validação verificam IDs oficiais, lista não vazia, limite de dois e ausência de duplicatas. `a-organizar` e `tecnologia-geral` são exclusivos. O enum não prova adequação semântica: a qualidade de novas classificações exige avaliação com conteúdo novo. A taxonomia não confirma alegações do autor.
 
 ## Resultados anteriores
 
-As categorias originais não são reescritas. A navegação interpreta IDs novos e os rótulos antigos pelo mesmo catálogo. Os agrupamentos abaixo são decisões editoriais de navegação, não declarações de sinonímia exata.
+Nenhuma análise é reescrita. O resolver preserva os destinos candidatos, assuntos e rótulos pendentes, mas a navegação utiliza somente `primaryId`:
 
-| Rótulo antigo | Decisão |
-| --- | --- |
-| Casa e Arquitetura | Casa e estilo / Casa e decoração |
-| Alimentação Saudável | Alimentação / Nutrição |
-| Viagens e Turismo | Viagens e lugares / Destinos e experiências |
-| Dicas de Restaurantes | Alimentação / Culinária e Viagens e lugares / Destinos e experiências |
-| Gadgets | Tecnologia / Hardware e setup |
-| Branding | Trabalho e negócios / Marketing e comunicação |
-| Casa | Coberto quando já existe um caminho em Casa e estilo; caso contrário, A organizar |
-| Negócios | Coberto quando já existe um caminho em Trabalho e negócios; caso contrário, A organizar |
-| Saúde | Coberto quando já existe um caminho em Saúde e bem-estar; caso contrário, A organizar |
-| Pães, Café da Manhã, Inovação, Esportes, Pratos Principais, Petiscos | Assuntos preservados no rótulo original; não criam ramo nem caminho adicional |
+1. Interpretar os rótulos na ordem original e unir aliases equivalentes.
+2. Preferir um destino específico a Tecnologia geral. Onde comer tem preferência sobre Destinos e experiências quando ambos estão presentes.
+3. Usar o primeiro destino restante. Esta é uma compatibilidade determinística para o legado, não uma inferência semântica sobre todos os vídeos futuros.
+4. Usar A organizar apenas quando nenhum destino válido existir. Um rótulo desconhecido junto de um destino válido continua em `unresolved`, sem acrescentar Outros temas.
 
-Um assunto sozinho fica em A organizar. Se uma categoria já organiza a fonte, esses assuntos não criam uma pendência artificial. Rótulos desconhecidos continuam gerando A organizar mesmo quando coexistem com categorias conhecidas. Isso não equivale a ignorar automaticamente qualquer novo rótulo.
+Exemplos: Saúde + Nutrição fica em Nutrição e suplementação, mantendo Saúde pendente; Receitas + Culinária fica uma única vez em Receitas e preparo. Gastronomia isolada é ampla demais para distinguir preparo de recomendação de estabelecimento e fica pendente. Dicas de restaurantes vai para Onde comer. Rótulos amplos não inventam filhos específicos.
 
-Os termos amplos não escolhem um filho por aproximação. Por exemplo, Saúde com Nutrição mantém Nutrição e uma pendência para Saúde: a árvore não possui um filho geral de saúde. O conteúdo não é descartado nem forçado para Exercício físico ou Bem-estar.
+Os assuntos originais permanecem na análise, sem converter automaticamente rótulos antigos em palavras-chave com evidência. A leitura não altera transcrições, evidências, análises candidatas ou suplementos de conhecimento. Sem análise/categorias não se fabrica uma classificação.
 
 ## Verificação e publicação
 
-Testes com fontes fictícias cobrem a correspondência entre schema e navegação, múltiplas categorias, nomes equivalentes, assuntos, termos amplos, desconhecidos e resposta inválida no adaptador do worker. Os dados reais e a conferência individual do piloto ficam privados.
+Testes fictícios cobrem união, destino principal, desconhecidos, categorias genéricas, compatibilidade, contagens sem sobreposição e limites no worker. A comparação individual das 20 fontes e os motivos editoriais permanecem privados. O destino principal do legado depende da ordem e qualidade dos rótulos; os 20 casos foram conferidos, não os demais links do corpus.
 
-A entrega não reanalisa vídeos. Publicação requer revisão independente do commit final e aprovação do proprietário. O processamento e a ampliação do corpus continuam sujeitos aos controles existentes.
+Publicação requer revisão independente do commit final e aprovação do proprietário. A entrega não reanalisa vídeos nem amplia o corpus.

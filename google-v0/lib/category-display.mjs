@@ -12,7 +12,7 @@ const taxonomy=[
   ['Nutrição',['nutricao','saude e nutricao','suplementacao']],
   ['Sustentabilidade',['alimentacao sustentavel']]]],
  ['Tecnologia',[
-  ['Programação',['programacao','desenvolvimento backend','algoritmos']],
+  ['Desenvolvimento de software',['programacao','desenvolvimento backend','algoritmos','desenvolvimento de software']],
   ['Inteligência artificial',['inteligencia artificial','automacao']],
   ['Ferramentas e produtividade',['ferramentas','produtividade']],
   ['Hardware e setup',['hardware','setup']],
@@ -22,7 +22,7 @@ const taxonomy=[
   ['Exercício físico',['fitness','hipertrofia','musculacao','saude e fitness']],
   ['Bem-estar',['saude e bem-estar']]]],
  ['Trabalho e negócios',[
-  ['Marketing e redes sociais',['marketing digital','redes sociais','dropshipping']],
+  ['Marketing e comunicação',['marketing digital','redes sociais','dropshipping','marketing']],
   ['Carreira',['carreira']]]],
  ['Casa e estilo',[
   ['Casa e decoração',['arquitetura e decoracao','decoracao','utilidades domesticas']],

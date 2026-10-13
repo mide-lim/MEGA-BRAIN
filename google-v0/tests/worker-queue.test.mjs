@@ -28,3 +28,9 @@ test('429 recovery dispatch is explicit, analysis-only and uses its own recovery
  assert.doesNotThrow(()=>validateTask({videoId:'Reel_1',stage:'analysis',poll:0,recoveryId:'recovery429_20261013',recoverAnalysis429:true}));
  for(const task of [{stage:'upload',poll:0,recoveryId:'recovery429_20261013'},{stage:'analysis',poll:0},{stage:'transcription',poll:1,recoveryId:'recovery429_20261013'}])assert.throws(()=>validateTask({videoId:'Reel_1',...task,recoverAnalysis429:true}));
 });
+
+test('upload recovery task is upload-only, explicitly identified and never accepts mixed recovery flags',async()=>{
+ const {validateTask}=await import('../lib/worker-queue.mjs');
+ assert.doesNotThrow(()=>validateTask({videoId:'Reel_1',stage:'upload',poll:0,recoveryId:'recovery_upload_20261013',recoverUpload:true}));
+ for(const task of [{stage:'analysis',poll:0,recoveryId:'recovery_upload_20261013'},{stage:'upload',poll:0},{stage:'upload',poll:0,recoveryId:'recovery_upload_20261013',recoverAnalysis429:true}])assert.throws(()=>validateTask({videoId:'Reel_1',...task,recoverUpload:true}));
+});

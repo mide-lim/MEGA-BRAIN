@@ -31,6 +31,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   }
   const speechOrigin=()=>config.speech_location==='us'?'https://us-speech.googleapis.com':'https://speech.googleapis.com';
   return {
+    async prepareUploadRecovery({video}){if(video.media_verified||video.video_key||await storage.metadata(`originals/instagram/${video.id}/video.mp4`))throw Error('Mídia existente impede repetir download.');},
     async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
     async upload({video,executionId}){
       await admitted(executionId,'upload',video.id);const cost=budget('upload');

@@ -1,3 +1,4 @@
+import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
 import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
 import {ongoingCostPlan} from './ongoing-costs.mjs';
@@ -73,6 +74,15 @@ export class FinancialLedger{
     if(state.batch)job.batch_id=state.batch.id;
     await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents},{updateTime:snapshot.updateTime});
     return {...decision,execution_id:executionId};
+  }
+  async resumeUpload(executionId){
+    if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
+    const snapshot=await this.store.get(this.path),state=snapshot?.data;validate(state);
+    const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data,probe=(await this.store.get('jobs/probe_'+executionId))?.data;
+    if(job?.status!=='uncertain'||job.stage!=='upload'||job.upload_recovery_count||claim?.status!=='recovering_upload'||claim.upload_recovery_count!==1||claim.video_id!==job.video_id||probe?.status!=='metadata_available'||probe.original_job_id!==executionId||probe.video_id!==job.video_id||!recoverableUploadFailure({...claim,status:'uncertain',upload_recovery_count:0}))throw Error('Upload não admite retomada.');
+    const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
+    if(!decision.ready)throw Error(decision.reasons.join(' '));
+    await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:{...job,status:'started',upload_recovery_count:1,updated_at:new Date(this.clock()).toISOString()}}},{updateTime:snapshot.updateTime});
   }
   async resumeAnalysis429(executionId){
     if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');

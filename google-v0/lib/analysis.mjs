@@ -93,3 +93,21 @@ export function analysisPublication(report,record){
  const keepPrevious=empty&&(record.analysis?.knowledge?.fields?.length??0)>0;
  return {accepted:!keepPrevious,reason:keepPrevious?'A nova revisão não produziu campos sustentados; a revisão anterior foi preservada.':null};
 }
+
+// Only evaluates a response already received. Storage and provider failures are
+// deliberately outside this boundary and must retain operational uncertainty.
+export function analysisOutcome(response,record,{requireKnowledge=false}={}){
+ const candidate=response?.candidates?.[0];
+ if(candidate?.finishReason!=='STOP')return {accepted:false,reasons:['incomplete_response']};
+ let parsed;
+ try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
+ catch{return {accepted:false,reasons:['invalid_json']};}
+ try{validateCategoryIds(parsed?.categories);}
+ catch{return {accepted:false,reasons:['invalid_categories']};}
+ let report;
+ try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true});}
+ catch{return {accepted:false,reasons:['invalid_report']};}
+ if(requireKnowledge&&!report.knowledge)return {accepted:false,reasons:['missing_knowledge']};
+ const publication=analysisPublication(report,record);
+ return {accepted:publication.accepted,report,reasons:publication.accepted?[]:['unsupported_revision']};
+}

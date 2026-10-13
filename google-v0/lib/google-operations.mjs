@@ -1,5 +1,5 @@
 import {inspectMedia} from './media-inspector.mjs';
-import {buildAnalysisRequest,reviewAnalysis,analysisPublication} from './analysis.mjs';
+import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
 
 // Only WorkerFlow may call these adapters after claiming and starting a
 // financial reservation. The injected gate independently verifies that claim.
@@ -87,13 +87,8 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response}));
-      const candidate=response.candidates?.[0];
-      if(candidate?.finishReason!=='STOP')throw new Error('Resposta Gemini incompleta ou bloqueada.');
-      const text=(candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join('');
-      const report=reviewAnalysis(JSON.parse(text),analysisRecord,{requireCategoryIds:true});
-      if(['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)&&!report.knowledge)throw new Error('Conhecimento estruturado ausente na nova análise.');
-      const publication=analysisPublication(report,video);
-      const changes=publication.accepted?{analysis:report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis,analysis_key:video.analysis_key,analysis_generation:video.analysis_generation,analysis_quality_status:'review_required',analysis_candidate:report,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
+      const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
+      const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost);
     }
   };

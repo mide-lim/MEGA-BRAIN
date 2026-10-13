@@ -21,7 +21,7 @@ export async function startFixtureServer(){
   if(path==='/api/controls')return send('application/json',JSON.stringify({automation}));
   if(path==='/api/financial')return send('application/json',JSON.stringify(financial));
   if(path==='/api/video/'+video.id)return send('application/json',JSON.stringify({url:'/api/media/'+video.id,expires_at:new Date(Date.now()+60000).toISOString()}));
-  if(path==='/api/media/'+video.id)return send('video/mp4',videoBytes);
+  if(path==='/api/media/'+video.id)return send('video/webm',videoBytes);
   return send('application/json',JSON.stringify({error:'Fixture endpoint absent'}),404);
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});

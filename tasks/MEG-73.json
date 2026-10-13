@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "id": "MEG-73",
+  "paperclip_issue_id": "3ab660fd-26fd-4a7a-b456-3f37e3ec639b",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "3c67862862202dce49a4cc5d210d1f15568f02bb",
+  "objective": "Prepare 200 additional videos with four end-to-end lanes; preserve history, R1200 accumulated ceiling and R250 reserve. No production activation in this implementation.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Only262 profile authorizes4 video leases including asynchronous transcription; legacy30/62 stay sequential",
+    "CAS contention recomputes financial/capacity state only after a definite rejected write; never repeats paid operations",
+    "Preserve281 financial records,422 storage claims and prior62 video membership; extend with200 unique new IDs",
+    "Tests cover concurrent reservations, settlement, capacity, pause and duplicate delivery; independent human review before publishing"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/batch-budget.mjs",
+    "google-v0/lib/firestore.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/storage-capacity.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/tests/scale200.test.mjs",
+    "docs/scale200.md",
+    "tasks/MEG-73.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "Deterministic execution and async poll chain",
+      "max_chars": 5000,
+      "sections": [
+        "Module: bounded task dependency"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-reservation-gate.mjs",
+      "reason": "Admission before provider calls",
+      "max_chars": 2000,
+      "sections": [
+        "Module: bounded task dependency"
+      ]
+    },
+    {
+      "path": "google-v0/tests/batch-budget.test.mjs",
+      "reason": "Maintain legacy limits",
+      "max_chars": 5000,
+      "sections": [
+        "Module: bounded task dependency"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-73.json --diff-base 3c67862862202dce49a4cc5d210d1f15568f02bb --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Data and concurrency controls require independent human review before merge/deploy."
+  }
+}

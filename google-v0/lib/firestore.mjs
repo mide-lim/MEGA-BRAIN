@@ -69,3 +69,16 @@ export class Firestore {
     return {data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};
   }
 }
+
+// Only definite rejected metadata writes can be recalculated. This helper never
+// encloses a provider call, object upload or create-only execution claim.
+export const rejectedVersion=error=>error?.status===412||(error?.status===400&&error.provider_diagnostic?.status==='FAILED_PRECONDITION'&&/does not match the required base version/.test(error.provider_diagnostic?.message??''));
+export async function mutateDocument(store,path,calculate){
+ for(let attempt=0;attempt<8;attempt++){
+  const snapshot=await store.get(path);if(!snapshot)throw Error('Documento de controle ausente.');
+  const {changes,result}=await calculate(snapshot);
+  if(!changes)return result;
+  try{await store.patch(path,changes,{updateTime:snapshot.updateTime});return result;}
+  catch(error){if(!rejectedVersion(error)||attempt===7)throw error;}
+ }
+}

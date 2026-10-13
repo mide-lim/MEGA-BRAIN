@@ -23,7 +23,7 @@ export class WorkerFlow {
     if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
     Object.assign(this,{store,ledger,operations,quotes,clock});
-    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
+    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||batchId&&eligibleVideos.length>62&&eligibleVideos.length!==262||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
   async run({videoId,stage,recoverAnalysis429=false,recoverUpload=false}){
@@ -136,7 +136,7 @@ export class WorkerFlow {
     await this.store.patch(`videos/${videoId}`,{...changes,status:stage==='upload'?'downloaded':stage==='transcription'?'transcribed':changes.analysis_quality_status==='review_required'?'needs_attention':'analyzed',error:changes.analysis_quality_status==='review_required'?'Resposta recebida com problemas de qualidade; confira o candidato preservado. A análise publicada não foi substituída.':null,updated_at:new Date(this.clock()).toISOString(),...(stage==='upload'?{has_audio:true}:{})},{updateTime:video.updateTime});
     // Persist result before settling. A later failure holds the reservation and
     // requires reconciliation; it never re-runs inference to recover bookkeeping.
-    await this.ledger.transition(id,'complete',{actualCents:result.actual_cents});
+    await this.ledger.transition(id,'complete',{actualCents:result.actual_cents,...(reviewRequired&&(await this.store.get('settings/financial'))?.data?.batch?.video_ids.length===262?{pause:true}:{})});
     const job=await this.store.get(path);await this.store.patch(path,{status:'completed',completed_at:new Date(this.clock()).toISOString()},{updateTime:job.updateTime});
     return {status:'completed',execution_id:id};
   }

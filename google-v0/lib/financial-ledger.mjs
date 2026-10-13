@@ -1,4 +1,4 @@
-import {batchLimits,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
+import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
 import {ongoingCostPlan} from './ongoing-costs.mjs';
 // One versioned Firestore document makes reservation and claim atomic.
 // A timeout never permits replay of a paid operation.
@@ -8,7 +8,7 @@ const stages=new Set(['upload','transcription','analysis','media_access']);
 const cents=value=>Number.isSafeInteger(value)&&value>=0;
 function validate(state){
   if(!state||state.schema_version!==1||!['allocation_cents','reserve_cents','spent_cents','reserved_cents','remaining_credit_cents'].every(k=>cents(state[k])))throw new Error('Controle financeiro inválido.');
-  if(!state.jobs||typeof state.jobs!=='object'||Array.isArray(state.jobs)||Object.keys(state.jobs).length>(state.batch?batchLimits.jobs:100))throw new Error('Livro do piloto inválido ou completo.');
+  if(!state.jobs||typeof state.jobs!=='object'||Array.isArray(state.jobs)||Object.keys(state.jobs).length>jobLimit(state))throw new Error('Livro do piloto inválido ou completo.');
   if(state.ongoing_commitment_cents!==undefined&&!cents(state.ongoing_commitment_cents))throw new Error('Compromisso persistente inválido.');
   if(state.pilot_envelope_cents!==undefined&&state.pilot_envelope_cents!==null&&(!cents(state.pilot_envelope_cents)||state.pilot_envelope_cents<1||state.pilot_envelope_cents>state.allocation_cents))throw new Error('Orçamento do piloto inválido.');
   if(Buffer.byteLength(JSON.stringify(state))>600000)throw new Error('Livro excede tamanho seguro do piloto.');
@@ -65,7 +65,7 @@ export class FinancialLedger{
     const state=snapshot.data;validate(state);
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
     if(Object.values(state.jobs).some(j=>j.video_id===videoId&&j.stage===stage&&j.status!=='cancelled'&&(state.batch||['reserved','started','uncertain'].includes(j.status)||j.analysis_revision===analysisRevision)))throw new Error('Etapa do vídeo já reservada, concluída ou com resultado incerto.');
-    if(Object.keys(state.jobs).length>=(state.batch?batchLimits.jobs:100))throw new Error('Livro do piloto completo; reconciliação necessária.');
+    if(Object.keys(state.jobs).length>=jobLimit(state))throw new Error('Livro do piloto completo; reconciliação necessária.');
     const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage,videoId});if(!decision.ready)throw new Error(decision.reasons.join(' '));
     const job={video_id:videoId,stage,maximum_cents:maximumCents,status:'reserved',created_at:new Date(this.clock()).toISOString()};
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;

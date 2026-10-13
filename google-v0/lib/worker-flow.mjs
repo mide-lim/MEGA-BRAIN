@@ -1,4 +1,4 @@
-import {validateBatch} from './batch-budget.mjs';
+import {validateBatch,batchLimits} from './batch-budget.mjs';
 import {safeDownloadDiagnostic} from './media-tools.mjs';
 import {createHash} from 'node:crypto';
 
@@ -21,7 +21,7 @@ export class WorkerFlow {
     if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
     Object.assign(this,{store,ledger,operations,quotes,clock});
-    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?30:20)||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
+    if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
   async run({videoId,stage}){

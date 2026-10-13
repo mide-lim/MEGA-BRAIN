@@ -62,3 +62,14 @@ export function validateCategoryIds(values){
  if(values.length>1&&(values.includes('a-organizar')||values.includes('tecnologia-geral')))throw Error('Categorias gerais devem ser usadas sozinhas.');
 }
 export function categoryOptions(){return categoryDefinitions.map(({id,group,name,scope})=>({id,group,name,scope}));}
+
+// A known fallback adds no destination when the other official ID is already
+// specific within Technology. Never reinterpret an unknown or cross-group label.
+export function normalizedCategoryIds(values){
+ if(!Array.isArray(values)||values.length!==2||new Set(values).size!==2||values.some(id=>!byId.has(id)))return values;
+ if(values.includes('tecnologia-geral')){
+  const specific=values.find(id=>id!=='tecnologia-geral');
+  if(byId.get(specific).group==='Tecnologia')return [specific];
+ }
+ return values;
+}

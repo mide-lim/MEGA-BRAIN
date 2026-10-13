@@ -22,3 +22,9 @@ test('private dispatch records intent once, uses own OIDC and chains stages with
   assert.equal((await queue.enqueue({videoId:'Reel_456',stage:'upload',poll:0})).status,'uncertain');
   assert.equal((await queue.enqueue({videoId:'Reel_456',stage:'upload',poll:0})).status,'duplicate');assert.equal(creates,3);
 });
+
+test('429 recovery dispatch is explicit, analysis-only and uses its own recovery identity',async()=>{
+ const {validateTask}=await import('../lib/worker-queue.mjs');
+ assert.doesNotThrow(()=>validateTask({videoId:'Reel_1',stage:'analysis',poll:0,recoveryId:'recovery429_20261013',recoverAnalysis429:true}));
+ for(const task of [{stage:'upload',poll:0,recoveryId:'recovery429_20261013'},{stage:'analysis',poll:0},{stage:'transcription',poll:1,recoveryId:'recovery429_20261013'}])assert.throws(()=>validateTask({videoId:'Reel_1',...task,recoverAnalysis429:true}));
+});

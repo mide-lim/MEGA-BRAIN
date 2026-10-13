@@ -36,3 +36,14 @@ test('storage responses exceeding the declared limit are aborted',async()=>{
   const client=new GoogleREST({project:'megabrain-v0-test',buckets:['megabrain-v0-test-media'],tokenProvider:()=> 'test',fetchImpl:async()=>new Response('too large')});
   await assert.rejects(()=>client.request('https://storage.googleapis.com/storage/v1/b/megabrain-v0-test-media/o/object?alt=media',{responseMode:'bytes',maxResponseBytes:3}));
 });
+
+test('HTTP429 exposes bounded redacted provider message without retry',async()=>{
+ let calls=0;const client=new GoogleREST({project:'megabrain-v0-test',tokenProvider:()=> 'private-token',fetchImpl:async()=>{calls++;return Response.json({error:{status:'RESOURCE_EXHAUSTED',message:'quota for https://private/path Bearer private-token user@example.com'}},{status:429});}});
+ await assert.rejects(()=>client.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test'),e=>e.status===429&&e.provider_diagnostic.status==='RESOURCE_EXHAUSTED'&&!/private|example/.test(e.provider_diagnostic.message));assert.equal(calls,1);
+});
+test('oversized or malformed Google error body preserves HTTPstatus without diagnostic',async()=>{
+ for(const body of ['x'.repeat(9000),'not-json']){
+  const client=new GoogleREST({project:'megabrain-v0-test',tokenProvider:()=> 'token',fetchImpl:async()=>new Response(body,{status:429})});
+  await assert.rejects(()=>client.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test'),e=>e.status===429&&e.provider_diagnostic===null);
+ }
+});

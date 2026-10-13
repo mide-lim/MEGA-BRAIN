@@ -8,6 +8,12 @@ test('credit reconciliation deducts pending account costs and newer local settle
   let patch;const store={get:async()=>({data:state,updateTime:'version1'}),patch:async(path,changes,options)=>{assert.equal(path,'settings/financial');assert.equal(options.updateTime,'version1');patch=changes;}};
   await recordCreditObservation(store,input,{account,now});
   assert.equal(patch.remaining_credit_cents,172011);assert.equal(patch.coverage_verified,undefined);assert.equal(patch.enabled_stages,undefined);assert.equal(patch.paused,undefined);
-  for(const change of [{billing_account:'billingAccounts/123456-ABCDEF-654321'},{observed_at:new Date(now-3601000).toISOString()},{observed_at:new Date(now+1).toISOString()},{source:'bigquery_query_time'},{currency:'USD'},{remaining_cents:.1}])assert.throws(()=>creditObservationChanges(state,{...input,...change},{account,now}));
+  for(const change of [{billing_account:'billingAccounts/123456-ABCDEF-654321'},{observed_at:new Date(now-86400001).toISOString()},{observed_at:new Date(now+1).toISOString()},{source:'bigquery_query_time'},{currency:'USD'},{remaining_cents:.1}])assert.throws(()=>creditObservationChanges(state,{...input,...change},{account,now}));
   assert.throws(()=>creditObservationChanges({...state,balance_observed_at:input.observed_at},input,{account,now}));
+});
+
+test('accepts original observation up to 24h without changing timestamp or enabling a wider runtime policy',()=>{
+ const observation={...input,observed_at:new Date(now-86400000).toISOString()};
+ const changes=creditObservationChanges(newLedger(),observation,{account,now});assert.equal(changes.balance_observed_at,observation.observed_at);assert.equal(changes.balance_max_age_seconds,undefined);assert.equal(changes.paused,undefined);
+ assert.throws(()=>creditObservationChanges(newLedger(),{...observation,observed_at:new Date(now-86400001).toISOString()},{account,now}));
 });

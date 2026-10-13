@@ -63,3 +63,12 @@ test('credit authorization removes only the small pilot envelope and keeps accou
  assert.equal(reservationDecision({...state,remaining_credit_cents:30000},{now,maximumCents:1,stage:'analysis'}).ready,false);
  assert.equal(reservationDecision({...state,balance_observed_at:null},{now,maximumCents:750,stage:'analysis'}).ready,false);
 });
+
+test('24h freshness requires explicit balance configuration and still enforces both observation boundaries',()=>{
+ const decision=change=>reservationDecision({...ready(),balance_max_age_seconds:86400,...change},{now,stage:'analysis',maximumCents:100});
+ const stamp=age=>new Date(now-age).toISOString();
+ assert.equal(decision({balance_observed_at:stamp(86400000),ongoing_costs_observed_at:stamp(86400000),ongoing_costs_valid_until:stamp(-1)}).ready,true);
+ for(const change of [{balance_max_age_seconds:86401},{balance_max_age_seconds:0},{balance_max_age_seconds:1.5},{balance_observed_at:stamp(86400001)},{ongoing_costs_observed_at:stamp(86400001)},{balance_observed_at:stamp(-1)},{ongoing_costs_observed_at:stamp(-1)},{ongoing_costs_valid_until:stamp(0)},{paused:true},{coverage_verified:false},{remaining_credit_cents:0},{credit_expires_at:stamp(-72*3600000)}])assert.equal(decision(change).ready,false);
+ assert.equal(newLedger().balance_max_age_seconds,3600);
+ assert.equal(reservationDecision({...ready(),balance_observed_at:stamp(3600001)},{now,stage:'analysis',maximumCents:100}).ready,false);
+});

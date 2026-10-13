@@ -5,7 +5,7 @@ const money=n=>Number.isSafeInteger(n)&&n>=0;
 export function creditObservationChanges(state,input,{account,now=Date.now()}={}){
   if(!/^billingAccounts\/[A-Z0-9]{6}-[A-Z0-9]{6}-[A-Z0-9]{6}$/.test(account??'')||input?.billing_account!==account||input.currency!=='BRL'||input.source!=='google_console_credit'||input.schema_version!==1)throw new Error('Observação da conta de créditos inválida.');
   const observed=Date.parse(input.observed_at),expiry=Date.parse(input.expires_at);
-  if(!Number.isFinite(observed)||observed>now||now-observed>3600000||!Number.isFinite(expiry)||expiry<=now+72*3600000||!money(input.remaining_cents)||!money(input.pending_account_cents)||typeof input.credit_id!=='string'||!input.credit_id||input.credit_id.length>200)throw new Error('Saldo, vencimento ou consumo pendente inválidos.');
+  if(!Number.isFinite(observed)||observed>now||now-observed>86400000||!Number.isFinite(expiry)||expiry<=now+72*3600000||!money(input.remaining_cents)||!money(input.pending_account_cents)||typeof input.credit_id!=='string'||!input.credit_id||input.credit_id.length>200)throw new Error('Saldo, vencimento ou consumo pendente inválidos.');
   const previous=Date.parse(state.balance_observed_at);
   if(Number.isFinite(previous)&&observed<=previous)throw new Error('Não renovar uma observação antiga.');
   let completedAfterObservation=0;

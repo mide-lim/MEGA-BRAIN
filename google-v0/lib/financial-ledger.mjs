@@ -31,9 +31,9 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage,vid
   if(state.paused!==false||state.enabled_stages?.[stage]!==true)reasons.push('Etapa pausada ou desligada.');
   if(state.coverage_verified!==true)reasons.push('Cobertura dos créditos não confirmada.');
   const ongoingObserved=Date.parse(state.ongoing_costs_observed_at),ongoingUntil=Date.parse(state.ongoing_costs_valid_until);
-  if(!cents(state.ongoing_commitment_cents)||!Number.isFinite(ongoingObserved)||ongoingObserved>now||now-ongoingObserved>3600000||!Number.isFinite(ongoingUntil)||ongoingUntil<=now)reasons.push('Custos persistentes ausentes ou desatualizados.');
+  if(!cents(state.ongoing_commitment_cents)||!Number.isFinite(ongoingObserved)||ongoingObserved>now||now-ongoingObserved>86400000||!Number.isFinite(ongoingUntil)||ongoingUntil<=now)reasons.push('Custos persistentes ausentes ou desatualizados.');
   const observed=Date.parse(state.balance_observed_at),age=state.balance_max_age_seconds;
-  if(!Number.isFinite(observed)||!Number.isSafeInteger(age)||age<1||age>3600||observed>now||now-observed>age*1000)reasons.push('Saldo financeiro ausente ou desatualizado.');
+  if(!Number.isFinite(observed)||!Number.isSafeInteger(age)||age<1||age>86400||observed>now||now-observed>age*1000)reasons.push('Saldo financeiro ausente ou desatualizado.');
   const expiry=Date.parse(state.credit_expires_at),margin=state.expiry_margin_hours;
   if(!Number.isFinite(expiry)||!Number.isFinite(margin)||margin<72||expiry<=now+margin*3600000)reasons.push('Crédito próximo do vencimento.');
   // remaining_credit_cents must conservatively include account-wide consumption.

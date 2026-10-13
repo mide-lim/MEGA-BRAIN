@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "MEG-79",
+  "paperclip_issue_id": "e196e7fd-007a-411b-afb9-7ea373924802",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "b4c92f8998b89ba8edfafb0aff8cbc5bbed06648",
+  "objective": "Synchronize frontend library, category/search/detail views and dashboard with all paginated Google records and refresh visible page without overlapping reads. No processing or production deployment.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Read all cursor pages without a40-record cutoff; deduplicate records and reject repeated cursors",
+    "Publish refreshed library only after full traversal succeeds; retain previous complete snapshot on failure",
+    "Refresh every60seconds while visible, on returning to page and manually; abort on unmount and prevent concurrent traversals",
+    "Dashboard, categories, knowledge search and open details reflect refreshed complete library",
+    "Browser fixture above40 records verifies totals and later-page content; no real Google/model/media calls"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/library-sync.mjs",
+    "google-v0/tests/library-sync.test.mjs",
+    "google-v0/web-google/app/library.jsx",
+    "google-v0/qa/server.mjs",
+    "google-v0/qa/browser-check.mjs",
+    "docs/frontend-library-sync.md",
+    "tasks/MEG-79.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/library-api.mjs",
+      "reason": "Existing authorized read endpoint and cursor contract; preserve endpoint and writes",
+      "max_chars": 3500,
+      "sections": [
+        "library"
+      ]
+    },
+    {
+      "path": "google-v0/lib/library-repository.mjs",
+      "reason": "Existing40 item bounded cursor pages",
+      "max_chars": 2500,
+      "sections": [
+        "page"
+      ]
+    },
+    {
+      "path": "google-v0/qa/fixture.mjs",
+      "reason": "Synthetic data for browser verification",
+      "max_chars": 3500,
+      "sections": [
+        "video and automation"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "npm --prefix google-v0/qa run check",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-79.json --diff-base b4c92f8998b89ba8edfafb0aff8cbc5bbed06648 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Independent human review required before merge; no new model reviewer authorized"
+  }
+}

@@ -1,11 +1,11 @@
-import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds} from './category-taxonomy.mjs';
+import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
   properties:{
     knowledge:knowledgeSchema,
-    title:{type:'STRING'},summary:{type:'STRING'},categories:{type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:[...categoryIds]}},
+    title:{type:'STRING'},summary:{type:'STRING'},categories:categorySelectionSchema(),
     useful_information:{type:'ARRAY',items:{type:'OBJECT',required:['claim','application','classification','evidence'],properties:{
       claim:{type:'STRING'},application:{type:'STRING'},classification:{type:'STRING',enum:['author_claim','visual_observation','interpretation']},
       evidence:{type:'ARRAY',items:{type:'OBJECT',required:['source','start_seconds','end_seconds','excerpt'],properties:{
@@ -112,4 +112,25 @@ export function analysisOutcome(response,record,{requireKnowledge=false}={}){
  if(requireKnowledge&&!report.knowledge)return {accepted:false,reasons:['missing_knowledge']};
  const publication=analysisPublication(report,record);
  return {accepted:publication.accepted,report,reasons:publication.accepted?[]:['unsupported_revision']};
+}
+
+// Operator-selected correction of a received response, not a new model call.
+// This returns a proposal and provenance; it never publishes or resumes work.
+export function reviewSavedCategorySelection(response,record,{categories,reason,requireKnowledge=true}={}){
+ if(typeof reason!=='string'||reason.trim().length<20||reason.length>1000)throw Error('Justificativa explícita da seleção obrigatória.');
+ const candidate=response?.candidates?.[0];
+ if(candidate?.finishReason!=='STOP')throw Error('Resposta original incompleta; correção de categorias não permitida.');
+ let original;
+ try{original=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}catch{throw Error('JSON original inválido.');}
+ const ids=original?.categories;
+ if(!Array.isArray(ids)||ids.length!==2||new Set(ids).size!==2||ids.some(id=>!categoryIds.includes(id))||!ids.some(id=>genericCategoryIds.includes(id))||ids.every(id=>genericCategoryIds.includes(id)))throw Error('Correção restrita ao conflito entre categoria geral e específica oficiais.');
+ const prior=analysisOutcome(response,record,{requireKnowledge});
+ if(prior.accepted||!prior.reasons.includes('invalid_categories'))throw Error('Resposta não exige esta correção de categorias.');
+ validateCategoryIds(categories);
+ if(categories.some(id=>!ids.includes(id)))throw Error('Selecionar somente categorias já propostas; não inventar destino.');
+ if(!Array.isArray(original.limitations))throw Error('Relatório original inválido.');
+ const revised={...original,categories:[...categories],limitations:[...original.limitations,'Seleção de categoria revisada a partir da resposta salva: '+reason.trim()+(/[.!?]$/.test(reason.trim())?' ':'. ')+'A resposta original foi preservada.']};
+ const proposal={candidates:[{...candidate,content:{...candidate.content,parts:[{text:JSON.stringify(revised)}]}}]};
+ const outcome=analysisOutcome(proposal,record,{requireKnowledge});
+ return {...outcome,category_review:{original_categories:[...ids],selected_categories:[...categories],reason:reason.trim(),inference_replayed:false,publication_performed:false}};
 }

@@ -1,3 +1,4 @@
+import {WorkerAdmission,admissionHandler} from './worker-admission.mjs';
 import {metadataProbeHandler} from './metadata-probe.mjs';
 import {serviceIdentity} from './service-identity.mjs';
 import {GoogleREST} from './google-rest.mjs';
@@ -28,5 +29,6 @@ export function workerRuntime(config,preset,{withHandler=false}={}){
   const authorize=workerAuthorization({audience:config.worker_origin});
   const processing=workerHandler({flow,queue,authorize});
   const probe=metadataProbeHandler({store,tools,authorize,batchId:config.batch_id,eligibleVideos:config.pilot_video_ids??[]});
-  return request=>new URL(request.url).pathname==='/tasks/diagnose'?probe(request):processing(request);
+  const admission=admissionHandler({authorize,admission:new WorkerAdmission({store,queue,batchId:config.batch_id,quotes:config.quotes,enabled:config.admission_enabled===true})});
+  return request=>{const path=new URL(request.url).pathname;return path==='/tasks/diagnose'?probe(request):path==='/tasks/admit'?admission(request):processing(request);};
 }

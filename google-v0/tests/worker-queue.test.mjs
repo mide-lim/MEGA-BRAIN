@@ -34,3 +34,11 @@ test('upload recovery task is upload-only, explicitly identified and never accep
  assert.doesNotThrow(()=>validateTask({videoId:'Reel_1',stage:'upload',poll:0,recoveryId:'recovery_upload_20261013',recoverUpload:true}));
  for(const task of [{stage:'analysis',poll:0,recoveryId:'recovery_upload_20261013'},{stage:'upload',poll:0},{stage:'upload',poll:0,recoveryId:'recovery_upload_20261013',recoverAnalysis429:true}])assert.throws(()=>validateTask({videoId:'Reel_1',...task,recoverUpload:true}));
 });
+
+test('admission successor has deterministic OIDC identity; definite duplicate is safe and unknown failure surfaces',async()=>{
+ const sent=[];const api={project:'megabrain-v0-1017370021431',async request(url,options){sent.push(options.json.task);}};
+ const q=new WorkerQueue({api,store:{},workerOrigin:'https://v0-worker-test.run.app',enabled:true,clock:()=>0});
+ const t={batchId:'pilot_30_oct12',runId:'admission_run_20261013',tick:1};await q.enqueueAdmission(t);await q.enqueueAdmission(t);
+ assert.equal(sent[0].name,sent[1].name);assert.equal(sent[0].httpRequest.url,'https://v0-worker-test.run.app/tasks/admit');assert.equal(sent[0].httpRequest.oidcToken.audience,'https://v0-worker-test.run.app');assert.equal(sent[0].scheduleTime,'1970-01-01T00:01:00.000Z');
+ api.request=async()=>{throw Object.assign(Error(),{status:409});};assert.equal((await q.enqueueAdmission(t)).status,'queued');api.request=async()=>{throw Error('unknown');};await assert.rejects(q.enqueueAdmission(t));
+});

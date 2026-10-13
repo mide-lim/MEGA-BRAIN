@@ -1,7 +1,7 @@
 import {mutateDocument} from './firestore.mjs';
 import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
-import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
+import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision,isolatedAnalysisTimeout} from './batch-budget.mjs';
 import {ongoingCostPlan} from './ongoing-costs.mjs';
 // One versioned Firestore document makes reservation and claim atomic.
 // A timeout never permits replay of a paid operation.
@@ -21,7 +21,8 @@ function validate(state){
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
-    if(state.batch?.video_ids.length===262&&j.batch_id===state.batch.id&&['reserved','started','uncertain'].includes(j.status)&&!state.batch.active_video_ids.includes(j.video_id))throw Error('Etapa aberta sem via reservada.');
+    if(j.individual_isolation!==undefined&&!isolatedAnalysisTimeout(j,state.batch))throw Error('Isolamento individual inválido.');
+    if(state.batch?.video_ids.length===262&&j.batch_id===state.batch.id&&['reserved','started','uncertain'].includes(j.status)&&!isolatedAnalysisTimeout(j,state.batch)&&!state.batch.active_video_ids.includes(j.video_id))throw Error('Etapa aberta sem via reservada.');
   }
   if(!Number.isSafeInteger(reserved)||reserved!==state.reserved_cents)throw new Error('Saldo de reservas inconsistente.');
 }
@@ -83,6 +84,26 @@ export class FinancialLedger{
     if(state.batch)job.batch_id=state.batch.id;
     const batch=state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
     return {changes:{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents,...(batch?{batch}:{})},result:{...decision,execution_id:executionId}};
+    });
+  }
+  // Operator-only reconciliation primitive. No automatic timeout retry and no
+  // global resume: paused/coverage/system controls remain unchanged.
+  async isolateAnalysisTimeout(executionId,{authorizationRef,verifiedFailure,legacyServerStatus}={}){
+    if(!executionPattern.test(executionId??'')||verifiedFailure!=='client_timeout'||typeof authorizationRef!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(authorizationRef))throw Error('Autorização e diagnóstico específico de timeout obrigatórios.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+      const state=snapshot?.data;validate(state);
+      const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data,video=(await this.store.get(`videos/${job?.video_id}`))?.data;
+      if(state.batch?.video_ids.length!==262||job?.batch_id!==state.batch.id||job?.stage!=='analysis'||job.status!=='uncertain'||!claim||claim.video_id!==job.video_id||claim.stage!=='analysis'||claim.status!=='uncertain'||claim.failure_diagnostic?.operation_step!=='submit_analysis'||claim.failure_diagnostic.http_status!==null||!Array.isArray(claim.analysis_attempts)||claim.analysis_attempts.at(-1)?.status!=='uncertain'||!video||video.analysis||video.analysis_key||video.candidate_analysis_key)throw Error('Somente timeout de envio individual conferido pode ser isolado.');
+      const d=claim.failure_diagnostic;
+      const evidence=d.error_name==='TimeoutError'?{kind:'client_timeout'}:d.tool_code===23&&legacyServerStatus===499?{kind:'legacy_client_cancel',server_status:499,client_code:23}:null;
+      if(!evidence)throw Error('Timeout explícito ou evidência legada499/code23 obrigatória.');
+      if(Object.entries(state.jobs).some(([id,j])=>id!==executionId&&j.video_id===job.video_id&&['reserved','started','uncertain'].includes(j.status)))throw Error('Outro trabalho deste vídeo exige conferência.');
+      if(isolatedAnalysisTimeout(job,state.batch)){
+        if(job.individual_isolation.authorization_ref!==authorizationRef)throw Error('Isolamento já autorizado por outro registro.');
+        return {changes:{jobs:state.jobs},result:job};
+      }
+      const updated={...job,individual_isolation:{schema_version:1,reason:'verified_client_timeout',authorization_ref:authorizationRef,authorized_at:new Date(this.clock()).toISOString(),evidence}};
+      return {changes:{jobs:{...state.jobs,[executionId]:updated},batch:{...state.batch,active_video_ids:state.batch.active_video_ids.filter(v=>v!==job.video_id)}},result:updated};
     });
   }
   async resumeUpload(executionId){

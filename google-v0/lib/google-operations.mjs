@@ -1,3 +1,4 @@
+import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
@@ -14,7 +15,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   }
   const result=(id,stage,changes,cost)=>({video_id:id,stage,changes,actual_cents:cost});
   const budget=stage=>{const n=config?.quotes?.[stage];if(!Number.isSafeInteger(n)||n<1)throw new Error('Estimativa obrigatória.');return n;};
-  const at=async(step,action)=>{try{return await action();}catch(error){error.operation_step=step;throw error;}};
+  const at=async(step,action)=>{const started=performance.now();try{return await action();}catch(error){error.operation_step=step;error.elapsed_ms=Math.max(0,Math.round(performance.now()-started));throw error;}};
   const submitSTT=(url,options)=>at('submit_stt',()=>api.request(url,options));
   const persist=(key,data)=>storage.writeImmutable(key,Buffer.from(JSON.stringify(data)),{contentType:'application/json',uploadsEnabled:true});
   async function captionFor(video,executionId){
@@ -79,6 +80,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       return result(videoId,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
     },
     async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
+      const timeoutMs=analysisTimeoutMs(config?.analysis_timeout_ms),deadline=performance.now()+timeoutMs;
       await admitted(executionId,'analysis',video.id);const cost=budget('analysis');
       if(!/^gemini-[a-z0-9.-]+$/.test(config.gemini_model??''))throw new Error('Modelo Gemini precisa ser configurado.');
       if(video.video_key!==`originals/instagram/${video.id}/video.mp4`)throw new Error('Mídia fora do escopo.');
@@ -86,11 +88,16 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       const caption=await captionFor(video,executionId);
       const analysisRecord={...video,...caption};
       const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model});
-      const submit=()=>at('submit_analysis',()=>api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:120000}));
+      let attempt=analysisAttempts.length;const callDiagnostics=[];
+      const submit=()=>at('submit_analysis',()=>{
+        const remainingMs=Math.floor(deadline-performance.now());
+        if(remainingMs<1)throw Object.assign(new Error('Prazo total da análise esgotado.'),{name:'TimeoutError',google_diagnostic:{operation_step:'submit_analysis',elapsed_ms:timeoutMs,error_name:'TimeoutError',error_code:null,http_status:null,request_id:null,model:config.gemini_model,attempt:attempt+1,timeout_ms:timeoutMs}});
+        return api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:remainingMs,operationStep:'submit_analysis',model:config.gemini_model,attempt:++attempt,onDiagnostic:diagnostic=>{callDiagnostics.push(diagnostic);}});
+      });
       const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts}):await submit();
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
-      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response}));
+      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics}));
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost);

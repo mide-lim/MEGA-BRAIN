@@ -11,6 +11,14 @@ export class WorkerQueue{
     Object.assign(this,{api,store,workerOrigin,enabled,clock});
     this.parent=`projects/${project}/locations/us-central1/queues/v0-processing`;
   }
+  dispatchPath(task){return `jobs/dispatch_${createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[])])).digest('hex')}`;}
+  async enqueueAdmission(task){
+    if(!this.enabled)throw Error('Dispatch desativado.');
+    if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(task.batchId??'')||!/^[A-Za-z0-9_-]{16,64}$/.test(task.runId??'')||!Number.isSafeInteger(task.tick)||task.tick<0||task.tick>10000)throw Error('Tick inválido.');
+    const id='admit_'+createHash('sha256').update(JSON.stringify([task.batchId,task.runId,task.tick])).digest('hex');
+    try{await this.api.request(`https://cloudtasks.googleapis.com/v2/${this.parent}/tasks`,{method:'POST',json:{task:{name:`${this.parent}/tasks/${id}`,scheduleTime:new Date(this.clock()+60000).toISOString(),dispatchDeadline:'900s',httpRequest:{httpMethod:'POST',url:this.workerOrigin+'/tasks/admit',headers:{'Content-Type':'application/json'},body:Buffer.from(JSON.stringify(task)).toString('base64'),oidcToken:{serviceAccountEmail:`v0-queue@${project}.iam.gserviceaccount.com`,audience:this.workerOrigin}}}}});}catch(error){if(error.status!==409)throw error;}
+    return {status:'queued'};
+  }
   async enqueue(input){
     const task=validateTask(input);
     if(!this.enabled)return {status:'disabled'};

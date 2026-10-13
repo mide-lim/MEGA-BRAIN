@@ -8,6 +8,12 @@ export function validateBatch(batch){
  if(batch.video_ids.length===262&&(batch.parallelism!==4||!Array.isArray(batch.active_video_ids)||batch.active_video_ids.length>4||new Set(batch.active_video_ids).size!==batch.active_video_ids.length||batch.active_video_ids.some(v=>!batch.video_ids.includes(v))))throw Error('Quatro vias com identidades validas obrigatorias.');
  return batch;
 }
+// This marker is written only by explicit operator isolation, never inferred
+// from an uncertain status. It does not settle or release the monetary reserve.
+export function isolatedAnalysisTimeout(job,batch){
+ const x=job?.individual_isolation;
+ return batch?.video_ids?.length===262&&job.batch_id===batch.id&&job.status==='uncertain'&&job.stage==='analysis'&&x?.schema_version===1&&x.reason==='verified_client_timeout'&&typeof x.authorization_ref==='string'&&/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(x.authorization_ref)&&Number.isFinite(Date.parse(x.authorized_at))&&(x.evidence?.kind==='client_timeout'||x.evidence?.kind==='legacy_client_cancel'&&x.evidence.server_status===499&&x.evidence.client_code===23);
+}
 export function batchUsage(state){
  const batch=validateBatch(state.batch);let spent=0,reserved=0,uncertain=false;
  for(const job of Object.values(state.jobs??{})){
@@ -29,7 +35,8 @@ export function batchDecision(state,{videoId,maximumCents}={}){
   if(!batch.active_video_ids.includes(videoId)&&batch.active_video_ids.length>=4)reasons.push('Quatro videos em andamento.');
   if(Object.values(state.jobs??{}).some(j=>j.batch_id===batch.id&&j.video_id===videoId&&['reserved','started'].includes(j.status)))reasons.push('Uma etapa deste video ja esta em andamento.');
  }else if(Object.values(state.jobs??{}).some(j=>j.batch_id===batch.id&&['reserved','started'].includes(j.status)))reasons.push('Uma etapa do lote já está em andamento.');
- if(usage.uncertain)reasons.push('Resultado incerto no lote exige conferência.');
+ if(Object.values(state.jobs??{}).some(j=>j.batch_id===batch.id&&j.status==='uncertain'&&!isolatedAnalysisTimeout(j,batch)))reasons.push('Resultado incerto no lote exige conferência.');
+ if(Object.values(state.jobs??{}).some(j=>j.video_id===videoId&&isolatedAnalysisTimeout(j,batch)))reasons.push('Vídeo isolado exige recuperação explícita.');
  if(!cents(maximumCents)||maximumCents<1||maximumCents>usage.available_cents)reasons.push('Teto do lote insuficiente.');
  return {ready:!reasons.length,reasons,...usage};
 }

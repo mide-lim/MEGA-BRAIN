@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "id": "MEG-77",
+  "paperclip_issue_id": "463ddb76-a95f-45d7-b72c-9716fc4ee9c5",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "e727b2e27da55be6573d1cfd99e973048393efbd",
+  "objective": "Durable private CloudTasks admission up to four videos, preserving financial gates and existing paid execution identities.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Durable authenticated admission tick schedules its successor before admitting work; no local coordinator required after initial activation",
+    "CAS admission intents plus financial active slots bound dispatches to four; paid execution claims unchanged",
+    "Pause and finance decisions stop new admissions, isolated timeout is never replayed",
+    "Mock tests cover duplicate/concurrent ticks, restart, pause, budget and held intent",
+    "Accepted persisted analyses are allowed for playback without changing franchise limits/counters; interrupted whitelist update is recoverable without replay",
+    "Accounted terminal Instagram failures free capacity only with original diagnostic and recorded user verdict hold"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/worker-admission.mjs",
+    "google-v0/lib/worker-queue.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/worker-http.mjs",
+    "google-v0/Dockerfile.worker",
+    "google-v0/tests/worker-admission.test.mjs",
+    "google-v0/tests/worker-queue.test.mjs",
+    "docs/worker-admission.md",
+    "tasks/MEG-77.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Runtime must install the real admission endpoint",
+      "max_chars": 3000,
+      "sections": [
+        "workerRuntime"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-http.mjs",
+      "reason": "Allow only new private admission route",
+      "max_chars": 2000,
+      "sections": [
+        "route whitelist"
+      ]
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Reuse reservationDecision without modifying finance",
+      "max_chars": 4000,
+      "sections": [
+        "reservationDecision"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "Private OIDC dispatch and outbox",
+      "max_chars": 3000,
+      "sections": [
+        "WorkerQueue"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-77.json --diff-base e727b2e27da55be6573d1cfd99e973048393efbd --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Independent human review required before production activation; no deployment or paid API calls in this task."
+  }
+}

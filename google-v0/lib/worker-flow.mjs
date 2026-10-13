@@ -12,7 +12,19 @@ export const executionId=(videoId,stage,revision=null)=>{
   return 'job_'+createHash('sha256').update(`${videoId}:${stage}:${revision??'v0'}`).digest('hex');
 };
 const ownsResult=(result,id,stage)=>result?.video_id===id&&result?.stage===stage;
-const failureDiagnostic=error=>({operation_step:['download_media','inspect_download','persist_download','read_media','extract_audio','persist_audio','submit_stt','reserve_result','submit_analysis','persist_analysis'].includes(error?.operation_step)?error.operation_step:'adapter_or_reservation',http_status:Number.isInteger(error?.status)?error.status:null,tool_code:Number.isInteger(error?.code)||typeof error?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(error.code)?error.code:null,...(error?.provider_diagnostic?{provider:error.provider_diagnostic}:{}),...(error?.download_diagnostic?{download:safeDownloadDiagnostic(error.download_diagnostic)}:{})});
+const safeGoogleCallDiagnostic=value=>{
+ if(!value||!['submit_analysis','submit_stt'].includes(value.operation_step))return null;
+ const out={operation_step:value.operation_step};
+ for(const key of ['elapsed_ms','timeout_ms'])if(Number.isSafeInteger(value[key])&&value[key]>=0&&value[key]<=890000)out[key]=value[key];
+ if(['Error','TypeError','SyntaxError','AbortError','TimeoutError','RangeError'].includes(value.error_name))out.error_name=value.error_name;
+ if(Number.isSafeInteger(value.error_code)||typeof value.error_code==='string'&&/^(?:ERR_[A-Z_]{1,48}|E[A-Z]{2,24}|UND_ERR_[A-Z_]{1,48})$/.test(value.error_code))out.error_code=value.error_code;
+ if(Number.isInteger(value.http_status)&&value.http_status>=100&&value.http_status<=599)out.http_status=value.http_status;
+ if(typeof value.request_id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value.request_id))out.request_id=value.request_id;
+ if(typeof value.model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(value.model))out.model=value.model;
+ if(Number.isInteger(value.attempt)&&value.attempt>=1&&value.attempt<=3)out.attempt=value.attempt;
+ return out;
+};
+const failureDiagnostic=error=>({operation_step:['download_media','inspect_download','persist_download','read_media','extract_audio','persist_audio','submit_stt','reserve_result','submit_analysis','persist_analysis'].includes(error?.operation_step)?error.operation_step:'adapter_or_reservation',http_status:Number.isInteger(error?.status)?error.status:null,tool_code:Number.isInteger(error?.code)||typeof error?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(error.code)?error.code:null,...(['TimeoutError','AbortError'].includes(error?.name)?{error_name:error.name}:{}),...(['elapsed_ms','timeout_ms'].reduce((fields,key)=>{if(Number.isSafeInteger(error?.[key]??error?.google_diagnostic?.[key])&&(error?.[key]??error?.google_diagnostic?.[key])>=0&&(error?.[key]??error?.google_diagnostic?.[key])<=890000)fields[key]=error?.[key]??error?.google_diagnostic?.[key];return fields;},{})),...(safeGoogleCallDiagnostic(error?.google_diagnostic)?{google_call:safeGoogleCallDiagnostic(error.google_diagnostic)}:{}),...(error?.provider_diagnostic?{provider:error.provider_diagnostic}:{}),...(error?.download_diagnostic?{download:safeDownloadDiagnostic(error.download_diagnostic)}:{})});
 
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.

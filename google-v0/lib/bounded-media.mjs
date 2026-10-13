@@ -12,17 +12,23 @@ export function boundedMedia({repository,store,api,authorize,enabled=false,clock
  const reply=(message,status)=>Response.json({error:message},{status,headers:{'Cache-Control':'no-store'}});
  async function policy(id,bytes=0){
   const snapshot=await store.get('settings/media_delivery'),p=snapshot?.data;
-  if(!enabled||!p||p.enabled!==true||p.schema_version!==1||!Array.isArray(p.allowed_ids)||!p.allowed_ids.includes(id)||!Number.isFinite(Date.parse(p.expires_at))||clock()>=Date.parse(p.expires_at))throw Error('Delivery disabled');
-  if(!Number.isSafeInteger(p.maximum_bytes)||p.maximum_bytes<1||p.maximum_bytes>400*1024*1024||!Number.isSafeInteger(p.used_bytes)||p.used_bytes<0||!Number.isSafeInteger(p.requests)||p.requests<0||p.requests>=200||p.used_bytes+bytes>p.maximum_bytes||p.financial_execution_id!=='media_pilot_delivery')throw Error('Delivery limit');
+  if(!enabled||!p||p.enabled!==true||p.schema_version!==1||!Array.isArray(p.allowed_ids)||!Number.isFinite(Date.parse(p.expires_at))||clock()>=Date.parse(p.expires_at))throw Error('Delivery disabled');
+  if(!p.allowed_ids.includes(id))throw Error('Video not allowed');
+  const maximumRequests=p.maximum_requests??200;
+  if(!Number.isSafeInteger(p.maximum_bytes)||p.maximum_bytes<1||p.maximum_bytes>1024*1024*1024||!Number.isSafeInteger(maximumRequests)||maximumRequests<1||maximumRequests>2000||!Number.isSafeInteger(p.used_bytes)||p.used_bytes<0||!Number.isSafeInteger(p.requests)||p.requests<0||p.financial_execution_id!=='media_pilot_delivery')throw Error('Invalid delivery policy');
+  if(p.requests>=maximumRequests)throw Error('Request allowance exhausted');
+  if(p.used_bytes+bytes>p.maximum_bytes)throw Error('Transfer allowance exhausted');
+  // Scale the existing conservative envelope; this is not a provider tariff.
+  const requiredCents=Math.max(420,Math.ceil(p.maximum_bytes*420/(400*1024*1024)));
   const f=(await store.get('settings/financial'))?.data,j=f?.jobs?.[p.financial_execution_id];
-  if(!j||j.stage!=='media_access'||j.status!=='started'||j.maximum_cents!==420||!Number.isSafeInteger(f.reserved_cents)||f.reserved_cents<420||f.coverage_verified!==true||!Number.isFinite(Date.parse(f.credit_expires_at))||!Number.isFinite(Date.parse(f.ongoing_costs_valid_until))||clock()>=Date.parse(f.credit_expires_at)-72*3600000||clock()>=Date.parse(f.ongoing_costs_valid_until))throw Error('Funding unavailable');
+  if(!j||j.stage!=='media_access'||j.status!=='started'||!Number.isSafeInteger(j.maximum_cents)||j.maximum_cents<requiredCents||j.maximum_cents>1100||!Number.isSafeInteger(f.reserved_cents)||f.reserved_cents<j.maximum_cents||f.coverage_verified!==true||!Number.isFinite(Date.parse(f.credit_expires_at))||!Number.isFinite(Date.parse(f.ongoing_costs_valid_until))||clock()>=Date.parse(f.credit_expires_at)-72*3600000||clock()>=Date.parse(f.ongoing_costs_valid_until))throw Error('Funding unavailable');
   if(bytes)await store.patch('settings/media_delivery',{used_bytes:p.used_bytes+bytes,requests:p.requests+1},{updateTime:snapshot.updateTime});
   return p;
  }
  async function record(id){const v=await repository.video(id);if(!/^[A-Za-z0-9_-]{5,32}$/.test(id)||!v?.media_verified||v.video_key!==`originals/instagram/${id}/video.mp4`||!/^\d{1,30}$/.test(v.video_generation??'')||!Number.isSafeInteger(v.video_bytes)||v.video_bytes<1||v.video_bytes>100000000)throw Error('Invalid media');return v;}
  return {async metadata(request,id){
   if(await authorize(request)!==true)return reply('Não autorizado',401);
-  try{const p=await policy(id);await record(id);return Response.json({url:'/api/media/'+encodeURIComponent(id),expires_at:p.expires_at},{headers:{'Cache-Control':'no-store'}});}catch{return reply('Reprodução pausada ou franquia do piloto esgotada.',503);}
+  try{const p=await policy(id);await record(id);return Response.json({url:'/api/media/'+encodeURIComponent(id),expires_at:p.expires_at},{headers:{'Cache-Control':'no-store'}});}catch(error){const messages={'Video not allowed':'Este vídeo ainda não foi liberado para reprodução.','Request allowance exhausted':'Franquia de requisições de reprodução esgotada.','Transfer allowance exhausted':'Franquia de transferência de vídeo esgotada.'};return reply(messages[error?.message]??'Reprodução indisponível; confira a configuração e a reserva.',503);}
  },async stream(request,id){
   if(await authorize(request)!==true)return reply('Não autorizado',401);
   if(!['GET','HEAD'].includes(request.method))return reply('Método inválido',405);

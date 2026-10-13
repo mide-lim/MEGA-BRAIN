@@ -1,3 +1,4 @@
+import {recoverableAnalysis429} from './analysis-retry.mjs';
 import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
 import {ongoingCostPlan} from './ongoing-costs.mjs';
 // One versioned Firestore document makes reservation and claim atomic.
@@ -72,6 +73,15 @@ export class FinancialLedger{
     if(state.batch)job.batch_id=state.batch.id;
     await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents},{updateTime:snapshot.updateTime});
     return {...decision,execution_id:executionId};
+  }
+  async resumeAnalysis429(executionId){
+    if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
+    const snapshot=await this.store.get(this.path),state=snapshot?.data;validate(state);
+    const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data;
+    if(job?.status!=='uncertain'||job.stage!=='analysis'||claim?.status!=='recovering_429'||claim.video_id!==job.video_id||!recoverableAnalysis429({...claim,status:'uncertain'}))throw Error('Retomada exige429 confirmado e histórico limitado.');
+    const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
+    if(!decision.ready)throw Error(decision.reasons.join(' '));
+    await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:{...job,status:'started',recovery_429_count:(job.recovery_429_count??0)+1,updated_at:new Date(this.clock()).toISOString()}}},{updateTime:snapshot.updateTime});
   }
   async transition(executionId,action,{actualCents}={}){
     if(!executionPattern.test(executionId??''))throw new Error('Execução inválida.');

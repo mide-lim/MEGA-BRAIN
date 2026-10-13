@@ -107,3 +107,41 @@ test('download diagnostic is sanitized and failure cannot trigger paid stages or
  const f=(await store.get('settings/financial')).data;assert.equal(f.paused,true);assert.equal(f.reserved_cents,10);
  await flow.run({videoId:'Reel_1',stage:'upload'});assert.equal(downloads,1);assert.equal(paid,0);
 });
+
+test('explicit429 recovery keeps reservation and saved stages, concurrent delivery runs once',async()=>{
+ let calls=0;const operations={analysis:async({video,analysisAttempts,recordAnalysisAttempts})=>{
+  calls++;if(calls===1)throw Object.assign(Error('quota'),{status:429,operation_step:'submit_analysis'});
+  assert.deepEqual(analysisAttempts.map(a=>a.status),['http_429']);
+  await recordAnalysisAttempts([...analysisAttempts,{number:2,status:'response_received'}]);
+  return {video_id:video.id,stage:'analysis',actual_cents:4,changes:{analysis:{title:'Recuperado'}}};
+ }};
+ const {flow,store}=fixture(operations);
+ await store.create('jobs/saved_upload',{status:'completed'});await store.create('jobs/saved_stt',{status:'completed'});
+ const first=await flow.run({videoId:'Reel_1',stage:'analysis'});assert.equal(first.status,'uncertain');
+ let financial=await store.get('settings/financial');await store.patch('settings/financial',{paused:false},{updateTime:financial.updateTime});
+ const results=await Promise.allSettled([flow.run({videoId:'Reel_1',stage:'analysis',recoverAnalysis429:true}),flow.run({videoId:'Reel_1',stage:'analysis',recoverAnalysis429:true})]);
+ assert.ok(results.some(r=>r.status==='fulfilled'&&r.value.status==='completed'));assert.equal(calls,2);
+ financial=(await store.get('settings/financial')).data;assert.equal(financial.reserved_cents,0);assert.equal(financial.spent_cents,4);assert.equal(Object.keys(financial.jobs).length,1);assert.equal(financial.jobs[first.execution_id].recovery_429_count,1);
+ assert.deepEqual((await store.get('jobs/saved_upload')).data,{status:'completed'});assert.deepEqual((await store.get('jobs/saved_stt')).data,{status:'completed'});
+ assert.equal((await store.get('videos/Reel_1')).data.transcript,'Texto original');
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis',recoverAnalysis429:true})).reason,'analysis_not_recoverable_429');
+});
+test('explicit recovery rejects timeout, three429s and mismatched financial reservation',async()=>{
+ for(const variant of ['timeout','exhausted','wrong_video']){
+  let calls=0;const {flow,store}=fixture({analysis:async()=>{calls++;throw Object.assign(Error('failure'),{status:variant==='timeout'?503:429,operation_step:'submit_analysis'});}});
+  const first=await flow.run({videoId:'Reel_1',stage:'analysis'});
+  let f=await store.get('settings/financial');await store.patch('settings/financial',{paused:false,...(variant==='wrong_video'?{jobs:{...f.data.jobs,[first.execution_id]:{...f.data.jobs[first.execution_id],video_id:'Other'}}}:{})},{updateTime:f.updateTime});
+  if(variant==='exhausted'){const j=await store.get('jobs/'+first.execution_id);await store.patch('jobs/'+first.execution_id,{analysis_attempts:[1,2,3].map(number=>({number,status:'http_429'}))},{updateTime:j.updateTime});}
+  assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis',recoverAnalysis429:true})).status,'blocked');assert.equal(calls,1);
+ }
+});
+
+test('automation pause during analysis retry blocks a further submission',async()=>{
+ let calls=0;const {flow,store}=fixture({analysis:async({recordAnalysisAttempts})=>{
+  await recordAnalysisAttempts([{number:1,status:'started'}]);calls++;
+  await recordAnalysisAttempts([{number:1,status:'http_429'}]);
+  const control=await store.get('settings/automation');await store.patch('settings/automation',{analysis_enabled:false},{updateTime:control.updateTime});
+  await recordAnalysisAttempts([{number:1,status:'http_429'},{number:2,status:'started'}]);calls++;
+ }});
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'uncertain');assert.equal(calls,1);
+});

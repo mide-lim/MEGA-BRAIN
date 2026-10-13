@@ -1,3 +1,12 @@
+// Keep bounded provider error data; never store credentials or full request URLs.
+export const safeProviderMessage=value=>typeof value==='string'?value.replace(/https?:\/\/[^\s]+/g,'[url]').replace(/Bearer\s+[^\s]+/gi,'[credential]').replace(/(?:AIza[A-Za-z0-9_-]{20,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g,'[redacted]').replace(/[\x00-\x1f]/g,' ').slice(0,1000):'';
+async function providerDiagnostic(response){
+  const reader=response.body?.getReader();if(!reader)return null;
+  let size=0;const chunks=[];
+  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8192){await reader.cancel();return null;}chunks.push(Buffer.from(value));}}
+  catch{return null;}finally{reader.releaseLock();}
+  try{const error=JSON.parse(Buffer.concat(chunks).toString()).error;return {status:/^[A-Z_]{1,64}$/.test(error?.status??'')?error.status:null,message:safeProviderMessage(error?.message)};}catch{return null;}
+}
 const forbiddenProject='megabrain-stt';
 export class GoogleREST {
   constructor({project,tokenProvider,fetchImpl=fetch,buckets=[]}) {
@@ -20,7 +29,7 @@ export class GoogleREST {
     const token=await this.tokenProvider();
     if(typeof token!=='string'||!token)throw new Error('Credencial indisponível.');
     const response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:json!==undefined?JSON.stringify(json):body,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
-    if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;throw error;}
+    if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;error.provider_diagnostic=await providerDiagnostic(response);throw error;}
     if(responseMode==='bytes'){
       if(!Number.isSafeInteger(maxResponseBytes)||maxResponseBytes<1)throw new Error('Limite de resposta inválido.');
       if(Number(response.headers.get('content-length'))>maxResponseBytes){await response.body?.cancel();throw new Error('Objeto acima do limite de leitura.');}

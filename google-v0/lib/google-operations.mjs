@@ -1,3 +1,4 @@
+import {submitAnalysisWithRetry} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
 
@@ -76,14 +77,16 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response});
       return result(videoId,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
     },
-    async analysis({video,executionId}){
+    async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
       await admitted(executionId,'analysis',video.id);const cost=budget('analysis');
       if(!/^gemini-[a-z0-9.-]+$/.test(config.gemini_model??''))throw new Error('Modelo Gemini precisa ser configurado.');
       if(video.video_key!==`originals/instagram/${video.id}/video.mp4`)throw new Error('Mídia fora do escopo.');
+      if(typeof recordAnalysisAttempts==='function'&&await storage.metadata(`results/instagram/${video.id}/${executionId}/analysis.json`))throw Error('Resultado já existe; conferir sem repetir análise.');
       const caption=await captionFor(video,executionId);
       const analysisRecord={...video,...caption};
       const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model});
-      const response=await at('submit_analysis',()=>api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:120000}));
+      const submit=()=>at('submit_analysis',()=>api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:120000}));
+      const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts}):await submit();
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response}));

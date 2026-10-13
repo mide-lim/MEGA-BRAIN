@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 const project='megabrain-v0-1017370021431';
 export function validateTask(task){
-  if(!task||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
+  if(!task||(task.recoverAnalysis429!==undefined&&(task.recoverAnalysis429!==true||task.stage!=='analysis'||task.poll!==0||!task.recoveryId))||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId','recoverAnalysis429'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
   return task;
 }
 export class WorkerQueue{
@@ -14,7 +14,7 @@ export class WorkerQueue{
   async enqueue(input){
     const task=validateTask(input);
     if(!this.enabled)return {status:'disabled'};
-    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[])])).digest('hex');
+    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[])])).digest('hex');
     const path=`jobs/${id}`,name=`${this.parent}/tasks/${id}`;
     // Outbox first. An unknown create response is reconciled manually against
     // the deterministic task name, never blindly enqueued again.

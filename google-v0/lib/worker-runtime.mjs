@@ -1,3 +1,4 @@
+import {metadataProbeHandler} from './metadata-probe.mjs';
 import {serviceIdentity} from './service-identity.mjs';
 import {GoogleREST} from './google-rest.mjs';
 import {Firestore} from './firestore.mjs';
@@ -24,5 +25,8 @@ export function workerRuntime(config,preset,{withHandler=false}={}){
   const flow=new WorkerFlow({store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null});
   if(!withHandler)return flow;
   const queue=new WorkerQueue({api,store,workerOrigin:config.worker_origin,enabled:config.dispatch_enabled===true});
-  return workerHandler({flow,queue,authorize:workerAuthorization({audience:config.worker_origin})});
+  const authorize=workerAuthorization({audience:config.worker_origin});
+  const processing=workerHandler({flow,queue,authorize});
+  const probe=metadataProbeHandler({store,tools,authorize,batchId:config.batch_id,eligibleVideos:config.pilot_video_ids??[]});
+  return request=>new URL(request.url).pathname==='/tasks/diagnose'?probe(request):processing(request);
 }

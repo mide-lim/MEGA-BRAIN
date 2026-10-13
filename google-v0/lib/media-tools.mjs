@@ -52,6 +52,21 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
  }
 
   return {
+    async probeMetadata(video){
+      const started=clock();let phase='source_validation';
+      try{
+        const links=parseReelLinks(video.source_url);
+        if(links.length!==1||links[0].id!==video.id)throw new Error('Origem inválida.');
+        phase='metadata';
+        const {stdout}=await run('yt-dlp',['--ignore-config','--no-playlist','--skip-download','--dump-single-json','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','10','-f','bestvideo+bestaudio/best[acodec!=none]','--',links[0].url],{timeout:20000,maxBuffer:1048576});
+        const metadata=JSON.parse(stdout);
+        if(!metadata||metadata.display_id!==video.id&&metadata.id!==video.id)throw new Error('Metadados inválidos.');
+        const diagnostic=safeDownloadDiagnostic({phase:'metadata',phase_source:'boundary',elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:0,...await versions()});
+        return {status:'metadata_available',diagnostic};
+      }catch(error){
+        return {status:'metadata_failed',diagnostic:safeDownloadDiagnostic({...classifyDownload(error,phase),phase_source:'boundary',elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:error.code,...(phase==='source_validation'?{}:await versions())})};
+      }
+    },
     async captureCaption(video){
       const links=parseReelLinks(video.source_url);
       if(links.length!==1||links[0].id!==video.id)throw Error('Origem diverge do vídeo.');

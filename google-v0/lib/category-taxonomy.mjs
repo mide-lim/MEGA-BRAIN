@@ -23,6 +23,15 @@ export const categoryDefinitions=Object.freeze([
  ['a-organizar','Outros temas','A organizar',[],'Usar sozinho e somente quando nenhum destino servir.']
 ].map(([id,group,name,terms,scope])=>Object.freeze({id,group,name,terms:Object.freeze(terms),scope})));
 export const categoryIds=Object.freeze(categoryDefinitions.map(c=>c.id));
+// This contract is shared by provider generation and local validation.
+export const genericCategoryIds=Object.freeze(['tecnologia-geral','a-organizar']);
+export function categorySelectionSchema(){
+ const specific=categoryIds.filter(id=>!genericCategoryIds.includes(id));
+ return {type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:[...categoryIds]},anyOf:[
+  {type:'ARRAY',minItems:1,maxItems:1,items:{type:'STRING',enum:[...genericCategoryIds]}},
+  {type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:specific}}
+ ]};
+}
 const byId=new Map(categoryDefinitions.map(c=>[c.id,c]));
 const aliases=new Map([['productivity','Produtividade'],['tools','Ferramentas'],['receitas culinarias','Receitas'],['comida japonesa','Culinária japonesa']]);
 export function categoryLabel(value){
@@ -59,7 +68,7 @@ export function resolveCategories(values=[]){
 }
 export function validateCategoryIds(values){
  if(!Array.isArray(values)||!values.length||values.length>2||values.some(id=>!byId.has(id))||new Set(values).size!==values.length)throw Error('Categorias devem usar identificadores oficiais únicos; no máximo dois.');
- if(values.length>1&&(values.includes('a-organizar')||values.includes('tecnologia-geral')))throw Error('Categorias gerais devem ser usadas sozinhas.');
+ if(values.length>1&&(values.some(id=>genericCategoryIds.includes(id))))throw Error('Categorias gerais devem ser usadas sozinhas.');
 }
 export function categoryOptions(){return categoryDefinitions.map(({id,group,name,scope})=>({id,group,name,scope}));}
 

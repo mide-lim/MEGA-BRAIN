@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "MEG-75",
+  "paperclip_issue_id": "4e9b77d4-5d53-4714-8601-095a61d2670b",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "b4c92f8998b89ba8edfafb0aff8cbc5bbed06648",
+  "objective": "Improve Google-call diagnostics and configurable analysis timeout, without production calls or modifying financial/recovery logic. Operator integrates with MEG-76 and publishes PR.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Capture sanitized error name/code, operation_step and elapsed_ms without credentials or payloads",
+    "Configurable analysis timeout validates bounds under CloudRun890s and CloudTasks900s; choose a conservative documented default, do not remove all deadlines",
+    "Preserve one provider submission unless existing confirmed429 retry permits another; no automatic timeout replay",
+    "Test delayed successful response, timeout and invalid configuration using mocks; report durations limitations"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/google-rest.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/google-rest.test.mjs",
+    "google-v0/tests/google-operations.test.mjs",
+    "google-v0/tests/google-timeout.test.mjs",
+    "docs/google-call-diagnostics.md",
+    "tasks/MEG-75.json",
+    "google-v0/tests/google-adapters.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Existing diagnostics boundary; coordinate proposed fields with operator, do not edit MEG76 file",
+      "max_chars": 4000,
+      "sections": [
+        "failureDiagnostic and catch"
+      ]
+    },
+    {
+      "path": "google-v0/lib/analysis-retry.mjs",
+      "reason": "Retain confirmed429-only retries",
+      "max_chars": 2500,
+      "sections": [
+        "submitAnalysisWithRetry"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-75.json --diff-base b4c92f8998b89ba8edfafb0aff8cbc5bbed06648 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Provider deadline and diagnostics changes require independent human review before publishing"
+  }
+}

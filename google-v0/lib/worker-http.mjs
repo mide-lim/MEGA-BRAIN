@@ -2,7 +2,7 @@ import {createServer} from 'node:http';
 export function workerHTTP(handler){
   return createServer(async(req,res)=>{
     const send=(status,body)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
-    if(!['/tasks/run','/tasks/diagnose'].includes(req.url)){send(404,{error:'Rota indisponível.'});return;}
+    if(!['/tasks/run','/tasks/diagnose','/tasks/admit'].includes(req.url)){send(404,{error:'Rota indisponível.'});return;}
     if(req.method!=='POST'){send(405,{error:'Método inválido.'});return;}
     try{
       let size=0;const chunks=[];

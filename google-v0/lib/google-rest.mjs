@@ -7,6 +7,15 @@ async function providerDiagnostic(response){
   catch{return null;}finally{reader.releaseLock();}
   try{const error=JSON.parse(Buffer.concat(chunks).toString()).error;return {status:/^[A-Z_]{1,64}$/.test(error?.status??'')?error.status:null,message:safeProviderMessage(error?.message)};}catch{return null;}
 }
+export const defaultAnalysisTimeoutMs=120000;
+export const maximumAnalysisTimeoutMs=840000;
+export function analysisTimeoutMs(value=defaultAnalysisTimeoutMs){
+  if(!Number.isSafeInteger(value)||value<1000||value>maximumAnalysisTimeoutMs)throw new Error('Timeout de análise deve ser inteiro entre 1000 e 840000 ms.');
+  return value;
+}
+const safeErrorName=value=>['Error','TypeError','SyntaxError','AbortError','TimeoutError','RangeError'].includes(value)?value:null;
+const safeErrorCode=value=>Number.isSafeInteger(value)?value:typeof value==='string'&&/^(?:ERR_[A-Z_]{1,48}|E[A-Z]{2,24}|UND_ERR_[A-Z_]{1,48})$/.test(value)?value:null;
+const safeRequestId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)?value:null;
 const forbiddenProject='megabrain-stt';
 export class GoogleREST {
   constructor({project,tokenProvider,fetchImpl=fetch,buckets=[]}) {
@@ -15,7 +24,9 @@ export class GoogleREST {
     if(!Array.isArray(buckets)||buckets.some(b=>typeof b!=='string'||!b.startsWith(project+'-')||!/^[a-z0-9-]{3,63}$/.test(b)))throw new Error('Bucket precisa pertencer ao escopo da v0.');
     this.project=project;this.tokenProvider=tokenProvider;this.fetch=fetchImpl;this.buckets=new Set(buckets);
   }
-  async request(url,{method='GET',json,body,headers={},timeoutMs=30000,responseMode='json',maxResponseBytes=100000000}={}) {
+  async request(url,{method='GET',json,body,headers={},timeoutMs=30000,responseMode='json',maxResponseBytes=100000000,operationStep=null,model=null,attempt=null,onDiagnostic}={}) {
+    if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>maximumAnalysisTimeoutMs)throw new Error('Timeout Google inválido.');
+    if(onDiagnostic!==undefined&&typeof onDiagnostic!=='function')throw new Error('Registro diagnóstico inválido.');
     const parsed=new URL(url);
     if(parsed.protocol!=='https:'||!['aiplatform.googleapis.com','storage.googleapis.com','firestore.googleapis.com','cloudtasks.googleapis.com','speech.googleapis.com','us-speech.googleapis.com'].includes(parsed.hostname))throw new Error('Endpoint Google fora do escopo.');
     if(parsed.username||parsed.password||parsed.hash)throw new Error('URL Google inválida.');
@@ -26,36 +37,46 @@ export class GoogleREST {
     if(parsed.hostname==='us-speech.googleapis.com'&&!parsed.pathname.startsWith(`/v2/projects/${this.project}/locations/us/`)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname))throw new Error('Endpoint STT regional deve usar a região us.');
     if(json!==undefined&&body!==undefined)throw new Error('Corpo ambíguo.');
     if(Object.keys(headers).some(h=>['authorization','x-goog-user-project'].includes(h.toLowerCase())))throw new Error('Cabeçalhos de identidade não podem ser substituídos.');
-    const token=await this.tokenProvider();
-    if(typeof token!=='string'||!token)throw new Error('Credencial indisponível.');
-    const response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:json!==undefined?JSON.stringify(json):body,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
-    if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;error.provider_diagnostic=await providerDiagnostic(response);throw error;}
-    if(responseMode==='bytes'){
-      if(!Number.isSafeInteger(maxResponseBytes)||maxResponseBytes<1)throw new Error('Limite de resposta inválido.');
-      if(Number(response.headers.get('content-length'))>maxResponseBytes){await response.body?.cancel();throw new Error('Objeto acima do limite de leitura.');}
-      if(!response.body)return Buffer.alloc(0);
-      const reader=response.body.getReader();const chunks=[];let total=0;
-      try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;
-        if(total>maxResponseBytes){await reader.cancel();throw new Error('Objeto acima do limite de leitura.');}chunks.push(Buffer.from(value));}}
-      finally{reader.releaseLock();}
-      return Buffer.concat(chunks,total);
+    const started=performance.now();let response;
+    const diagnostic=error=>({operation_step:['submit_analysis','submit_stt'].includes(operationStep)?operationStep:null,elapsed_ms:Math.max(0,Math.round(performance.now()-started)),error_name:safeErrorName(error?.name),error_code:safeErrorCode(error?.code),http_status:Number.isInteger(response?.status)?response.status:null,request_id:safeRequestId(response?.headers?.get('x-request-id')),model:typeof model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(model)?model:null,attempt:Number.isSafeInteger(attempt)&&attempt>0&&attempt<=3?attempt:null,timeout_ms:timeoutMs});
+    let completed=false;
+    try{
+      const token=await this.tokenProvider();
+      if(typeof token!=='string'||!token)throw new Error('Credencial indisponível.');
+      response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:json!==undefined?JSON.stringify(json):body,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
+      if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;error.provider_diagnostic=await providerDiagnostic(response);throw error;}
+      if(responseMode==='bytes'){
+        if(!Number.isSafeInteger(maxResponseBytes)||maxResponseBytes<1)throw new Error('Limite de resposta inválido.');
+        if(Number(response.headers.get('content-length'))>maxResponseBytes){await response.body?.cancel();throw new Error('Objeto acima do limite de leitura.');}
+        if(!response.body){completed=true;await onDiagnostic?.(diagnostic());return Buffer.alloc(0);}
+        const reader=response.body.getReader();const chunks=[];let total=0;
+        try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;
+          if(total>maxResponseBytes){await reader.cancel();throw new Error('Objeto acima do limite de leitura.');}chunks.push(Buffer.from(value));}}
+        finally{reader.releaseLock();}
+        const result=Buffer.concat(chunks,total);completed=true;await onDiagnostic?.(diagnostic());return result;
+      }
+      const result=responseMode==='raw'?response:response.status===204?null:await response.json();
+      completed=true;await onDiagnostic?.(diagnostic());return result;
+    }catch(error){
+      error.google_diagnostic=diagnostic(error);
+      if(response)error.status=response.status;
+      if(!completed)await onDiagnostic?.(error.google_diagnostic);
+      throw error;
     }
-    if(responseMode==='raw')return response;
-    if(response.status===204)return null;
-    return response.json();
   }
   async countAnalysisTokens(model,request) {
     if(!/^gemini-[a-z0-9.-]+$/.test(model))throw new Error('Modelo inválido.');
     const url=`https://aiplatform.googleapis.com/v1/projects/${this.project}/locations/global/publishers/google/models/${model}:countTokens`;
     return this.request(url,{method:'POST',json:{contents:request.contents,systemInstruction:request.systemInstruction}});
   }
-  async generateAnalysis(model,request,{financialCheck,markStarted,markUncertain}) {
+  async generateAnalysis(model,request,{financialCheck,markStarted,markUncertain,timeoutMs=defaultAnalysisTimeoutMs}) {
     if(!/^gemini-[a-z0-9.-]+$/.test(model))throw new Error('Modelo inválido.');
     if(typeof financialCheck!=='function'||typeof markStarted!=='function'||typeof markUncertain!=='function')throw new Error('Reserva e registro da execução obrigatórios.');
+    analysisTimeoutMs(timeoutMs);
     const decision=await financialCheck();
     if(!decision?.ready || decision.paid_calls_enabled !== true)throw new Error('Execução paga bloqueada pela verificação financeira ou controle de ativação.');
     await markStarted();
-    try{return await this.request(`https://aiplatform.googleapis.com/v1/projects/${this.project}/locations/global/publishers/google/models/${model}:generateContent`,{method:'POST',json:request,timeoutMs:120000});}
-    catch(error){await markUncertain({http_status:error.status??null});throw error;}
+    try{return await this.request(`https://aiplatform.googleapis.com/v1/projects/${this.project}/locations/global/publishers/google/models/${model}:generateContent`,{method:'POST',json:request,timeoutMs,operationStep:'submit_analysis',model,attempt:1});}
+    catch(error){await markUncertain({http_status:error.status??null,google_diagnostic:error.google_diagnostic??null});throw error;}
   }
 }

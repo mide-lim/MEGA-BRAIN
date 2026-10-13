@@ -3,15 +3,18 @@
   "id": "MEG-79",
   "paperclip_issue_id": "e196e7fd-007a-411b-afb9-7ea373924802",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "b4c92f8998b89ba8edfafb0aff8cbc5bbed06648",
-  "objective": "Synchronize frontend library, category/search/detail views and dashboard with all paginated Google records and refresh visible page without overlapping reads. No processing or production deployment.",
+  "base_commit": "8a84a244595695186c75a35c3ae067a792339451",
+  "objective": "Synchronize frontend library, category/search/detail views and dashboard with all paginated Google records and refresh visible page without overlapping reads. No processing or production deployment. User-authorized follow-up: prevent invalid generic/specific category combinations at generation, and support explicit offline review of preserved responses without inference replay or automatic publication.",
   "risk": "medium",
   "acceptance_criteria": [
     "Read all cursor pages without a40-record cutoff; deduplicate records and reject repeated cursors",
     "Publish refreshed library only after full traversal succeeds; retain previous complete snapshot on failure",
     "Refresh every60seconds while visible, on returning to page and manually; abort on unmount and prevent concurrent traversals",
     "Dashboard, categories, knowledge search and open details reflect refreshed complete library",
-    "Browser fixture above40 records verifies totals and later-page content; no real Google/model/media calls"
+    "Browser fixture above40 records verifies totals and later-page content; no real Google/model/media calls",
+    "Provider response schema encodes existing generic-category singleton rule without broadening normalization or taxonomy",
+    "Offline category correction requires explicit selection and reason, preserves original response and uses existing evidence validation; no provider or storage calls",
+    "Document distinction between reviewed merged PR31 and pending activation, existing unknown timeout and owner-verdict Instagram cases"
   ],
   "allowed_paths": [
     "google-v0/lib/library-sync.mjs",
@@ -20,29 +23,35 @@
     "google-v0/qa/server.mjs",
     "google-v0/qa/browser-check.mjs",
     "docs/frontend-library-sync.md",
-    "tasks/MEG-79.json"
+    "tasks/MEG-79.json",
+    "google-v0/lib/category-taxonomy.mjs",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/tests/category-selection.test.mjs",
+    "docs/current-failure-resolution.md"
   ],
   "context": [
     {
-      "path": "google-v0/lib/library-api.mjs",
-      "reason": "Existing authorized read endpoint and cursor contract; preserve endpoint and writes",
-      "max_chars": 3500,
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Response schema and review existing saved response; no paid replay",
+      "max_chars": 5000,
       "sections": [
-        "library"
+        "reportSchema",
+        "analysisOutcome"
       ]
     },
     {
-      "path": "google-v0/lib/library-repository.mjs",
-      "reason": "Existing40 item bounded cursor pages",
-      "max_chars": 2500,
+      "path": "google-v0/lib/category-taxonomy.mjs",
+      "reason": "Preserve general singleton and scope-specific normalization",
+      "max_chars": 4000,
       "sections": [
-        "page"
+        "validateCategoryIds",
+        "normalizedCategoryIds"
       ]
     },
     {
       "path": "google-v0/qa/fixture.mjs",
       "reason": "Synthetic data for browser verification",
-      "max_chars": 3500,
+      "max_chars": 2000,
       "sections": [
         "video and automation"
       ]
@@ -58,7 +67,7 @@
   "execution_budget": {
     "worker_runs": 1,
     "reviewer_runs": 0,
-    "fix_runs": 0,
+    "fix_runs": 1,
     "timeout_minutes": 15,
     "reasoning": "medium"
   },

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "id": "MEG-76",
+  "paperclip_issue_id": "c33c75d1-5bc4-4998-bc72-1e750ae257e4",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "b4c92f8998b89ba8edfafb0aff8cbc5bbed06648",
+  "objective": "Isolate explicitly reviewed individual analysis timeouts in profile262, preserving unknown spending reserves, claims and system-wide gates. No paid recovery or production operation.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Only explicitly authorized individual submission timeout can release a lane; unknown systemic failures remain global",
+    "Preserve uncertain financial reserve and original claim; block duplicate or same-video paid work",
+    "Concurrent new work remains capped at four, credit/budget/pause gates intact",
+    "Document timeout recovery limits without pretending a timeout is HTTP429",
+    "Operator integration validates REST diagnostics persisted by WorkerFlow; prior read-media failure preserves403/reserve and now includes bounded timing"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/batch-budget.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/tests/worker-isolation.test.mjs",
+    "docs/worker-recovery.md",
+    "tasks/MEG-76.json",
+    "google-v0/tests/worker-integration.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Claim diagnostic and stage lifecycle dependency",
+      "sections": [
+        "run catch and analysis attempts"
+      ],
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/lib/analysis-retry.mjs",
+      "reason": "Preserve explicit429-only recovery contract",
+      "sections": [
+        "Module"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/tests/scale200.test.mjs",
+      "reason": "Concurrent reservation fixtures and legacy behavior",
+      "sections": [
+        "Fixture and uncertain outcomes"
+      ],
+      "max_chars": 4000
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-76.json --diff-base b4c92f8998b89ba8edfafb0aff8cbc5bbed06648 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Data and concurrency controls require independent human review before merge/deploy."
+  }
+}

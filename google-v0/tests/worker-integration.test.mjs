@@ -10,7 +10,7 @@ import {Storage} from '../lib/storage.mjs';
 import {StorageCapacity,newCapacity} from '../lib/storage-capacity.mjs';
 import {readFile} from 'node:fs/promises';
 
-for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-offline-model'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true,noSpeech:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',readFault:true},{location:'global',model:'offline_model',gemini:'gemini-offline-model',invalidCategory:true}])test(`Google adapters integrate upload, async STT and validated Gemini (${profile.location}, ${profile.invalidCategory?'invalid-category':profile.readFault?'read-fault':profile.noSpeech?'no-speech':profile.synchronous?'sync':'batch'}) with durable reservations`,async()=>{
+for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-offline-model'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite'},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',synchronous:true,noSpeech:true},{location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',readFault:true},{location:'global',model:'offline_model',gemini:'gemini-offline-model',invalidCategory:true},...['invalid_json','incomplete_response','persist_failure'].map(fault=>({location:'us',model:'chirp_3',gemini:'gemini-3.5-flash-lite',fault}))])test(`Google adapters integrate upload, async STT and validated Gemini (${profile.location}, ${profile.invalidCategory?'invalid-category':profile.readFault?'read-fault':profile.noSpeech?'no-speech':profile.synchronous?'sync':'batch'}) with durable reservations`,async()=>{
   const project='megabrain-v0-1017370021431',bucket=project+'-media',videoId='Reel_123',now=Date.now();let version=0,submits=0,analyses=0,polls=0,injectReadFault=false;
   const docs=new Map(),objects=new Map(),calls=[];
   const seed=(path,data)=>docs.set(path,{data:structuredClone(data),updateTime:String(++version)});
@@ -27,7 +27,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     if(u.hostname==='storage.googleapis.com'){
       if(u.pathname.startsWith('/upload/')){
         const body=options.body.toString(),match=body.match(/\r\n\r\n(\{"name"[^\r]+)\r\n--/);assert.ok(match);
-        const meta=JSON.parse(match[1]),start=body.indexOf('\r\n\r\n',body.indexOf('Content-Type:',body.indexOf(match[1])+match[1].length))+4,end=body.lastIndexOf('\r\n--');
+        const meta=JSON.parse(match[1]);if(profile.fault==='persist_failure'&&meta.name.endsWith('/analysis.json'))return new Response('storage unavailable',{status:503});const start=body.indexOf('\r\n\r\n',body.indexOf('Content-Type:',body.indexOf(match[1])+match[1].length))+4,end=body.lastIndexOf('\r\n--');
         const bytes=Buffer.from(body.slice(start,end));objects.set(meta.name,{bytes,meta:{...meta,generation:String(objects.size+1),size:String(bytes.length)}});
         return Response.json(objects.get(meta.name).meta);
       }
@@ -54,7 +54,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     const generated=JSON.parse(options.body);assert.ok(generated.generationConfig.responseSchema.properties.categories.items.enum.includes('tecnologia-geral'));
     assert.ok(!generated.generationConfig.responseSchema.properties.categories.items.enum.includes('Unknown category'));
     if(profile.gemini==='gemini-3.5-flash-lite'){const config=JSON.parse(options.body).generationConfig;assert.equal(config.thinkingConfig.thinkingLevel,'MINIMAL');assert.equal(config.temperature,undefined);}
-    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
+    return Response.json({candidates:[{finishReason:profile.fault==='incomplete_response'?'MAX_TOKENS':'STOP',content:{parts:[{text:profile.fault==='invalid_json'?'{broken':JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
   }});
   seed('settings/capacity',{...newCapacity(),enabled:true,limit_bytes:10000});
   const financial=await store.get('settings/financial');await store.patch('settings/financial',{ongoing_storage_planned_bytes:10000},{updateTime:financial.updateTime});
@@ -71,9 +71,15 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   if(profile.synchronous){assert.equal((await flow.run({videoId,stage:'transcription'})).status,'completed');assert.equal(polls,0);}
   else{assert.equal((await flow.run({videoId,stage:'transcription'})).status,'waiting');assert.equal((await flow.poll({videoId})).status,'waiting');assert.equal((await flow.poll({videoId})).status,'completed');}
   if(profile.noSpeech){const video=(await store.get('videos/'+videoId)).data;assert.equal(video.transcript_status,'no_speech_recognized');assert.equal(video.transcript,'');assert.ok(video.transcript_generation);}
-  if(profile.invalidCategory){
-    const failure=await flow.run({videoId,stage:'analysis'});assert.equal(failure.status,'uncertain');
-    assert.equal((await store.get('videos/'+videoId)).data.analysis,undefined);
+  if(profile.fault==='persist_failure'){const result=await flow.run({videoId,stage:'analysis'});assert.equal(result.status,'uncertain');const ledger=(await store.get('settings/financial')).data;assert.equal(ledger.paused,true);assert.equal(ledger.reserved_cents,10);assert.equal((await store.get('videos/'+videoId)).data.analysis,undefined);await flow.run({videoId,stage:'analysis'});assert.equal(analyses,1);return;}
+  if(profile.invalidCategory||profile.fault){
+    const failure=await flow.run({videoId,stage:'analysis'});assert.equal(failure.status,'completed');
+    const saved=(await store.get('videos/'+videoId)).data;
+    assert.equal(saved.analysis,null);assert.equal(saved.status,'needs_attention');
+    assert.equal(saved.analysis_quality_status,'review_required');assert.deepEqual(saved.analysis_review_reasons,[profile.fault??'invalid_categories']);
+    assert.ok(saved.candidate_analysis_key);assert.ok(saved.candidate_analysis_generation);
+    const settled=(await store.get('settings/financial')).data;
+    assert.equal(settled.paused,false);assert.equal(settled.reserved_cents,0);assert.equal(settled.spent_cents,30);
     assert.ok([...objects.keys()].some(k=>k.endsWith('/analysis.json')));
     await flow.run({videoId,stage:'analysis'});assert.equal(analyses,1);return;
   }

@@ -99,7 +99,7 @@ export class WorkerFlow {
   }
   async finish({path,id,videoId,stage,result,maximumCents}){
     if(!Number.isSafeInteger(result.actual_cents)||result.actual_cents<0||result.actual_cents>maximumCents)throw new Error('Custo precisa de reconciliação.');
-    const allowed=stage==='upload'?['video_key','video_generation','video_bytes','media_verified','audio_status','duration_seconds']:stage==='transcription'?['transcript','transcript_status','transcript_key','transcript_generation']:['analysis','analysis_key','analysis_generation','source_caption','caption_status','analysis_quality_status','analysis_candidate','candidate_analysis_key','candidate_analysis_generation'];
+    const allowed=stage==='upload'?['video_key','video_generation','video_bytes','media_verified','audio_status','duration_seconds']:stage==='transcription'?['transcript','transcript_status','transcript_key','transcript_generation']:['analysis','analysis_key','analysis_generation','source_caption','caption_status','analysis_quality_status','analysis_review_reasons','analysis_candidate','candidate_analysis_key','candidate_analysis_generation'];
     const changes=result.changes;
     if(!changes||typeof changes!=='object'||Array.isArray(changes)||!Object.keys(changes).length||Object.keys(changes).some(key=>!allowed.includes(key)))throw new Error('Persistência fora do schema da etapa.');
     if(stage==='upload'&&(changes.media_verified!==true||changes.audio_status!=='present'))throw new Error('Mídia precisa de diagnóstico.');
@@ -107,9 +107,13 @@ export class WorkerFlow {
     if(stage==='transcription'&&changes.transcript_status!==undefined&&!['recognized','no_speech_recognized'].includes(changes.transcript_status))throw new Error('Estado da transcrição inválido.');
     if(changes.source_caption){const c=changes.source_caption;if(typeof c.text!=='string'||!c.text.trim()||c.text.length>50000||c.capture_id!==createHash('sha256').update(c.text).digest('hex'))throw Error('Legenda capturada inválida.');}
     if(changes.caption_status!==undefined&&!['captured','unavailable'].includes(changes.caption_status))throw Error('Estado da legenda inválido.');
-    if(stage==='analysis'&&(!changes.analysis||typeof changes.analysis!=='object'))throw new Error('Análise ausente.');
+    const reviewRequired=stage==='analysis'&&changes.analysis_quality_status==='review_required';
+    if(reviewRequired&&(changes.candidate_analysis_key!==`results/instagram/${videoId}/${id}/analysis.json`||!/^\d+$/.test(changes.candidate_analysis_generation??'')))throw new Error('Candidato persistido da própria execução obrigatório.');
+    if(changes.analysis_review_reasons!==undefined&&(!Array.isArray(changes.analysis_review_reasons)||changes.analysis_review_reasons.some(r=>!['incomplete_response','invalid_json','invalid_categories','invalid_report','missing_knowledge','unsupported_revision'].includes(r))))throw new Error('Motivo de revisão inválido.');
+    if(stage==='analysis'&&!reviewRequired&&(!changes.analysis||typeof changes.analysis!=='object'))throw new Error('Análise ausente.');
     const video=await this.store.get(`videos/${videoId}`);
-    await this.store.patch(`videos/${videoId}`,{...changes,status:stage==='upload'?'downloaded':stage==='transcription'?'transcribed':changes.analysis_quality_status==='review_required'?'needs_attention':'analyzed',error:changes.analysis_quality_status==='review_required'?'Nova análise sem campos sustentados. Revisão anterior preservada; confira o candidato.':null,updated_at:new Date(this.clock()).toISOString(),...(stage==='upload'?{has_audio:true}:{})},{updateTime:video.updateTime});
+    if(reviewRequired&&(JSON.stringify(changes.analysis??null)!==JSON.stringify(video.data.analysis??null)||(changes.analysis_key??null)!==(video.data.analysis_key??null)||(changes.analysis_generation??null)!==(video.data.analysis_generation??null)))throw new Error('Revisão pendente não pode substituir análise publicada.');
+    await this.store.patch(`videos/${videoId}`,{...changes,status:stage==='upload'?'downloaded':stage==='transcription'?'transcribed':changes.analysis_quality_status==='review_required'?'needs_attention':'analyzed',error:changes.analysis_quality_status==='review_required'?'Resposta recebida com problemas de qualidade; confira o candidato preservado. A análise publicada não foi substituída.':null,updated_at:new Date(this.clock()).toISOString(),...(stage==='upload'?{has_audio:true}:{})},{updateTime:video.updateTime});
     // Persist result before settling. A later failure holds the reservation and
     // requires reconciliation; it never re-runs inference to recover bookkeeping.
     await this.ledger.transition(id,'complete',{actualCents:result.actual_cents});

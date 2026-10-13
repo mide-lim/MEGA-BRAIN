@@ -76,3 +76,25 @@ test('explicit recovery of a pre-inference block cannot replay a financial attem
  j=await store.get('jobs/'+first.execution_id);await store.patch('jobs/'+first.execution_id,{status:'retry_ready'},{updateTime:j.updateTime});
  assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).reason,'previous_financial_attempt');assert.equal(calls,1);
 });
+
+test('review outcome preserves publication, settles once and permits the next video',async()=>{
+ let calls=0;
+ const {flow,store}=fixture({analysis:async({video,executionId:id})=>{calls++;return {video_id:video.id,stage:'analysis',actual_cents:10,changes:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:['invalid_categories'],analysis_candidate:null,candidate_analysis_key:`results/instagram/${video.id}/${id}/analysis.json`,candidate_analysis_generation:'123'}};}});
+ const row=await store.get('videos/Reel_1');const previous={title:'Existing',categories:['receitas']};
+ await store.patch('videos/Reel_1',{analysis:previous,analysis_key:'old.json',analysis_generation:'10'},{updateTime:row.updateTime});
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'completed');
+ const saved=(await store.get('videos/Reel_1')).data;
+ assert.deepEqual(saved.analysis,previous);assert.equal(saved.status,'needs_attention');
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).duplicate,true);
+ await store.create('videos/Reel_2',{media_verified:true,audio_status:'present',transcript:'Texto'});
+ assert.equal((await flow.run({videoId:'Reel_2',stage:'analysis'})).status,'completed');
+ assert.equal(calls,2);const ledger=(await store.get('settings/financial')).data;
+ assert.equal(ledger.paused,false);assert.equal(ledger.reserved_cents,0);assert.equal(ledger.spent_cents,20);
+});
+for(const fault of ['missing-artifact','wrong-owner','overwrite','persist-failure'])test(`invalid review settlement remains uncertain: ${fault}`,async()=>{
+ const {flow,store}=fixture({analysis:async({video,executionId:id})=>({video_id:video.id,stage:'analysis',actual_cents:10,changes:{analysis:fault==='overwrite'?{title:'Unvalidated'}:null,analysis_quality_status:'review_required',candidate_analysis_key:fault==='wrong-owner'?`results/instagram/Other/${id}/analysis.json`:`results/instagram/${video.id}/${id}/analysis.json`,candidate_analysis_generation:fault==='missing-artifact'?null:'123'}})});
+ if(fault==='persist-failure'){const patch=store.patch.bind(store);store.patch=async(path,changes,options)=>{if(path==='videos/Reel_1'&&changes.analysis_quality_status)throw Error('write unavailable');return patch(path,changes,options);};}
+ assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'uncertain');
+ const financial=(await store.get('settings/financial')).data;assert.equal(financial.paused,true);assert.equal(financial.reserved_cents,10);assert.equal(financial.spent_cents,0);
+ assert.equal((await store.get('videos/Reel_1')).data.analysis,undefined);
+});

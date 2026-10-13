@@ -60,3 +60,18 @@ test('a new empty extraction cannot erase previously supported knowledge',()=>{
  assert.equal(analysisPublication({knowledge:{fields:[{name:'New supported'}]}},{analysis:previous}).accepted,true);
  assert.deepEqual(previous.knowledge.fields,[{name:'Supported'}]);
 });
+
+test('saved response review rejects category shapes without inventing a destination',async()=>{
+ const {analysisOutcome}=await import('../lib/analysis.mjs');
+ for(const categories of [['tecnologia-geral','a-organizar'],['receitas','receitas'],['unknown'],[],['receitas','nutricao','carreira']]){
+  const response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({categories})}]}}]};
+  const before=JSON.stringify(response);const outcome=analysisOutcome(response,{});
+  assert.equal(outcome.accepted,false);assert.deepEqual(outcome.reasons,['invalid_categories']);assert.equal(outcome.report,undefined);assert.equal(JSON.stringify(response),before);
+ }
+});
+test('malformed or incomplete received responses are review outcomes, never published',async()=>{
+ const {analysisOutcome}=await import('../lib/analysis.mjs');
+ for(const [response,reason] of [[{},'incomplete_response'],[{candidates:[{finishReason:'MAX_TOKENS'}]},'incomplete_response'],[{candidates:[{finishReason:'STOP',content:{parts:[{text:'not JSON'}]}}]},'invalid_json'],[{candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({categories:['receitas']})}]}}]},'invalid_report']]){
+  const result=analysisOutcome(response,{});assert.equal(result.accepted,false);assert.deepEqual(result.reasons,[reason]);
+ }
+});

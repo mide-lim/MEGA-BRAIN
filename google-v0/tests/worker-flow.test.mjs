@@ -98,3 +98,12 @@ for(const fault of ['missing-artifact','wrong-owner','overwrite','persist-failur
  const financial=(await store.get('settings/financial')).data;assert.equal(financial.paused,true);assert.equal(financial.reserved_cents,10);assert.equal(financial.spent_cents,0);
  assert.equal((await store.get('videos/Reel_1')).data.analysis,undefined);
 });
+
+test('download diagnostic is sanitized and failure cannot trigger paid stages or retry',async()=>{
+ let downloads=0,paid=0;
+ const {flow,store}=fixture({upload:async()=>{downloads++;throw Object.assign(Error('private raw message'),{code:1,operation_step:'download_media',download_diagnostic:{phase:'transfer',phase_source:'tool_output',cause:'http_403',message:'Bearer SECRET',stderr:'SECRET',elapsed_ms:4000,exit_code:1,yt_dlp_version:'2026.03.17',ffmpeg_version:'5.1.9'}});},transcription:async()=>{paid++;},analysis:async()=>{paid++;}});
+ const failed=await flow.run({videoId:'Reel_1',stage:'upload'});assert.equal(failed.status,'uncertain');
+ const j=(await store.get('jobs/'+failed.execution_id)).data;assert.equal(j.failure_diagnostic.operation_step,'download_media');assert.equal(j.failure_diagnostic.download.cause,'http_403');assert.doesNotMatch(JSON.stringify(j),/SECRET|private raw/);
+ const f=(await store.get('settings/financial')).data;assert.equal(f.paused,true);assert.equal(f.reserved_cents,10);
+ await flow.run({videoId:'Reel_1',stage:'upload'});assert.equal(downloads,1);assert.equal(paid,0);
+});

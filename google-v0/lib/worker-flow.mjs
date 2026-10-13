@@ -1,4 +1,5 @@
 import {validateBatch} from './batch-budget.mjs';
+import {safeDownloadDiagnostic} from './media-tools.mjs';
 import {createHash} from 'node:crypto';
 
 const stages=['upload','transcription','analysis'];
@@ -9,7 +10,7 @@ export const executionId=(videoId,stage,revision=null)=>{
   return 'job_'+createHash('sha256').update(`${videoId}:${stage}:${revision??'v0'}`).digest('hex');
 };
 const ownsResult=(result,id,stage)=>result?.video_id===id&&result?.stage===stage;
-const failureDiagnostic=error=>({operation_step:['read_media','extract_audio','persist_audio','submit_stt','reserve_result','submit_analysis','persist_analysis'].includes(error?.operation_step)?error.operation_step:'adapter_or_reservation',http_status:Number.isInteger(error?.status)?error.status:null,tool_code:Number.isInteger(error?.code)||typeof error?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(error.code)?error.code:null});
+const failureDiagnostic=error=>({operation_step:['download_media','inspect_download','persist_download','read_media','extract_audio','persist_audio','submit_stt','reserve_result','submit_analysis','persist_analysis'].includes(error?.operation_step)?error.operation_step:'adapter_or_reservation',http_status:Number.isInteger(error?.status)?error.status:null,tool_code:Number.isInteger(error?.code)||typeof error?.code==='string'&&/^[A-Z0-9_]{1,64}$/.test(error.code)?error.code:null,...(error?.download_diagnostic?{download:safeDownloadDiagnostic(error.download_diagnostic)}:{})});
 
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.

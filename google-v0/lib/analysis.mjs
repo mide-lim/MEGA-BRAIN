@@ -1,4 +1,4 @@
-import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds} from './category-taxonomy.mjs';
+import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
@@ -102,6 +102,8 @@ export function analysisOutcome(response,record,{requireKnowledge=false}={}){
  let parsed;
  try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
  catch{return {accepted:false,reasons:['invalid_json']};}
+ const categories=normalizedCategoryIds(parsed?.categories);
+ if(categories!==parsed?.categories)parsed={...parsed,categories,limitations:Array.isArray(parsed.limitations)?[...parsed.limitations,'Categoria geral de tecnologia redundante omitida; a resposta original foi preservada.']:parsed.limitations};
  try{validateCategoryIds(parsed?.categories);}
  catch{return {accepted:false,reasons:['invalid_categories']};}
  let report;

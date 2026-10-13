@@ -1,10 +1,10 @@
 // A bounded extension for one additional batch, not an unbounded ledger migration.
-export const batchLimits=Object.freeze({videos:30,budgetCents:15000,overheadCents:2400,jobs:200,objects:400});
+export const batchLimits=Object.freeze({videos:62,budgetCents:30000,overheadCents:2400,jobs:400,objects:800});
 const id=/^[A-Za-z0-9_-]{5,32}$/;
 const batchId=/^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const cents=n=>Number.isSafeInteger(n)&&n>=0;
 export function validateBatch(batch){
- if(!batch||batch.schema_version!==1||!batchId.test(batch.id??'')||!['paused','active'].includes(batch.status)||batch.budget_cents!==batchLimits.budgetCents||!cents(batch.overhead_cents)||batch.overhead_cents>batchLimits.overheadCents||!Array.isArray(batch.video_ids)||batch.video_ids.length!==batchLimits.videos||batch.video_ids.some(v=>typeof v!=='string'||!id.test(v))||new Set(batch.video_ids).size!==batch.video_ids.length)throw Error('Lote de 30 ou teto de R$150 inválido.');
+ if(!batch||batch.schema_version!==1||!batchId.test(batch.id??'')||!['paused','active'].includes(batch.status)||!((batch.video_ids?.length===30&&batch.budget_cents===15000)||(batch.video_ids?.length===62&&batch.budget_cents===30000))||!cents(batch.overhead_cents)||batch.overhead_cents>batchLimits.overheadCents||!Array.isArray(batch.video_ids)||![30,62].includes(batch.video_ids.length)||batch.video_ids.some(v=>typeof v!=='string'||!id.test(v))||new Set(batch.video_ids).size!==batch.video_ids.length)throw Error('Perfil de lote ou teto autorizado inválido.');
  return batch;
 }
 export function batchUsage(state){
@@ -32,15 +32,31 @@ export function batchDecision(state,{videoId,maximumCents}={}){
 export function prepareBatch(state,{id:label,videoIds,existingVideoIds=[]}={}){
  if(state.batch||Object.values(state.jobs??{}).some(j=>j.batch_id!==undefined))throw Error('Lote já configurado; não substituir histórico.');
  if(state.paused!==true||Object.values(state.jobs??{}).some(j=>['upload','transcription','analysis'].includes(j.stage)&&['reserved','started'].includes(j.status)))throw Error('Pausar e drenar etapas antes de preparar lote.');
- const batch={schema_version:1,id:label,status:'paused',budget_cents:batchLimits.budgetCents,overhead_cents:batchLimits.overheadCents,video_ids:[...videoIds]};validateBatch(batch);
+ const batch={schema_version:1,id:label,status:'paused',budget_cents:videoIds.length===30?15000:30000,overhead_cents:batchLimits.overheadCents,video_ids:[...videoIds]};validateBatch(batch);
  const previous=new Set([...existingVideoIds,...Object.values(state.jobs??{}).map(j=>j.video_id)]);
  if(batch.video_ids.some(v=>previous.has(v)))throw Error('Lote deve conter somente vídeos novos.');
- if(Object.keys(state.jobs??{}).length+batch.video_ids.length*3>batchLimits.jobs)throw Error('Histórico e lote excedem o limite de operações.');
+ if(Object.keys(state.jobs??{}).length+batch.video_ids.length*3>jobLimit({batch}))throw Error('Histórico e lote excedem o limite de operações.');
  return batch;
 }
-export function objectLimit(financial){if(!financial?.batch)return 200;validateBatch(financial.batch);return batchLimits.objects;}
+export function objectLimit(financial){if(!financial?.batch)return 200;validateBatch(financial.batch);return financial.batch.video_ids.length===30?400:batchLimits.objects;}
 export function checkBatchObject(financial,key){
  if(!financial?.batch)return;
  const batch=validateBatch(financial.batch),parts=key.split('/');
  if(batch.status!=='active'||!['originals','results'].includes(parts[0])||parts[1]!=='instagram'||!batch.video_ids.includes(parts[2]))throw Error('Objeto fora do lote ativo.');
+}
+
+export function jobLimit(state){if(!state?.batch)return 100;validateBatch(state.batch);return state.batch.video_ids.length===30?200:batchLimits.jobs;}
+// Pure preparation; no data write or automatic activation. The operator supplies
+// the explicitly authorized total, and keeps the original batch identity/history.
+export function extendBatch(state,{additionalVideoIds,existingVideoIds=[],budgetCents}={}){
+ const previous=validateBatch(state?.batch);batchUsage(state);
+ if(state.paused!==true||previous.status!=='paused'||previous.video_ids.length!==30||previous.budget_cents!==15000||budgetCents!==30000)throw Error('Expansão requer lote original pausado e teto autorizado de R$300.');
+ if(Object.values(state.jobs??{}).some(j=>['upload','transcription','analysis'].includes(j.stage)&&['reserved','started'].includes(j.status))||batchUsage(state).uncertain)throw Error('Conferir etapas abertas antes de expandir.');
+ if(!Array.isArray(additionalVideoIds)||additionalVideoIds.length!==32||new Set(additionalVideoIds).size!==32)throw Error('32 vídeos novos únicos obrigatórios.');
+ const used=new Set([...previous.video_ids,...existingVideoIds,...Object.values(state.jobs??{}).map(j=>j.video_id)]);
+ if(additionalVideoIds.some(v=>typeof v!=='string'||!id.test(v)||used.has(v)))throw Error('Expansão deve conter somente vídeos novos.');
+ const batch={...previous,budget_cents:budgetCents,video_ids:[...previous.video_ids,...additionalVideoIds]};validateBatch(batch);
+ const missingStages=previous.video_ids.reduce((n,v)=>n+['upload','transcription','analysis'].filter(stage=>!Object.values(state.jobs??{}).some(j=>j.video_id===v&&j.stage===stage&&j.status!=='cancelled')).length,0);
+ if(Object.keys(state.jobs??{}).length+missingStages+96>jobLimit({batch}))throw Error('Histórico excede capacidade da expansão.');
+ return batch;
 }

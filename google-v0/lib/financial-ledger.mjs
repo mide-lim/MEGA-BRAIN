@@ -1,3 +1,4 @@
+import {mutateDocument} from './firestore.mjs';
 import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
 import {batchLimits,jobLimit,validateBatch,batchUsage,batchDecision} from './batch-budget.mjs';
@@ -20,6 +21,7 @@ function validate(state){
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
+    if(state.batch?.video_ids.length===262&&j.batch_id===state.batch.id&&['reserved','started','uncertain'].includes(j.status)&&!state.batch.active_video_ids.includes(j.video_id))throw Error('Etapa aberta sem via reservada.');
   }
   if(!Number.isSafeInteger(reserved)||reserved!==state.reserved_cents)throw new Error('Saldo de reservas inconsistente.');
 }
@@ -51,51 +53,64 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage,vid
 export class FinancialLedger{
   constructor(store,{clock=()=>Date.now(),path='settings/financial'}={}){if(path!=='settings/financial')throw new Error('Livro financeiro deve usar documento fixo.');Object.assign(this,{store,clock,path});}
   async recordOngoingCosts(estimates){
-    const snapshot=await this.store.get(this.path);if(!snapshot)throw new Error('Controle financeiro ausente.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+    if(!snapshot)throw new Error('Controle financeiro ausente.');
     const state=snapshot.data;validate(state);
     const {storageBytes,storageCentsPerGiBMonth,daysUntilCleanup,serviceOperationsCents,transferCents,cleanupCents}=estimates;
     const plan=ongoingCostPlan({storageBytes,storageCentsPerGiBMonth,daysUntilCleanup,serviceOperationsCents,transferCents,cleanupCents,remainingCreditCents:state.remaining_credit_cents,allocationRemainingCents:Math.max(0,state.allocation_cents-state.spent_cents),reserveCents:state.reserve_cents,inflightCents:state.reserved_cents});
     const until=this.clock()+daysUntilCleanup*86400000,expiry=Date.parse(state.credit_expires_at);
     if(!Number.isFinite(expiry)||until>expiry-72*3600000)throw new Error('Planeje encerramento antes do vencimento.');
-    await this.store.patch(this.path,{ongoing_commitment_cents:plan.commitment_cents,ongoing_storage_planned_bytes:storageBytes,ongoing_costs_observed_at:new Date(this.clock()).toISOString(),ongoing_costs_valid_until:new Date(until).toISOString(),...(!plan.ready?{paused:true}:{})},{updateTime:snapshot.updateTime});
-    return plan;
+    return {changes:{ongoing_commitment_cents:plan.commitment_cents,ongoing_storage_planned_bytes:storageBytes,ongoing_costs_observed_at:new Date(this.clock()).toISOString(),ongoing_costs_valid_until:new Date(until).toISOString(),...(!plan.ready?{paused:true}:{})},result:plan};
+    });
   }
   async reserve({executionId,videoId,stage,maximumCents,analysisRevision}){
     if(analysisRevision!==undefined&&(stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(executionId??'')||!idPattern.test(videoId??'')||!stages.has(stage)||!cents(maximumCents)||maximumCents===0)throw new Error('Reserva inválida.');
-    const snapshot=await this.store.get(this.path);if(!snapshot)throw new Error('Controle financeiro não inicializado.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+    if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
     if(Object.values(state.jobs).some(j=>j.video_id===videoId&&j.stage===stage&&j.status!=='cancelled'&&(state.batch||['reserved','started','uncertain'].includes(j.status)||j.analysis_revision===analysisRevision)))throw new Error('Etapa do vídeo já reservada, concluída ou com resultado incerto.');
     if(Object.keys(state.jobs).length>=jobLimit(state))throw new Error('Livro do piloto completo; reconciliação necessária.');
+    if(state.batch?.video_ids.length===262){
+      const controls=(await this.store.get('settings/automation'))?.data;
+      if(!Number.isInteger(controls?.parallelism)||controls.parallelism<1||controls.parallelism>4||controls.enabled!==true)throw Error('Automacao paralela nao liberada.');
+      if(!state.batch.active_video_ids.includes(videoId)&&state.batch.active_video_ids.length>=controls.parallelism)throw Error('Vias ocupadas conforme controle atual.');
+    }
     const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage,videoId});if(!decision.ready)throw new Error(decision.reasons.join(' '));
     const job={video_id:videoId,stage,maximum_cents:maximumCents,status:'reserved',created_at:new Date(this.clock()).toISOString()};
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;
     if(state.batch)job.batch_id=state.batch.id;
-    await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents},{updateTime:snapshot.updateTime});
-    return {...decision,execution_id:executionId};
+    const batch=state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
+    return {changes:{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents,...(batch?{batch}:{})},result:{...decision,execution_id:executionId}};
+    });
   }
   async resumeUpload(executionId){
     if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
-    const snapshot=await this.store.get(this.path),state=snapshot?.data;validate(state);
+    return mutateDocument(this.store,this.path,async snapshot=>{
+    const state=snapshot?.data;validate(state);
     const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data,probe=(await this.store.get('jobs/probe_'+executionId))?.data;
     if(job?.status!=='uncertain'||job.stage!=='upload'||job.upload_recovery_count||claim?.status!=='recovering_upload'||claim.upload_recovery_count!==1||claim.video_id!==job.video_id||probe?.status!=='metadata_available'||probe.original_job_id!==executionId||probe.video_id!==job.video_id||!recoverableUploadFailure({...claim,status:'uncertain',upload_recovery_count:0}))throw Error('Upload não admite retomada.');
     const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
     if(!decision.ready)throw Error(decision.reasons.join(' '));
-    await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:{...job,status:'started',upload_recovery_count:1,updated_at:new Date(this.clock()).toISOString()}}},{updateTime:snapshot.updateTime});
+    return {changes:{jobs:{...state.jobs,[executionId]:{...job,status:'started',upload_recovery_count:1,updated_at:new Date(this.clock()).toISOString()}}}};
+    });
   }
   async resumeAnalysis429(executionId){
     if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
-    const snapshot=await this.store.get(this.path),state=snapshot?.data;validate(state);
+    return mutateDocument(this.store,this.path,async snapshot=>{
+    const state=snapshot?.data;validate(state);
     const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data;
     if(job?.status!=='uncertain'||job.stage!=='analysis'||claim?.status!=='recovering_429'||claim.video_id!==job.video_id||!recoverableAnalysis429({...claim,status:'uncertain'}))throw Error('Retomada exige429 confirmado e histórico limitado.');
     const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
     if(!decision.ready)throw Error(decision.reasons.join(' '));
-    await this.store.patch(this.path,{jobs:{...state.jobs,[executionId]:{...job,status:'started',recovery_429_count:(job.recovery_429_count??0)+1,updated_at:new Date(this.clock()).toISOString()}}},{updateTime:snapshot.updateTime});
+    return {changes:{jobs:{...state.jobs,[executionId]:{...job,status:'started',recovery_429_count:(job.recovery_429_count??0)+1,updated_at:new Date(this.clock()).toISOString()}}}};
+    });
   }
-  async transition(executionId,action,{actualCents}={}){
+  async transition(executionId,action,{actualCents,pause=false}={}){
     if(!executionPattern.test(executionId??''))throw new Error('Execução inválida.');
-    const snapshot=await this.store.get(this.path);if(!snapshot)throw new Error('Controle financeiro ausente.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+    if(!snapshot)throw new Error('Controle financeiro ausente.');
     const state=snapshot.data;validate(state);const job=state.jobs[executionId];if(!job)throw new Error('Reserva ausente.');
     const updated={...job},changes={};
     if(action==='start'){
@@ -114,7 +129,9 @@ export class FinancialLedger{
       if(actualCents>job.maximum_cents)changes.paused=true;
     }else throw new Error('Transição não permitida.');
     updated.updated_at=new Date(this.clock()).toISOString();
-    await this.store.patch(this.path,{...changes,jobs:{...state.jobs,[executionId]:updated}},{updateTime:snapshot.updateTime});
-    return updated;
+    if(pause===true)changes.paused=true;
+    if(state.batch?.video_ids.length===262&&((action==='complete'&&job.stage==='analysis')||(action==='cancel'&&job.stage==='upload')))changes.batch={...state.batch,active_video_ids:state.batch.active_video_ids.filter(v=>v!==job.video_id)};
+    return {changes:{...changes,jobs:{...state.jobs,[executionId]:updated}},result:updated};
+    });
   }
 }

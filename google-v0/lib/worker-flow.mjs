@@ -1,3 +1,4 @@
+import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
 import {validateBatch,batchLimits} from './batch-budget.mjs';
 import {safeDownloadDiagnostic} from './media-tools.mjs';
@@ -25,8 +26,8 @@ export class WorkerFlow {
     if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
-  async run({videoId,stage,recoverAnalysis429=false}){
-    if(!validId(videoId)||!stages.includes(stage)||typeof recoverAnalysis429!=='boolean'||recoverAnalysis429&&stage!=='analysis')throw new Error('Tarefa fora do escopo.');
+  async run({videoId,stage,recoverAnalysis429=false,recoverUpload=false}){
+    if(typeof recoverUpload!=='boolean'||recoverUpload&&(stage!=='upload'||recoverAnalysis429)||!validId(videoId)||!stages.includes(stage)||typeof recoverAnalysis429!=='boolean'||recoverAnalysis429&&stage!=='analysis')throw new Error('Tarefa fora do escopo.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
     if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
     const controls=(await this.store.get('settings/automation'))?.data;
@@ -39,7 +40,14 @@ export class WorkerFlow {
     const revision=stage==='analysis'?this.analysisRevision:null;
     const id=executionId(videoId,stage,revision),path=`jobs/${id}`;
     const existing=await this.store.get(path);
-    let recovery=false,recovery429=false,analysisAttempts=[];
+    let recovery=false,recovery429=false,uploadRecovery=false,analysisAttempts=[];
+    if(recoverUpload){
+      const probe=(await this.store.get('jobs/probe_'+id))?.data;
+      const financial=(await this.store.get('settings/financial'))?.data,prior=financial?.jobs?.[id];
+      if(!recoverableUploadFailure(existing?.data)||existing.data.video_id!==videoId||probe?.status!=='metadata_available'||probe.original_job_id!==id||probe.video_id!==videoId||video.data.media_verified||video.data.video_key||typeof this.operations.prepareUploadRecovery!=='function')return {status:'blocked',reason:'upload_not_recoverable'};
+      if(prior?.status!=='uncertain'||prior.stage!=='upload'||prior.video_id!==videoId||prior.maximum_cents!==this.quotes.upload||prior.upload_recovery_count)return {status:'blocked',reason:'upload_reservation_not_recoverable'};
+      await this.store.patch(path,{status:'recovering_upload',upload_recovery_count:1,original_failure_diagnostic:existing.data.failure_diagnostic},{updateTime:existing.updateTime});uploadRecovery=true;
+    }
     if(recoverAnalysis429){
       if(!recoverableAnalysis429(existing?.data)||video.data.analysis||video.data.analysis_key||video.data.candidate_analysis_key)return {status:'blocked',reason:'analysis_not_recoverable_429'};
       const financial=(await this.store.get('settings/financial'))?.data,prior=financial?.jobs?.[id];
@@ -48,13 +56,13 @@ export class WorkerFlow {
       await this.store.patch(path,{status:'recovering_429',analysis_attempts:analysisAttempts},{updateTime:existing.updateTime});recovery429=true;
     }
 
-    if(recovery429){/* Existing claim and reservation are retained. */}else if(existing?.data.status==='retry_ready'){const financial=await this.store.get('settings/financial');if(financial?.data.jobs?.[id])return {status:'blocked',reason:'previous_financial_attempt'};await this.store.patch(path,{status:'claimed'},{updateTime:existing.updateTime});recovery=true;}else if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
+    if(recovery429||uploadRecovery){/* Existing claim and reservation are retained. */}else if(existing?.data.status==='retry_ready'){const financial=await this.store.get('settings/financial');if(financial?.data.jobs?.[id])return {status:'blocked',reason:'previous_financial_attempt'};await this.store.patch(path,{status:'claimed'},{updateTime:existing.updateTime});recovery=true;}else if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
     const maximumCents=this.quotes[stage];
     if(!Number.isSafeInteger(maximumCents)||maximumCents<1)throw new Error('Estimativa conservadora ausente.');
     const operation=this.operations[stage];
     if(typeof operation!=='function')throw new Error('Adaptador da etapa indisponível.');
     // Firestore create-only makes concurrent queue deliveries converge here.
-    const claimed=recovery||recovery429?{created:true}:await this.store.create(path,{video_id:videoId,stage,status:'claimed',created_at:new Date(this.clock()).toISOString()});
+    const claimed=recovery||recovery429||uploadRecovery?{created:true}:await this.store.create(path,{video_id:videoId,stage,status:'claimed',created_at:new Date(this.clock()).toISOString()});
     if(!claimed.created)return {status:'claimed',execution_id:id,duplicate:true};
     let started=false;
     const save=async changes=>{const current=await this.store.get(path);await this.store.patch(path,changes,{updateTime:current.updateTime});};
@@ -64,7 +72,7 @@ export class WorkerFlow {
         if(!archive.created){const previous=await this.store.get(`analyses/${id}_previous`);if(!recovery||previous?.data.analysis_key!==video.data.analysis_key||previous?.data.analysis_generation!==video.data.analysis_generation)throw new Error('Histórico da análise já existe; conferir antes de executar.');}
       }
       if(stage==='analysis'&&typeof this.operations.prepareAnalysis==='function')await this.operations.prepareAnalysis({video:{...video.data,id:videoId},executionId:id});
-      if(recovery429){await this.ledger.resumeAnalysis429(id);started=true;}else{
+      if(uploadRecovery){await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});await this.ledger.resumeUpload(id);started=true;}else if(recovery429){await this.ledger.resumeAnalysis429(id);started=true;}else{
         await this.ledger.reserve({executionId:id,videoId,stage,maximumCents,...(revision?{analysisRevision:revision}:{})});
         await save({status:'reserved'});
         await this.ledger.transition(id,'start');started=true;

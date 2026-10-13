@@ -1,0 +1,2 @@
+// Explicit recovery only, never an automatic retry of an unknown paid result.
+export const recoverableUploadFailure=job=>job?.stage==='upload'&&job.status==='uncertain'&&!(job.upload_recovery_count>0)&&job.failure_diagnostic?.operation_step==='download_media'&&job.failure_diagnostic.tool_code===1&&job.failure_diagnostic.download?.phase==='metadata'&&job.failure_diagnostic.download?.cause==='unknown'&&job.failure_diagnostic.download?.exit_code===1;

@@ -39,3 +39,13 @@ test('administrative resume dispatches a fresh stage without clearing a paid cla
  docs.get('settings/automation').data.enabled=false;
  assert.equal((await recovery.resume({videoId:id,recoveryId:'admin_resume_123456'})).status,'paused');assert.equal(calls,1);
 });
+
+test('upload recovery adapter checks immutable original object before any paid gate',async()=>{
+ const {googleOperations}=await import('../lib/google-operations.mjs');let calls=0;
+ const base={api:{project:'megabrain-v0-1017370021431'},tools:{},preset:{},config:{},gate:async()=>assert.fail('Recovery preparation is metadata-only')};
+ const storage={bucket:'megabrain-v0-1017370021431-media',metadata:async key=>{calls++;assert.equal(key,'originals/instagram/Reel_1/video.mp4');return null;}};
+ const ops=googleOperations({...base,storage});await ops.prepareUploadRecovery({video:{id:'Reel_1',media_verified:false}});assert.equal(calls,1);
+ await assert.rejects(()=>ops.prepareUploadRecovery({video:{id:'Reel_1',video_key:'existing.mp4'}}));assert.equal(calls,1);
+ const present=googleOperations({...base,storage:{...storage,metadata:async()=>({generation:'123'})}});await assert.rejects(()=>present.prepareUploadRecovery({video:{id:'Reel_1'}}));
+ const failed=googleOperations({...base,storage:{...storage,metadata:async()=>{throw Object.assign(Error('Forbidden'),{status:403});}}});await assert.rejects(()=>failed.prepareUploadRecovery({video:{id:'Reel_1'}}));
+});

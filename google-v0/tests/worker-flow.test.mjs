@@ -145,3 +145,38 @@ test('automation pause during analysis retry blocks a further submission',async(
  }});
  assert.equal((await flow.run({videoId:'Reel_1',stage:'analysis'})).status,'uncertain');assert.equal(calls,1);
 });
+
+const metadataFailure=()=>Object.assign(Error('terminal metadata failure'),{code:1,operation_step:'download_media',download_diagnostic:{phase:'metadata',phase_source:'tool_output',cause:'unknown',exit_code:1}});
+async function uploadRecoveryFixture({prepare=async()=>{},failAgain=false}={}){
+ let calls=0;const f=fixture({prepareUploadRecovery:prepare,upload:async()=>{if(++calls===1||failAgain)throw metadataFailure();return {video_id:'Reel_1',stage:'upload',actual_cents:4,changes:{video_key:'originals/instagram/Reel_1/video.mp4',video_generation:'123',video_bytes:3,media_verified:true,audio_status:'present',duration_seconds:2}};}});
+ let v=await f.store.get('videos/Reel_1');await f.store.patch('videos/Reel_1',{media_verified:false,video_key:null},{updateTime:v.updateTime});
+ const first=await f.flow.run({videoId:'Reel_1',stage:'upload'});
+ await f.store.create('jobs/probe_'+first.execution_id,{status:'metadata_available',video_id:'Reel_1',original_job_id:first.execution_id});
+ const financial=await f.store.get('settings/financial');await f.store.patch('settings/financial',{paused:false},{updateTime:financial.updateTime});
+ return {...f,id:first.execution_id,calls:()=>calls};
+}
+test('explicit upload recovery executes once concurrently and retains original failure/reservation identity',async()=>{
+ const f=await uploadRecoveryFixture();const before=(await f.store.get('jobs/'+f.id)).data.failure_diagnostic;
+ const results=await Promise.allSettled([f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true}),f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})]);
+ assert.ok(results.some(r=>r.status==='fulfilled'&&r.value.status==='completed'));assert.equal(f.calls(),2);
+ const financial=(await f.store.get('settings/financial')).data;assert.equal(Object.keys(financial.jobs).length,1);assert.equal(financial.jobs[f.id].upload_recovery_count,1);assert.equal(financial.spent_cents,4);assert.equal(financial.reserved_cents,0);
+ assert.deepEqual((await f.store.get('jobs/'+f.id)).data.original_failure_diagnostic,before);assert.equal((await f.store.get('videos/Reel_1')).data.transcript,'Texto original');
+ assert.equal((await f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})).reason,'upload_not_recoverable');
+});
+test('second upload failure consumes only recovery allowance and retains open reserve without automatic replay',async()=>{
+ const f=await uploadRecoveryFixture({failAgain:true});assert.equal((await f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})).status,'uncertain');
+ let financial=await f.store.get('settings/financial');assert.equal(financial.data.reserved_cents,10);await f.store.patch('settings/financial',{paused:false},{updateTime:financial.updateTime});
+ assert.equal((await f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})).reason,'upload_not_recoverable');assert.equal(f.calls(),2);
+});
+test('probe mismatch, upload artifact, quota and non-metadata failure block recovery',async()=>{
+ for(const scenario of ['probe','stored','quota','timeout','persist','transfer']){
+  const f=await uploadRecoveryFixture();
+  if(scenario==='probe'){const p=await f.store.get('jobs/probe_'+f.id);await f.store.patch('jobs/probe_'+f.id,{original_job_id:'Other'},{updateTime:p.updateTime});}
+  else if(scenario==='stored'){const v=await f.store.get('videos/Reel_1');await f.store.patch('videos/Reel_1',{video_key:'already.mp4'},{updateTime:v.updateTime});}
+  else{const j=await f.store.get('jobs/'+f.id),diagnostic=structuredClone(j.data.failure_diagnostic);if(scenario==='quota')diagnostic.download.cause='http_429';if(scenario==='timeout')diagnostic.tool_code='ETIMEDOUT';if(scenario==='persist')diagnostic.operation_step='persist_download';if(scenario==='transfer')diagnostic.download.phase='transfer';await f.store.patch('jobs/'+f.id,{failure_diagnostic:diagnostic},{updateTime:j.updateTime});}
+  assert.equal((await f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})).reason,'upload_not_recoverable');assert.equal(f.calls(),1);
+ }
+});
+test('storage absence check failure prevents resumed reservation and network download',async()=>{
+ const f=await uploadRecoveryFixture({prepare:async()=>{throw Error('Existing immutable object');}});assert.equal((await f.flow.run({videoId:'Reel_1',stage:'upload',recoverUpload:true})).status,'blocked');assert.equal(f.calls(),1);assert.equal((await f.store.get('settings/financial')).data.jobs[f.id].status,'uncertain');
+});

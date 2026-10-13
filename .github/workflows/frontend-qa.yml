@@ -1,0 +1,31 @@
+name: Frontend browser QA
+on:
+  pull_request:
+    paths: ['google-v0/**', '.github/workflows/frontend-qa.yml']
+  push:
+    branches: [main]
+    paths: ['google-v0/**', '.github/workflows/frontend-qa.yml']
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - run: npm ci --ignore-scripts
+        working-directory: google-v0/qa
+      - run: npx playwright install --with-deps chromium
+        working-directory: google-v0/qa
+      - run: node google-v0/qa/browser-check.mjs
+        env:
+          MEGABRAIN_QA_OUTPUT: ${{ runner.temp }}/megabrain-frontend-qa
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-browser-qa
+          path: ${{ runner.temp }}/megabrain-frontend-qa
+          retention-days: 7

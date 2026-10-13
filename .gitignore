@@ -5,3 +5,5 @@ __pycache__/
 auth.json
 *.dump
 *.sql
+
+node_modules/

@@ -1,0 +1,9 @@
+# Validação convencional do frontend
+
+O teste em google-v0/qa usa Playwright/Chromium headless e os componentes reais Library, ReelDetails, KnowledgeBook e VideoPreview, com o CSS do produto. APIs e mídia são sintéticas, atendidas somente em loopback; rede externa é bloqueada. Nenhuma rota de teste, login alternativo ou credencial é adicionada à aplicação publicada. Ferramentas dev ficam em pacote separado da imagem de produção.
+
+Instalar com npm ci no diretório qa, depois npx playwright install --with-deps chromium e npm run check. O resultado inclui JSON e screenshot em MEGABRAIN_QA_OUTPUT ou diretório temporário. CI entrega esses arquivos em um único artefato. Conferências: biblioteca/detalhes, nome original com explicação portuguesa, palavras-chave, transcrição literal, evidências, busca nos dois idiomas, categorias e reprodução de clip sintético. Testes anônimos da imagem continuam validando401/403 e ausência de credenciais separadamente.
+
+Esta evidência não comprova login Google de produção, download Instagram ou reprodução real do acervo. Usar leitura de registros e conferência real pontual nesses casos. Evita navegação manual repetitiva pelo Codex; não requer modelo ou worker novo no Paperclip. O mesmo comando pode ser acionado pelo operador convencional futuramente.
+
+Apresentação: campos informativos em português, nomes próprios/locais/produtos/modelos originais. Para nomes de pratos e conceitos técnicos, original seguido de tradução/explicação entre parênteses, ou explicação em application/limitations se longa. Citações e fontes permanecem literais. A instrução não migra histórico nem garante obediência perfeita do modelo; resultados continuam sujeitos à revisão. Mudança compatível de redação do presetv4, sem mudança de schema ou identidade para forçar reanálise.

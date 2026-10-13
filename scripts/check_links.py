@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 errors = []
 count = 0
 for source in sorted(ROOT.rglob("*.md")):
-    if ".git" in source.parts:
+    if any(part in {".git", "node_modules"} for part in source.parts):
         continue
     for match in re.finditer(r"!?\[[^\]]*\]\((<[^>]+>|[^\s)]+)(?:\s+[^)]*)?\)", source.read_text(encoding="utf-8")):
         target = match.group(1).strip("<>")

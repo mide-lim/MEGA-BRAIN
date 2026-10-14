@@ -51,7 +51,15 @@ def without_image(service):
     return view
 
 
+def runtime_limits(config):
+    limits = config.get("runtime_max_instances", {kind: 1 for kind in KINDS})
+    if not isinstance(limits, dict) or set(limits) != set(KINDS) or any(type(value) is not int or not 1 <= value <= 4 for value in limits.values()):
+        raise DeploymentError("Explicit runtime limits must map worker and web to integers1..4")
+    return limits
+
+
 def validate_config(config):
+    runtime_limits(config)
     identifiers = [config["project"], config["region"], config["queue"], *config["services"].values()]
     if set(config["services"]) != set(KINDS) or set(config["runtime_accounts"]) != set(KINDS):
         raise DeploymentError("Unexpected service mapping")
@@ -67,6 +75,7 @@ def validate_config(config):
 
 
 def validate_services(services, config):
+    expected_limits = runtime_limits(config)
     for kind in KINDS:
         service = services[kind]
         template = service["template"]
@@ -74,7 +83,7 @@ def validate_services(services, config):
             raise DeploymentError("Service not ready")
         if template.get("serviceAccount") != config["runtime_accounts"][kind]:
             raise DeploymentError("Runtime identity changed")
-        if template.get("scaling", {}).get("maxInstanceCount") != 1 or len(template["containers"]) != 1:
+        if template.get("scaling", {}).get("maxInstanceCount") != expected_limits[kind] or len(template["containers"]) != 1:
             raise DeploymentError("Runtime limits changed")
         if service.get("traffic") != [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}]:
             raise DeploymentError("Unsupported traffic policy")
@@ -276,6 +285,12 @@ def main():
     args = parser.parse_args()
     try:
         config = json.loads(os.environ["MEGABRAIN_DEPLOY_CONFIG"])
+        expected_limits = os.environ.get("MEGABRAIN_RUNTIME_MAX_INSTANCES")
+        if expected_limits:
+            expected_limits = json.loads(expected_limits)
+            if "runtime_max_instances" in config and config["runtime_max_instances"] != expected_limits:
+                raise DeploymentError("Protected runtime limits conflict with reviewed workflow")
+            config = {**config, "runtime_max_instances": expected_limits}
         token = os.environ["GOOGLE_ACCESS_TOKEN"]
         outcome = run(args.mode, config, args.commit, args.baseline, token)
         Path(args.output).write_text(json.dumps(outcome, indent=2) + "\n")

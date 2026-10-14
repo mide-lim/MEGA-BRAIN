@@ -73,6 +73,41 @@ class ValidationTests(unittest.TestCase):
         deployment.validate_config(CONFIG)
         deployment.validate_services(services(), CONFIG)
 
+    def test_explicit_four_worker_instances_are_accepted_but_not_other_values(self):
+        config = {**CONFIG, "runtime_max_instances": {"worker": 4, "web": 1}}
+        value = services()
+        value["worker"]["template"]["scaling"]["maxInstanceCount"] = 4
+        deployment.validate_config(config)
+        deployment.validate_services(value, config)
+        for kind, actual in [("worker", 1), ("worker", 3), ("worker", 5), ("web", 2)]:
+            changed = copy.deepcopy(value)
+            changed[kind]["template"]["scaling"]["maxInstanceCount"] = actual
+            with self.assertRaises(deployment.DeploymentError):
+                deployment.validate_services(changed, config)
+        with self.assertRaises(deployment.DeploymentError):
+            deployment.validate_services(value, CONFIG)
+
+    def test_reject_invalid_expected_runtime_maps(self):
+        for limits in [None, [], {}, {"worker": 4}, {"worker": 4, "web": 1, "extra": 1}, {"worker": True, "web": 1}, {"worker": 4.0, "web": 1}, {"worker": 0, "web": 1}, {"worker": 5, "web": 1}]:
+            with self.subTest(limits=limits), self.assertRaises(deployment.DeploymentError):
+                deployment.validate_config({**CONFIG, "runtime_max_instances": limits})
+
+    def test_rollout_and_rollback_preserve_four_worker_instances(self):
+        original = services()
+        original["worker"]["template"]["scaling"]["maxInstanceCount"] = 4
+        config = {**CONFIG, "runtime_max_instances": {"worker": 4, "web": 1}}
+        for fail in [False, True]:
+            api = FakeGoogle(original)
+            if fail:
+                api.block = "web"
+                with self.assertRaises(deployment.DeploymentError):
+                    deployment.rollout(api, config, original, images(), smoke=lambda origin: None)
+                self.assertEqual(deployment.baseline_digest(api.values), deployment.baseline_digest(original))
+            else:
+                deployment.rollout(api, config, original, images(), smoke=lambda origin: None)
+            self.assertEqual(api.values["worker"]["template"]["scaling"]["maxInstanceCount"], 4)
+            self.assertTrue(all(set(containers[0]) == set(original[kind]["template"]["containers"][0]) for kind, containers, _ in api.calls))
+
     def test_reject_outside_registry(self):
         value = copy.deepcopy(CONFIG)
         value["registry"] = "us-central1-docker.pkg.dev/another-project/images"

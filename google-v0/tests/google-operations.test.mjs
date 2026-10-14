@@ -39,3 +39,17 @@ test('confirmed429 backoff consumes the same deadline and cannot start a late re
   await assert.rejects(()=>f.operations.analysis({video,executionId:'job_test',recordAnalysisAttempts:async h=>histories.push(structuredClone(h))}),e=>e.operation_step==='submit_analysis'&&e.name==='TimeoutError'&&e.google_diagnostic.http_status===null);
   assert.equal(f.calls(),1);assert.equal(histories.at(-1)[0].status,'http_429');assert.equal(histories.at(-1)[1].status,'uncertain');
 });
+
+test('restoring saved analysis only reads its recorded generation and never calls provider or writes another artifact',async()=>{
+ let provider=0,writes=0;const reads=[],api={project:'megabrain-v0-1017370021431',async request(){provider++;throw Error('No model request permitted');}};
+ const key=`results/instagram/${video.id}/job_saved/analysis.json`,storage={bucket:api.project+'-media',async metadata(k){return k===key?{generation:'19'}:null;},async read(k,options){reads.push({k,options});return Buffer.from(JSON.stringify({preset_version:preset.version,model:'gemini-3.1-flash-lite',response:{candidates:[{finishReason:'MAX_TOKENS'}]}}));},async writeImmutable(){writes++;throw Error('No writes');}};
+ const ops=googleOperations({api,storage,tools:{},preset,config:{enabled:true,uploads_enabled:true,quotes:{analysis:1},gemini_model:'gemini-3.1-flash-lite'},gate:async()=>assert.fail('Reconciliation must not start a paid reservation')});
+ const restored=await ops.restoreAnalysisResult({video,executionId:'job_saved'});assert.equal(provider,0);assert.equal(writes,0);assert.equal(reads.length,1);assert.equal(reads[0].options.generation,'19');assert.equal(restored.changes.analysis_quality_status,'review_required');assert.equal(restored.changes.candidate_analysis_key,key);assert.equal(restored.changes.candidate_analysis_generation,'19');
+});
+test('schema retry refuses an existing original response and verifies media and transcript generations',async()=>{
+ const api={project:'megabrain-v0-1017370021431'},make=metadata=>googleOperations({api,storage:{bucket:api.project+'-media',metadata},tools:{},preset,config:{},gate:async()=>assert.fail('Read-only preparation')});
+ const source={...video,video_generation:'1',transcript_key:'results/instagram/'+video.id+'/transcription.json',transcript_generation:'2'};
+ await assert.rejects(make(async()=>({generation:'9'})).prepareSettledAnalysisRetry({video:source,originalExecutionId:'original'}));
+ await assert.rejects(make(async key=>key.endsWith('analysis.json')?null:{generation:'wrong',size:10}).prepareSettledAnalysisRetry({video:source,originalExecutionId:'original'}));
+ await make(async key=>key.endsWith('analysis.json')?null:{generation:key===source.video_key?'1':'2',size:10}).prepareSettledAnalysisRetry({video:source,originalExecutionId:'original'});
+});

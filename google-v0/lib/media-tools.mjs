@@ -14,7 +14,7 @@ async function temporary(action){
     await rm(target,{recursive:true,force:true});
   }
 }
-const messages=Object.freeze({unknown:'A ferramenta não forneceu uma causa reconhecida.',http_403:'A origem respondeu HTTP 403; a causa da restrição não foi determinada.',http_404:'A origem respondeu HTTP 404; isso não comprova remoção definitiva.',http_429:'A origem respondeu HTTP 429 (limitação de requisições).',login_required:'A ferramenta informou que o acesso exige autenticação.',unavailable:'A ferramenta informou que o conteúdo não está disponível.',format_unavailable:'A ferramenta não encontrou o formato solicitado.',network_error:'A ferramenta informou falha de conexão ou resolução de nome.',timeout:'A ferramenta informou tempo limite excedido.',process_interrupted:'O processo foi interrompido; a causa não foi determinada.',output_limit:'O processo excedeu o limite de saída de diagnóstico.',file_invalid:'O arquivo final está ausente, vazio ou acima do limite.',local_io:'Houve uma falha local de leitura ou escrita.'});
+const messages=Object.freeze({empty_media_response:'O extrator recebeu uma resposta sem mídia; a disponibilidade do Reel não foi confirmada.',unknown:'A ferramenta não forneceu uma causa reconhecida.',http_403:'A origem respondeu HTTP 403; a causa da restrição não foi determinada.',http_404:'A origem respondeu HTTP 404; isso não comprova remoção definitiva.',http_429:'A origem respondeu HTTP 429 (limitação de requisições).',login_required:'A ferramenta informou que o acesso exige autenticação.',unavailable:'A ferramenta informou que o conteúdo não está disponível.',format_unavailable:'A ferramenta não encontrou o formato solicitado.',network_error:'A ferramenta informou falha de conexão ou resolução de nome.',timeout:'A ferramenta informou tempo limite excedido.',process_interrupted:'O processo foi interrompido; a causa não foi determinada.',output_limit:'O processo excedeu o limite de saída de diagnóstico.',file_invalid:'O arquivo final está ausente, vazio ou acima do limite.',local_io:'Houve uma falha local de leitura ou escrita.'});
 const phases=new Set(['unknown','source_validation','metadata','format_selection','transfer','merge','remux','file_validation','media_validation','storage_write']);
 const version=(v,kind)=>typeof v==='string'&&(kind==='yt-dlp'?/^\d{4}\.\d{2}\.\d{2}$/:/^\d+\.\d+(?:\.\d+)?$/).test(v)?v:null;
 // Only fixed messages and allowlisted scalar values cross the persistence boundary.
@@ -34,6 +34,7 @@ function classifyDownload(error,phase){
  else if(/HTTP Error 429\b/.test(text))cause='http_429';
  else if(/HTTP Error 403\b/.test(text))cause='http_403';
  else if(/HTTP Error 404\b/.test(text))cause='http_404';
+ else if(/empty media response|no video formats found|unable to extract.*video/i.test(text)){cause='empty_media_response';phase='metadata';}
  else if(/Requested format is not available/i.test(text)){cause='format_unavailable';phase='format_selection';}
  else if(/login required|log in to access|authentication required/i.test(text))cause='login_required';
  else if(/content is not available|video is unavailable|video has been removed/i.test(text))cause='unavailable';
@@ -77,7 +78,7 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
       if(typeof text!=='string'||!text.trim()||text.length>50000)throw Error('Legenda não disponível.');
       return {text,capture_id:createHash('sha256').update(text).digest('hex'),captured_at:new Date().toISOString(),source_url:links[0].url,scope:'Post description supplied by Instagram extractor',method:'yt-dlp-metadata'};
     },
-    async download(video){
+    async download(video,{withMetadata=false}={}){
       const started=clock();let phase='source_validation',phaseSource='boundary';
       try{
         if(!downloadEnabled)throw new Error('Downloads desligados.');
@@ -86,7 +87,7 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
         return await temporary(async folder=>{
           const file=join(folder,'video.mp4');phase='unknown';
           // One download command, with the existing caps and zero retries.
-          try{await run('yt-dlp',['--ignore-config','--no-playlist','--no-progress','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','20','--max-filesize',String(maxBytes),'-f','bestvideo+bestaudio/best[acodec!=none]','--merge-output-format','mp4','--remux-video','mp4','-o',file,'--',links[0].url],{timeout:180000,maxBuffer:262144});}
+          try{await run('yt-dlp',['--ignore-config','--no-playlist','--no-progress','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','20','--max-filesize',String(maxBytes),'-f','bestvideo+bestaudio/best[acodec!=none]',...(withMetadata?['--write-info-json']:[]),'--merge-output-format','mp4','--remux-video','mp4','-o',file,'--',links[0].url],{timeout:180000,maxBuffer:262144});}
           catch(error){
             // Last observed tool milestone; absent output remains unknown.
             const output=String(error.stdout??'').slice(-262144);
@@ -101,7 +102,18 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
           }
           phase='file_validation';phaseSource='boundary';
           const info=await stat(file);if(!info.isFile()||info.size<1||info.size>maxBytes)throw Object.assign(new Error('Download fora do limite.'),{code:'INVALID_MEDIA_FILE'});
-          return readFile(file);
+          const bytes=await readFile(file);
+          if(!withMetadata)return bytes;
+          let sourceCaption=null;
+          try{
+            const infoFile=join(folder,'video.info.json'),details=await stat(infoFile);
+            if(details.size>1048576)throw Error('Metadados acima do limite.');
+            const metadata=JSON.parse(await readFile(infoFile,'utf8'));
+            if(metadata.display_id!==video.id&&metadata.id!==video.id)throw Error('Metadados divergentes.');
+            const text=metadata.description;
+            if(typeof text==='string'&&text.trim()&&text.length<=50000)sourceCaption={text,capture_id:createHash('sha256').update(text).digest('hex'),captured_at:new Date(clock()).toISOString(),source_url:links[0].url,scope:'Post description supplied by Instagram extractor',method:'yt-dlp-download-metadata'};
+          }catch{/* Caption is optional; media validation still applies. */}
+          return {bytes,source_caption:sourceCaption};
         });
       }catch(error){
         const classified=classifyDownload(error,phase);

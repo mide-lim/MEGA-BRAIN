@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 const project='megabrain-v0-1017370021431';
 export function validateTask(task){
-  if(!task||(task.recoverFirestoreWrite!==undefined&&(task.recoverFirestoreWrite!==true||!['upload','transcription'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429))||(task.recoverUpload!==undefined&&(task.recoverUpload!==true||task.stage!=='upload'||task.poll!==0||!task.recoveryId||task.recoverAnalysis429))||(task.recoverAnalysis429!==undefined&&(task.recoverAnalysis429!==true||task.stage!=='analysis'||task.poll!==0||!task.recoveryId))||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId','recoverAnalysis429','recoverUpload','recoverFirestoreWrite'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
+  if(!task||(task.recoverSettled!==undefined&&(task.recoverSettled!==true||!['upload','analysis'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429||task.recoverFirestoreWrite))||(task.recoverFirestoreWrite!==undefined&&(task.recoverFirestoreWrite!==true||!['upload','transcription'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429))||(task.recoverUpload!==undefined&&(task.recoverUpload!==true||task.stage!=='upload'||task.poll!==0||!task.recoveryId||task.recoverAnalysis429))||(task.recoverAnalysis429!==undefined&&(task.recoverAnalysis429!==true||task.stage!=='analysis'||task.poll!==0||!task.recoveryId))||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId','recoverAnalysis429','recoverUpload','recoverFirestoreWrite','recoverSettled'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
   return task;
 }
 export class WorkerQueue{
@@ -11,7 +11,7 @@ export class WorkerQueue{
     Object.assign(this,{api,store,workerOrigin,enabled,clock});
     this.parent=`projects/${project}/locations/us-central1/queues/v0-processing`;
   }
-  dispatchPath(task){return `jobs/dispatch_${createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[])])).digest('hex')}`;}
+  dispatchPath(task){return `jobs/dispatch_${createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex')}`;}
   async enqueueAdmission(task){
     if(!this.enabled)throw Error('Dispatch desativado.');
     if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(task.batchId??'')||!/^[A-Za-z0-9_-]{16,64}$/.test(task.runId??'')||!Number.isSafeInteger(task.tick)||task.tick<0||task.tick>10000)throw Error('Tick inválido.');
@@ -22,7 +22,7 @@ export class WorkerQueue{
   async enqueue(input){
     const task=validateTask(input);
     if(!this.enabled)return {status:'disabled'};
-    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[])])).digest('hex');
+    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex');
     const path=`jobs/${id}`,name=`${this.parent}/tasks/${id}`;
     // Outbox first. An unknown create response is reconciled manually against
     // the deterministic task name, never blindly enqueued again.

@@ -111,3 +111,15 @@ test('visible lifecycle labels separate pauses, live stages, failure and accepte
  assert.equal(videoStatus({status:'needs_attention',analysis:{title:'previous'}},{stage:'analysis',status:'completed'}),'Precisa de atenção');
  assert.equal(videoStatus({status:'analyzed',analysis:{title:'Curado'}},{stage:'analysis',status:'completed'}),'Análise concluída');
 });
+
+test('fresh curated results cannot retain an obsolete running label during financial outage',async()=>{
+ let failure=false,time=0,rows=[{id:'Reel_A1',status:'transcribed'}];const states=[];
+ const sync=createLibrarySynchronizer({now:()=>time,onChange:s=>states.push(structuredClone(s)),onError:()=>{},read:async url=>{
+  if(url==='/api/controls')return {automation:{enabled:true}};
+  if(url==='/api/financial'){if(failure)throw Error('unavailable');return {paused:false,progress:{items:[progress('Reel_A1','started','running')]}};}
+  return {videos:rows};
+ }});
+ await sync.refresh();failure=true;time=60001;rows=[{id:'Reel_A1',status:'analyzed',analysis:{title:'Curado'}}];await sync.refresh();
+ const final=states.at(-1);assert.equal(final.videos[0].analysis.title,'Curado');assert.equal(final.financial.progress.stale,true);
+ assert.equal(videoStatus(final.videos[0],final.financial.progress.stale?null:final.financial.progress.items[0]),'Análise concluída');
+});

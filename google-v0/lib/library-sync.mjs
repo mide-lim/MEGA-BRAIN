@@ -61,6 +61,7 @@ export function createLibrarySynchronizer({read,onChange,onError,signal,now=Date
   if(full){
    const snapshot=await loadLibrarySnapshot(read,{signal});signal?.throwIfAborted();
    videos=snapshot;financial=before.financial??financial;controls=before.controls??controls;
+   if(!before.items&&financial)financial={...financial,progress:{items:financial.progress?.items??[],stale:true}};
    if(before.items)versions=new Map(before.items.map(x=>[x.id,x.version]));initialized=true;lastFull=now();emit();
   }
   // Read again after a full traversal so a result completed during pagination cannot be missed.

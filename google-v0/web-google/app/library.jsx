@@ -25,7 +25,7 @@ export default function Library(){
  async function change(changes){setBusy(true);setError('');try{const r=await json('/api/controls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'set',...changes})});setControls(r.automation);}catch(e){setError(e.message);}finally{setBusy(false);}}
  async function register(event){event.preventDefault();setBusy(true);setError('');setMessage('');try{const r=await json('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({links})});setLinks('');setMessage(`${r.created} novos links cadastrados; ${r.already_present} já estavam na biblioteca. Os links estão registrados e serão acompanhados automaticamente; o processamento segue os controles da fila.`);await load({full:true,afterCurrent:true});}catch(e){setError(e.message);}finally{setBusy(false);}}
  const progress=new Map((financial?.progress?.items??[]).map(item=>[item.id,item]));
- const statusOf=v=>videoStatus(v,progress.get(v.id),financial?.paused!==false||controls?.enabled!==true);
+ const statusOf=v=>videoStatus(v,financial?.progress?.stale?null:progress.get(v.id),financial?.paused!==false||controls?.enabled!==true);
  const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(9);
  useEffect(()=>{setPage(1);},[view,category,subcategory,knowledgeQuery,pageSize]);
  const categories=categoryTree(view==='Livro de conhecimento'?videos.filter(v=>v.analysis?.knowledge):videos);

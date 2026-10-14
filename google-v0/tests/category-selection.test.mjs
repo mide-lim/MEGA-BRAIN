@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {categoryIds,categorySelectionSchema,validateCategoryIds,normalizedCategoryIds}from '../lib/category-taxonomy.mjs';
-import {reportSchema,reviewSavedCategorySelection}from '../lib/analysis.mjs';
-const matches=(values,schema)=>Array.isArray(values)&&values.length>=schema.minItems&&values.length<=schema.maxItems&&values.every(id=>schema.items.enum.includes(id))&&(!schema.anyOf||schema.anyOf.some(s=>matches(values,s)));
+import {reportSchema,reviewSavedCategorySelection,validateProviderResponseSchema,buildAnalysisRequest}from '../lib/analysis.mjs';
+const matches=(values,schema)=>schema.anyOf?schema.anyOf.some(s=>matches(values,s)):Array.isArray(values)&&values.length>=schema.minItems&&values.length<=schema.maxItems&&values.every(id=>schema.items.enum.includes(id));
 const record={id:'Fixture_1',duration_seconds:60,transcript:'O algoritmo ajuda a identificar interesses.',media_verified:true};
 function received(categories){return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({title:'Interesses',summary:'Exercício de autoconhecimento usando uma plataforma.',categories,useful_information:[],visual_observations:[],limitations:[],transcript_quality:{assessment:'Texto reconhecido.',uncertain_segments:[]},knowledge:{context:'general',keywords:[{term:'Interesses',evidence:[{source:'transcript',start_seconds:0,end_seconds:10,excerpt:'identificar interesses'}]}],fields:[{kind:'concept',name:'Interesses',value:'Identificar interesses pessoais.',evidence:[{source:'transcript',start_seconds:0,end_seconds:10,excerpt:record.transcript}]}],missing_information:[]}})}]}}]};}
 const reason='A finalidade principal é autoconhecimento; a plataforma é apenas o instrumento.';
@@ -34,4 +34,26 @@ test('malformed, unknown, duplicated, already-valid and incomplete responses can
 test('existing validation still rejects unsupported structure after category selection',()=>{
  const source=received(['bem-estar','tecnologia-geral']);const parsed=JSON.parse(source.candidates[0].content.parts[0].text);delete parsed.title;source.candidates[0].content.parts[0].text=JSON.stringify(parsed);
  const review=reviewSavedCategorySelection(source,record,{categories:['bem-estar'],reason});assert.equal(review.accepted,false);assert.deepEqual(review.reasons,['invalid_report']);
+});
+
+test('Vertex category schema uses standalone anyOf and retains each array branch constraint',()=>{
+ const schema=categorySelectionSchema();assert.deepEqual(Object.keys(schema),['anyOf']);
+ assert.doesNotThrow(()=>validateProviderResponseSchema(reportSchema));
+ for(const branch of schema.anyOf){assert.equal(branch.type,'ARRAY');assert.equal(branch.minItems,1);assert.ok([1,2].includes(branch.maxItems));assert.equal(branch.items.type,'STRING');assert.ok(branch.items.enum.length);}
+ for(const sibling of ['type','minItems','maxItems','items','description']){
+  const malformed={...schema,[sibling]:'unexpected'};
+  assert.throws(()=>validateProviderResponseSchema({type:'OBJECT',properties:{categories:malformed}}),/anyOf/);
+ }
+ assert.throws(()=>validateProviderResponseSchema({type:'ARRAY',items:{anyOf:[{type:'STRING'}],type:'STRING'}}),/anyOf/);
+ assert.throws(()=>validateProviderResponseSchema({anyOf:[]}),/anyOf/);
+ // A property whose name is anyOf is not itself a union schema node.
+ assert.doesNotThrow(()=>validateProviderResponseSchema({type:'OBJECT',properties:{anyOf:{type:'STRING'}}}));
+});
+test('all supported analysis presets produce a schema matching the captured Vertex contract',()=>{
+ for(const version of ['megabrain-video-text-v2','megabrain-video-text-v3','megabrain-video-text-v4']){
+  const request=buildAnalysisRequest({record:{...record,media_verified:true},bucket:'megabrain-v0-test-media',model:'gemini-3.5-flash-lite',preset:{version,system_instruction:'Extrair fatos.',user_instruction:'Analisar a mídia.'}});
+  const schema=request.generationConfig.responseSchema;
+  assert.doesNotThrow(()=>validateProviderResponseSchema(schema));
+  assert.deepEqual(Object.keys(schema.properties.categories),['anyOf']);
+ }
 });

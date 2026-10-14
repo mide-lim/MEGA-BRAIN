@@ -48,7 +48,7 @@ test('mixed old and new labels deduplicate source counts without changing source
 test('request, runtime and navigation use the same catalog while legacy review stays compatible',()=>{
  const request=buildAnalysisRequest({record,bucket:'synthetic-bucket',preset:{version:'synthetic',system_instruction:'Synthetic',user_instruction:'Synthetic'}});
  const schema=request.generationConfig.responseSchema.properties.categories;
- assert.deepEqual(schema.items.enum,categoryIds);
+ assert.deepEqual([...new Set(schema.anyOf.flatMap(branch=>branch.items.enum))].sort(),[...categoryIds].sort());
  const prompt=JSON.parse(request.contents[0].parts[1].text);
  assert.deepEqual(prompt.category_options,categoryOptions());
  assert.equal(prompt.category_taxonomy_version,taxonomyVersion);
@@ -102,6 +102,6 @@ test('generation bounds additional categories and keeps general destinations exc
  assert.throws(()=>validateCategoryIds(['culinaria']));
  assert.doesNotThrow(()=>validateCategoryIds(['nutricao','exercicio-fisico']));
  const req=buildAnalysisRequest({record,bucket:'synthetic-bucket',preset:{version:'synthetic',system_instruction:'Synthetic',user_instruction:'Synthetic'}});
- assert.equal(req.generationConfig.responseSchema.properties.categories.maxItems,2);
+ assert.equal(Math.max(...req.generationConfig.responseSchema.properties.categories.anyOf.map(branch=>branch.maxItems)),2);
  assert.ok(categoryOptions().every(c=>c.scope));
 });

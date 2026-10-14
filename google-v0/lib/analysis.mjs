@@ -17,6 +17,18 @@ export const reportSchema = {
   }
 };
 
+// Vertex responseSchema requires anyOf to stand alone at its schema node.
+// Check the generated contract locally before a provider request is submitted.
+export function validateProviderResponseSchema(schema){
+  if(!schema||typeof schema!=='object'||Array.isArray(schema))throw new Error('Schema de resposta inválido.');
+  if(Object.hasOwn(schema,'anyOf')){
+    if(Object.keys(schema).length!==1||!Array.isArray(schema.anyOf)||!schema.anyOf.length)throw new Error('anyOf deve ser o único campo do nó de schema.');
+    for(const branch of schema.anyOf)validateProviderResponseSchema(branch);
+  }
+  if(schema.items)validateProviderResponseSchema(schema.items);
+  for(const child of Object.values(schema.properties??{}))validateProviderResponseSchema(child);
+}
+
 export function buildAnalysisRequest({record,bucket,preset,model}) {
   if (!ID.test(record?.id ?? '')) throw new Error('Identificador inválido.');
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket ?? '')) throw new Error('Bucket inválido.');
@@ -27,6 +39,7 @@ export function buildAnalysisRequest({record,bucket,preset,model}) {
   if (transcript.length>100000) throw new Error('Transcrição excede o escopo do piloto.');
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
+  validateProviderResponseSchema(reportSchema);
   return {
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[

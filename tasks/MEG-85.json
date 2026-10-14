@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "id": "MEG-85",
+  "paperclip_issue_id": "ffb792ce-28a7-4a2f-b17e-896e8634ac50",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "e2abfe00f35c0cabf573f74aae90104a7af219d7",
+  "objective": "First scale implementation: record measured provider usage and hold narrowly confirmed terminal Instagram source failures for user verdict without pausing unrelated videos. Default disabled for source holds. Preserve claims, audit, full conservative coverage and every other global gate. Reviewable code only; distributed ledger and full3005 admission remain next phase.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Measure supported global Gemini3.5FlashLite standard responses from usageMetadata including cache and reasoning",
+    "Measure standard Chirp3/us sync and single-file async STT using totalBilledDuration; never sum duplicated file/global values or replace missing duration by video length",
+    "Missing/unsupported/malformed measurement produces an explicit unavailable record, not zero cost or a pipeline failure",
+    "Persist measurement in existing immutable artifacts with model/rate/source provenance; no extra provider calls, storage objects, ledger settlement or budget changes",
+    "Offline CLI aggregates measurements and reports coverage/unavailable cases without reading credentials, calling APIs or mutating input files",
+    "Preserve raw response, output validation and stage idempotency; verify cache/thoughts, no-speech, batch duplication and unknown metadata",
+    "Source auto-hold is opt-in, batch262 only, upload stage after payment claim, media absence verified, metadata/format-selection terminal diagnoses only; do not retry or assert source private/deleted",
+    "HTTP403/429, login, network, timeout, local IO, media-transfer failure, missing proof or failed reconciliation still use existing global pause",
+    "Persist case/audit/claim proof before financial coverage completes; keep failed worker claim uncertain and preserve global pause if another operation triggered it",
+    "Free only the held source lease after full maximum accounting and recorded verdict, with no inference or source replay"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/usage-costs.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/usage-costs.test.mjs",
+    "google-v0/tests/worker-integration.test.mjs",
+    "google-v0/scripts/summarize-usage.mjs",
+    "docs/measured-usage-costs.md",
+    "tasks/MEG-85.json",
+    "google-v0/lib/source-hold.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/tests/source-hold.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Persist measurement and verify source media absence",
+      "max_chars": 3000,
+      "sections": [
+        "persist",
+        "transcription",
+        "analysis",
+        "prepareUploadRecovery"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Catch known terminal source failure before existing global uncertain pause",
+      "max_chars": 3500,
+      "sections": [
+        "run catch",
+        "failureDiagnostic"
+      ]
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Full conservative source accounting without toggling global controls",
+      "max_chars": 3000,
+      "sections": [
+        "transition",
+        "validate"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Wire default-disabled opt-in source handling",
+      "max_chars": 1500,
+      "sections": [
+        "workerRuntime"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/usage-costs.test.mjs google-v0/tests/source-hold.test.mjs google-v0/tests/worker-integration.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-85.json --diff-base e2abfe00f35c0cabf573f74aae90104a7af219d7 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Independent human review before deploy or source-hold activation; opt-in conservative source settlement changes require review, all other financial gates retained, no extra model executions."
+  }
+}

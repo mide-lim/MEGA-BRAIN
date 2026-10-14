@@ -5,6 +5,7 @@ import {WorkerFlow} from '../lib/worker-flow.mjs';
 import {FinancialLedger,newLedger} from '../lib/financial-ledger.mjs';
 import {workerReservationGate} from '../lib/worker-reservation-gate.mjs';
 import {googleOperations} from '../lib/google-operations.mjs';
+import {validateProviderResponseSchema} from '../lib/analysis.mjs';
 import {GoogleREST} from '../lib/google-rest.mjs';
 import {Storage} from '../lib/storage.mjs';
 import {StorageCapacity,newCapacity} from '../lib/storage-capacity.mjs';
@@ -51,8 +52,10 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     }
     if(profile.location==='global')assert.equal(JSON.parse(JSON.parse(options.body).contents[0].parts[1].text).caption_raw,'Descrição do post: ferramenta de organização.');
     analyses++;assert.match(u.pathname,/generateContent$/);
-    const generated=JSON.parse(options.body);assert.ok(generated.generationConfig.responseSchema.properties.categories.items.enum.includes('tecnologia-geral'));
-    assert.ok(!generated.generationConfig.responseSchema.properties.categories.items.enum.includes('Unknown category'));
+    const generated=JSON.parse(options.body),schema=generated.generationConfig.responseSchema;validateProviderResponseSchema(schema);
+    assert.deepEqual(Object.keys(schema.properties.categories),['anyOf']);
+    const enumIds=schema.properties.categories.anyOf.flatMap(branch=>branch.items.enum);
+    assert.ok(enumIds.includes('tecnologia-geral'));assert.ok(!enumIds.includes('Unknown category'));
     if(profile.gemini==='gemini-3.5-flash-lite'){const config=JSON.parse(options.body).generationConfig;assert.equal(config.thinkingConfig.thinkingLevel,'MINIMAL');assert.equal(config.temperature,undefined);}
     return Response.json({candidates:[{finishReason:profile.fault==='incomplete_response'?'MAX_TOKENS':'STOP',content:{parts:[{text:profile.fault==='invalid_json'?'{broken':JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
   }});

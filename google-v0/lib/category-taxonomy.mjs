@@ -27,7 +27,7 @@ export const categoryIds=Object.freeze(categoryDefinitions.map(c=>c.id));
 export const genericCategoryIds=Object.freeze(['tecnologia-geral','a-organizar']);
 export function categorySelectionSchema(){
  const specific=categoryIds.filter(id=>!genericCategoryIds.includes(id));
- return {type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:[...categoryIds]},anyOf:[
+ return {anyOf:[
   {type:'ARRAY',minItems:1,maxItems:1,items:{type:'STRING',enum:[...genericCategoryIds]}},
   {type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:specific}}
  ]};

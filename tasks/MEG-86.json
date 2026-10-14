@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "id": "MEG-86",
+  "paperclip_issue_id": "89289ba8-0124-4446-bbfb-e7cafa431ca3",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "f3062d67196f435273b2c9d9331c5e6b455e0a95",
+  "objective": "Fix Gemini HTTP400 INVALID_ARGUMENT: category anyOf must be the only sibling field. Preserve category behavior and add provider contract validation before submission. Reviewable code only, no paid replay.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Category union contains only anyOf; branches keep type/items/minItems/maxItems",
+    "All valid selections remain admitted, general/specific mixes remain rejected",
+    "Catch malformed anyOf nodes anywhere in generated schema before submitting",
+    "Do not alter attempts, reservations, model, runtime budget or retry policy"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/category-taxonomy.mjs",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/tests/category-selection.test.mjs",
+    "tasks/MEG-86.json",
+    "google-v0/tests/category-taxonomy.test.mjs",
+    "google-v0/tests/worker-integration.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/category-taxonomy.mjs",
+      "reason": "Malformed category anyOf sibling constraints",
+      "max_chars": 2500,
+      "sections": [
+        "categorySelectionSchema"
+      ]
+    },
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Validate generated schema before returning provider body",
+      "max_chars": 3500,
+      "sections": [
+        "reportSchema",
+        "buildAnalysisRequest"
+      ]
+    },
+    {
+      "path": "google-v0/tests/category-selection.test.mjs",
+      "reason": "Preserve combinations and add API contract regression",
+      "max_chars": 3000,
+      "sections": [
+        "generation contract"
+      ]
+    },
+    {
+      "path": "google-v0/tests/worker-integration.test.mjs",
+      "reason": "Existing adapter mock assumes now-invalid sibling items.enum; update to provider union contract",
+      "max_chars": 1500,
+      "sections": [
+        "generated response schema assertions"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/category-selection.test.mjs google-v0/tests/analysis.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-86.json --diff-base f3062d67196f435273b2c9d9331c5e6b455e0a95 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Independent human review before merge/deploy; preserve HTTP400 diagnostics, no model executions added."
+  }
+}

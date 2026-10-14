@@ -64,3 +64,9 @@ test('mismatched caption metadata cannot contaminate the video or cause another 
  let count=0;const tools=mediaTools({downloadEnabled:true,run:async(tool,args)=>{count++;const path=args[args.indexOf('-o')+1];await writeFile(path,Buffer.from('media'));await writeFile(path.replace(/\.mp4$/,'.info.json'),JSON.stringify({display_id:'Other_123',description:'wrong caption'}));return {stdout:''};}});
  const result=await tools.download(video,{withMetadata:true});assert.equal(result.source_caption,null);assert.equal(count,1);assert.equal(result.bytes.toString(),'media');
 });
+
+test('successful metadata probe records success instead of a spurious unknown failure',async()=>{
+ const tools=mediaTools({run:async(tool,args)=>{if(args.includes('--dump-single-json'))return {stdout:JSON.stringify({display_id:video.id})};if(tool==='yt-dlp')return {stdout:'2026.08.19'};return {stdout:'ffmpeg version 5.1.9'};}});
+ const result=await tools.probeMetadata(video);assert.equal(result.status,'metadata_available');assert.equal(result.diagnostic.cause,'none');assert.equal(result.diagnostic.exit_code,0);assert.doesNotMatch(result.diagnostic.message,/desconhecida|falha|não forneceu/);
+ assert.equal(safeDownloadDiagnostic({cause:'none',phase:'metadata',exit_code:1}).cause,'unknown');assert.equal(safeDownloadDiagnostic({cause:'none',phase:'transfer',exit_code:0}).cause,'unknown');
+});

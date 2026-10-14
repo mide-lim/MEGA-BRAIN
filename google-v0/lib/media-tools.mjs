@@ -14,13 +14,14 @@ async function temporary(action){
     await rm(target,{recursive:true,force:true});
   }
 }
-const messages=Object.freeze({empty_media_response:'O extrator recebeu uma resposta sem mídia; a disponibilidade do Reel não foi confirmada.',unknown:'A ferramenta não forneceu uma causa reconhecida.',http_403:'A origem respondeu HTTP 403; a causa da restrição não foi determinada.',http_404:'A origem respondeu HTTP 404; isso não comprova remoção definitiva.',http_429:'A origem respondeu HTTP 429 (limitação de requisições).',login_required:'A ferramenta informou que o acesso exige autenticação.',unavailable:'A ferramenta informou que o conteúdo não está disponível.',format_unavailable:'A ferramenta não encontrou o formato solicitado.',network_error:'A ferramenta informou falha de conexão ou resolução de nome.',timeout:'A ferramenta informou tempo limite excedido.',process_interrupted:'O processo foi interrompido; a causa não foi determinada.',output_limit:'O processo excedeu o limite de saída de diagnóstico.',file_invalid:'O arquivo final está ausente, vazio ou acima do limite.',local_io:'Houve uma falha local de leitura ou escrita.'});
+const messages=Object.freeze({none:'Consulta de metadados concluída com sucesso.',empty_media_response:'O extrator recebeu uma resposta sem mídia; a disponibilidade do Reel não foi confirmada.',unknown:'A ferramenta não forneceu uma causa reconhecida.',http_403:'A origem respondeu HTTP 403; a causa da restrição não foi determinada.',http_404:'A origem respondeu HTTP 404; isso não comprova remoção definitiva.',http_429:'A origem respondeu HTTP 429 (limitação de requisições).',login_required:'A ferramenta informou que o acesso exige autenticação.',unavailable:'A ferramenta informou que o conteúdo não está disponível.',format_unavailable:'A ferramenta não encontrou o formato solicitado.',network_error:'A ferramenta informou falha de conexão ou resolução de nome.',timeout:'A ferramenta informou tempo limite excedido.',process_interrupted:'O processo foi interrompido; a causa não foi determinada.',output_limit:'O processo excedeu o limite de saída de diagnóstico.',file_invalid:'O arquivo final está ausente, vazio ou acima do limite.',local_io:'Houve uma falha local de leitura ou escrita.'});
 const phases=new Set(['unknown','source_validation','metadata','format_selection','transfer','merge','remux','file_validation','media_validation','storage_write']);
 const version=(v,kind)=>typeof v==='string'&&(kind==='yt-dlp'?/^\d{4}\.\d{2}\.\d{2}$/:/^\d+\.\d+(?:\.\d+)?$/).test(v)?v:null;
 // Only fixed messages and allowlisted scalar values cross the persistence boundary.
 // Never forward stderr, stdout, error.message, commands, URLs or arbitrary labels.
 export function safeDownloadDiagnostic(value){
- const cause=Object.hasOwn(messages,value?.cause)?value.cause:'unknown';
+ let cause=Object.hasOwn(messages,value?.cause)?value.cause:'unknown';
+ if(cause==='none'&&(value?.phase!=='metadata'||value?.exit_code!==0))cause='unknown';
  return {phase:phases.has(value?.phase)?value.phase:'unknown',phase_source:['boundary','tool_output'].includes(value?.phase_source)?value.phase_source:'boundary',cause,message:messages[cause],elapsed_ms:Number.isSafeInteger(value?.elapsed_ms)&&value.elapsed_ms>=0&&value.elapsed_ms<=600000?value.elapsed_ms:null,exit_code:Number.isInteger(value?.exit_code)&&value.exit_code>=0&&value.exit_code<=255?value.exit_code:null,tool:'yt-dlp',yt_dlp_version:version(value?.yt_dlp_version,'yt-dlp'),ffmpeg_version:version(value?.ffmpeg_version,'ffmpeg')};
 }
 function classifyDownload(error,phase){
@@ -62,7 +63,7 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
         const {stdout}=await run('yt-dlp',['--ignore-config','--no-playlist','--skip-download','--dump-single-json','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','10','-f','bestvideo+bestaudio/best[acodec!=none]','--',links[0].url],{timeout:20000,maxBuffer:1048576});
         const metadata=JSON.parse(stdout);
         if(!metadata||metadata.display_id!==video.id&&metadata.id!==video.id)throw new Error('Metadados inválidos.');
-        const diagnostic=safeDownloadDiagnostic({phase:'metadata',phase_source:'boundary',elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:0,...await versions()});
+        const diagnostic=safeDownloadDiagnostic({phase:'metadata',phase_source:'boundary',cause:'none',elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:0,...await versions()});
         return {status:'metadata_available',diagnostic};
       }catch(error){
         return {status:'metadata_failed',diagnostic:safeDownloadDiagnostic({...classifyDownload(error,phase),phase_source:'boundary',elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:error.code,...(phase==='source_validation'?{}:await versions())})};

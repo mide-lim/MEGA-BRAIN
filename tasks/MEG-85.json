@@ -30,7 +30,8 @@
     "google-v0/lib/worker-flow.mjs",
     "google-v0/lib/financial-ledger.mjs",
     "google-v0/lib/worker-runtime.mjs",
-    "google-v0/tests/source-hold.test.mjs"
+    "google-v0/tests/source-hold.test.mjs",
+    "google-v0/Dockerfile.worker"
   ],
   "context": [
     {
@@ -69,6 +70,14 @@
       "sections": [
         "workerRuntime"
       ]
+    },
+    {
+      "path": "google-v0/Dockerfile.worker",
+      "reason": "CI image smoke found the two new runtime dependencies absent from the explicit worker copy list",
+      "max_chars": 1000,
+      "sections": [
+        "COPY lib"
+      ]
     }
   ],
   "validation_commands": [
@@ -76,7 +85,8 @@
     "node --test google-v0/tests/*.test.mjs",
     "python3 scripts/check_links.py",
     "python3 scripts/check_task_packets.py",
-    "python3 scripts/check_task_packets.py --packet tasks/MEG-85.json --diff-base e2abfe00f35c0cabf573f74aae90104a7af219d7 --diff-head HEAD"
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-85.json --diff-base e2abfe00f35c0cabf573f74aae90104a7af219d7 --diff-head HEAD",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-worker.mjs"
   ],
   "execution_budget": {
     "worker_runs": 0,

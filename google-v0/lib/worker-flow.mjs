@@ -1,3 +1,4 @@
+import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId} from './firestore-recovery.mjs';
 import {terminalSourceFailure,recordSourceHold} from './source-hold.mjs';
 import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
@@ -39,7 +40,8 @@ export class WorkerFlow {
     if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||batchId&&eligibleVideos.length>62&&eligibleVideos.length!==262||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
-  async run({videoId,stage,recoverAnalysis429=false,recoverUpload=false}){
+  async run({videoId,stage,recoverAnalysis429=false,recoverUpload=false,recoverFirestoreWrite=false,recoveryId}){
+    if(typeof recoverFirestoreWrite!=='boolean'||recoverFirestoreWrite&&(!['upload','transcription'].includes(stage)||recoverUpload||recoverAnalysis429||!/^[A-Za-z0-9_-]{16,64}$/.test(recoveryId??'')))throw new Error('Retomada de metadados inválida.');
     if(typeof recoverUpload!=='boolean'||recoverUpload&&(stage!=='upload'||recoverAnalysis429)||!validId(videoId)||!stages.includes(stage)||typeof recoverAnalysis429!=='boolean'||recoverAnalysis429&&stage!=='analysis')throw new Error('Tarefa fora do escopo.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
     if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
@@ -51,8 +53,19 @@ export class WorkerFlow {
     if(stage==='transcription'&&video.data.audio_status!=='present')return {status:'blocked',reason:'audio_not_verified'};
     if(stage==='analysis'&&(typeof video.data.transcript!=='string'||!video.data.transcript.trim())&&!completedEmptyTranscript(video.data,videoId))return {status:'blocked',reason:'transcript_missing'};
     const revision=stage==='analysis'?this.analysisRevision:null;
-    const id=executionId(videoId,stage,revision),path=`jobs/${id}`;
+    const originalId=executionId(videoId,stage,revision);
+    const id=recoverFirestoreWrite&&stage==='upload'?uploadRecoveryId(originalId):originalId,path=`jobs/${id}`;
     const existing=await this.store.get(path);
+    let metadataUpload=false,metadataTranscription=false;
+    if(recoverFirestoreWrite){
+      if(stage==='upload'&&existing||stage==='transcription'&&existing?.data.firestore_recovery_count)return {status:'recovery_already_claimed',execution_id:id,duplicate:true};
+      const priorClaim=stage==='upload'?await this.store.get(`jobs/${originalId}`):existing;
+      const financial=(await this.store.get('settings/financial'))?.data;
+      const authorization=(await this.store.get(recoveryAuthorizationPath(originalId)))?.data;
+      if(!metadataRecoveryAllowed({authorization,claim:priorClaim?.data,financial:financial?.jobs?.[originalId],video:video.data,originalId,videoId,stage,maximumCents:this.quotes[stage],recoveryId,now:this.clock()}))return {status:'blocked',reason:'firestore_recovery_not_authorized'};
+      if(stage==='upload'){if(typeof this.operations.prepareUploadRecovery!=='function')return {status:'blocked',reason:'media_absence_check_unavailable'};metadataUpload=true;}
+      else{await this.store.patch(path,{status:'recovering_firestore_metadata',firestore_recovery_count:1,firestore_recovery_authorization:recoveryAuthorizationPath(originalId),original_failure_diagnostic:existing.data.failure_diagnostic},{updateTime:existing.updateTime});metadataTranscription=true;}
+    }
     let recovery=false,recovery429=false,uploadRecovery=false,analysisAttempts=[];
     if(recoverUpload){
       const probe=(await this.store.get('jobs/probe_'+id))?.data;
@@ -69,13 +82,13 @@ export class WorkerFlow {
       await this.store.patch(path,{status:'recovering_429',analysis_attempts:analysisAttempts},{updateTime:existing.updateTime});recovery429=true;
     }
 
-    if(recovery429||uploadRecovery){/* Existing claim and reservation are retained. */}else if(existing?.data.status==='retry_ready'){const financial=await this.store.get('settings/financial');if(financial?.data.jobs?.[id])return {status:'blocked',reason:'previous_financial_attempt'};await this.store.patch(path,{status:'claimed'},{updateTime:existing.updateTime});recovery=true;}else if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
+    if(recovery429||uploadRecovery||metadataTranscription){/* Existing claim and reservation are retained. */}else if(existing?.data.status==='retry_ready'){const financial=await this.store.get('settings/financial');if(financial?.data.jobs?.[id])return {status:'blocked',reason:'previous_financial_attempt'};await this.store.patch(path,{status:'claimed'},{updateTime:existing.updateTime});recovery=true;}else if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
     const maximumCents=this.quotes[stage];
     if(!Number.isSafeInteger(maximumCents)||maximumCents<1)throw new Error('Estimativa conservadora ausente.');
     const operation=this.operations[stage];
     if(typeof operation!=='function')throw new Error('Adaptador da etapa indisponível.');
     // Firestore create-only makes concurrent queue deliveries converge here.
-    const claimed=recovery||recovery429||uploadRecovery?{created:true}:await this.store.create(path,{video_id:videoId,stage,status:'claimed',created_at:new Date(this.clock()).toISOString()});
+    const claimed=recovery||recovery429||uploadRecovery||metadataTranscription?{created:true}:await this.store.create(path,{video_id:videoId,stage,status:'claimed',created_at:new Date(this.clock()).toISOString(),...(metadataUpload?{recovery_of:originalId,firestore_recovery_count:1,firestore_recovery_authorization:recoveryAuthorizationPath(originalId)}:{})});
     if(!claimed.created)return {status:'claimed',execution_id:id,duplicate:true};
     let started=false;
     const save=async changes=>{const current=await this.store.get(path);await this.store.patch(path,changes,{updateTime:current.updateTime});};
@@ -85,8 +98,9 @@ export class WorkerFlow {
         if(!archive.created){const previous=await this.store.get(`analyses/${id}_previous`);if(!recovery||previous?.data.analysis_key!==video.data.analysis_key||previous?.data.analysis_generation!==video.data.analysis_generation)throw new Error('Histórico da análise já existe; conferir antes de executar.');}
       }
       if(stage==='analysis'&&typeof this.operations.prepareAnalysis==='function')await this.operations.prepareAnalysis({video:{...video.data,id:videoId},executionId:id});
-      if(uploadRecovery){await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});await this.ledger.resumeUpload(id);started=true;}else if(recovery429){await this.ledger.resumeAnalysis429(id);started=true;}else{
-        await this.ledger.reserve({executionId:id,videoId,stage,maximumCents,...(revision?{analysisRevision:revision}:{})});
+      if(metadataUpload)await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});
+      if(metadataTranscription){await this.ledger.transition(id,'start');started=true;}else if(uploadRecovery){await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});await this.ledger.resumeUpload(id);started=true;}else if(recovery429){await this.ledger.resumeAnalysis429(id);started=true;}else{
+        await this.ledger.reserve({executionId:id,videoId,stage,maximumCents,...(revision?{analysisRevision:revision}:{}),...(metadataUpload?{recoveryOf:originalId,recoveryId}:{})});
         await save({status:'reserved'});
         await this.ledger.transition(id,'start');started=true;
       }

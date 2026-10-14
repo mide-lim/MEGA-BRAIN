@@ -17,7 +17,19 @@ KINDS = ("worker", "web")
 
 
 class DeploymentError(RuntimeError):
-    pass
+    def __init__(self, message, code="operation_failed"):
+        super().__init__(message)
+        self.code = code
+
+
+def safe_failure_code(error):
+    code = getattr(error, "code", "operation_failed")
+    fixed = {"operation_failed", "readiness_timeout", "configuration_changed", "revision_failed", "smoke_login_content", "smoke_stylesheet_path", "smoke_origin", "smoke_transport", "smoke_redirect", "google_transport", "update_timeout", "update_failed"}
+    if not isinstance(code, str):
+        return "operation_failed"
+    if code in fixed or re.fullmatch(r"google_http_[1-5][0-9]{2}", code) or re.fullmatch(r"smoke_(?:login|stylesheet|library|controls|financial|video|callback)_http_[1-5][0-9]{2}", code):
+        return code
+    return "operation_failed"
 
 
 def canonical(value):
@@ -116,9 +128,9 @@ class Google:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             # Never echo remote messages, URLs, configurations, or tokens into public CI.
-            raise DeploymentError("Google request failed: HTTP " + str(error.code)) from None
+            raise DeploymentError("Google request failed: HTTP " + str(error.code), "google_http_" + str(error.code)) from None
         except (urllib.error.URLError, TimeoutError):
-            raise DeploymentError("Google request failed: transport error") from None
+            raise DeploymentError("Google request failed: transport error", "google_transport") from None
 
     def service(self, kind):
         return self.request("GET", self.prefix + "/services/" + self.config["services"][kind])
@@ -150,10 +162,10 @@ class Google:
             result = self.request("GET", "https://run.googleapis.com/v2/" + name)
             if result.get("done"):
                 if result.get("error"):
-                    raise DeploymentError("Cloud Run update failed")
+                    raise DeploymentError("Cloud Run update failed", "update_failed")
                 return
             time.sleep(2)
-        raise DeploymentError("Cloud Run update timeout; inspect before another attempt")
+        raise DeploymentError("Cloud Run update timeout; inspect before another attempt", "update_timeout")
 
 
 def command(args, input_text=None):
@@ -185,34 +197,66 @@ def publish(config, token, commit):
 
 
 def smoke_web(origin):
-    # Only anonymous GETs; no import, processing, OAuth exchange, or model calls.
+    # Bounded retries apply only to anonymous GETs, never service updates,
+    # processing, imports, OAuth exchange or paid provider requests.
     if not re.fullmatch(r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app", origin):
-        raise DeploymentError("Unexpected service origin")
-    def read(path, expected):
-        try:
-            with urllib.request.urlopen(origin + path, timeout=30) as response:
-                status, data = response.status, response.read(2_000_000).decode("utf-8")
-        except urllib.error.HTTPError as error:
-            status, data = error.code, ""
-        if status != expected:
-            raise DeploymentError("Anonymous route verification failed")
-        return data
-    html = read("/", 200)
+        raise DeploymentError("Unexpected service origin", "smoke_origin")
+    def read(path, expected, label):
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(origin + path, timeout=30) as response:
+                    if hasattr(response, "geturl") and not response.geturl().startswith(origin + "/"):
+                        raise DeploymentError("Unexpected redirect", "smoke_redirect")
+                    status, data = response.status, response.read(2_000_000).decode("utf-8")
+            except urllib.error.HTTPError as error:
+                status, data = error.code, ""
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if attempt == 2:
+                    raise DeploymentError("Anonymous route transport failed", "smoke_transport") from None
+                time.sleep(attempt + 1)
+                continue
+            if status == expected:
+                return data
+            if status in (502, 503, 504) and attempt < 2:
+                time.sleep(attempt + 1)
+                continue
+            raise DeploymentError("Anonymous route verification failed", "smoke_" + label + "_http_" + str(status))
+    html = read("/", 200, "login")
     if "Entrar com Google" not in html:
-        raise DeploymentError("Login page verification failed")
+        raise DeploymentError("Login page verification failed", "smoke_login_content")
     css = re.search(r'href="([^"]+\.css[^"]*)"', html)
     if not css or not css[1].startswith("/") or css[1].startswith("//"):
-        raise DeploymentError("Stylesheet verification failed")
-    read(css[1], 200)
-    for path in ["/api/library", "/api/controls", "/api/financial", "/api/video/AbCdE123"]:
-        read(path, 401)
-    read("/auth/callback?state=invalid&code=invalid", 403)
+        raise DeploymentError("Stylesheet verification failed", "smoke_stylesheet_path")
+    read(css[1], 200, "stylesheet")
+    for label in ("library", "controls", "financial", "video"):
+        read("/api/" + label + ("/AbCdE123" if label == "video" else ""), 401, label)
+    read("/auth/callback?state=invalid&code=invalid", 403, "callback")
+
+
+def wait_ready(api, kind, original, image):
+    old_image = original["template"]["containers"][0]["image"]
+    for attempt in range(30):
+        current = api.service(kind)
+        current_image = current["template"]["containers"][0]["image"]
+        if current_image not in (old_image, image) or without_image(current) != without_image(original):
+            raise DeploymentError("Updated service differs from reviewed configuration", "configuration_changed")
+        state = current.get("terminalCondition", {}).get("state")
+        if current_image == image and not current.get("reconciling"):
+            if state == "CONDITION_SUCCEEDED":
+                return current
+            if state == "CONDITION_FAILED":
+                raise DeploymentError("Updated revision failed", "revision_failed")
+        if attempt < 29:
+            time.sleep(1)
+    raise DeploymentError("Updated service readiness not confirmed", "readiness_timeout")
 
 
 def rollout(api, config, originals, images, smoke=smoke_web):
     changed = []
+    phase = "preflight"
     try:
         for kind in KINDS:
+            phase = kind + "_preflight"
             api.paused()
             current = api.service(kind)
             if service_view(current) != service_view(originals[kind]):
@@ -221,13 +265,13 @@ def rollout(api, config, originals, images, smoke=smoke_web):
             containers[0]["image"] = images[kind]
             # Register before sending: a timed-out PATCH might have applied.
             changed.append(kind)
+            phase = kind + "_update"
             api.update(kind, current, containers)
-            deployed = api.service(kind)
-            if deployed["template"]["containers"][0]["image"] != images[kind] or without_image(deployed) != without_image(originals[kind]):
-                raise DeploymentError("Updated service differs from reviewed configuration")
-            if deployed.get("reconciling") or deployed.get("terminalCondition", {}).get("state") != "CONDITION_SUCCEEDED":
-                raise DeploymentError("Updated service not ready")
+            phase = kind + "_readiness"
+            wait_ready(api, kind, originals[kind], images[kind])
+        phase = "web_smoke"
         smoke(api.service("web")["uri"])
+        phase = "queue_final_check"
         api.paused()
     except Exception as error:
         rollback_errors = []
@@ -249,8 +293,8 @@ def rollout(api, config, originals, images, smoke=smoke_web):
             except Exception:
                 rollback_errors.append(kind)
         if rollback_errors:
-            raise DeploymentError("Deployment failed; recovery needs operator review") from None
-        raise DeploymentError("Deployment failed; previous images preserved or restored") from error
+            raise DeploymentError("Deployment failed; recovery needs operator review; phase=" + phase + "; cause=" + safe_failure_code(error)) from None
+        raise DeploymentError("Deployment failed; previous images preserved or restored; phase=" + phase + "; cause=" + safe_failure_code(error)) from None
 
 
 def run(mode, config, commit, expected_baseline, token):

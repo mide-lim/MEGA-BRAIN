@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "id": "MEG-89",
+  "paperclip_issue_id": "1f97748d-de1d-41d4-ac88-ba4a1c261558",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "54421030b8aca93892be0b3e7d6b105969de577e",
+  "objective": "Explicit one-time metadata recovery preserving prior coverage and unknown inference holds; bounded read-only deployment checks and safe phase diagnostics.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Only explicitly authorized confirmed Firestore metadata rejection may recover upload or unsubmitted transcription",
+    "Upload preserves original claim and fully covered financial entry; deterministic linked child receives its own coverage",
+    "Transcription reuses reserved entry only before any provider submission or artifact",
+    "Duplicate deliveries cannot run a second recovery; timeouts, provider 429 and unknown states remain blocked",
+    "Deploy records safe failure phase; only transient anonymous read-only smoke checks retry; protected configuration and rollback rules remain enforced",
+    "Conventional tests and tools only; independent human review required before publication"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/firestore-recovery.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/worker-queue.mjs",
+    "google-v0/tests/firestore-recovery.test.mjs",
+    "google-v0/tests/worker-flow.test.mjs",
+    "google-v0/tests/financial-ledger.test.mjs",
+    "google-v0/tests/worker-queue.test.mjs",
+    "google-v0/tests/worker-integration.test.mjs",
+    "google-v0/Dockerfile.worker",
+    "ops/deploy-existing-services.py",
+    "ops/test_deploy_existing_services.py",
+    "docs/firestore-metadata-recovery.md",
+    "docs/deployment-readiness.md",
+    "tasks/MEG-89.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Claim and reservation order for confirmed failed metadata writes",
+      "max_chars": 4000,
+      "sections": [
+        "run",
+        "finish"
+      ]
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Preserve prior coverage and reservation invariants",
+      "max_chars": 4000,
+      "sections": [
+        "reserve",
+        "transition"
+      ]
+    },
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "Explicit task flag and deterministic dispatch",
+      "max_chars": 1800,
+      "sections": [
+        "validateTask",
+        "dispatchPath"
+      ]
+    },
+    {
+      "path": "ops/deploy-existing-services.py",
+      "reason": "Protected rollout and anonymous smoke requests",
+      "max_chars": 2200,
+      "sections": [
+        "rollout",
+        "smoke"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-89.json --diff-base 54421030b8aca93892be0b3e7d6b105969de577e --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Data recovery and infrastructure require independent human review of final head before merge or deployment."
+  }
+}

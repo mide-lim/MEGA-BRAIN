@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "MEG-84",
+  "paperclip_issue_id": "97d67ded-933f-4a5d-9603-22dbbaec1944",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "73f9bc18cc4471ebc18d739d48bf8456111e7114",
+  "objective": "Fix native Google admission failing before dispatch when a valid Instagram reel ID contains hyphens. Scope the serializer change to admission intent maps and preserve all schema, execution and financial gates. Reviewable PR only.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Persist valid video IDs including hyphens, underscores and initial digits only inside intents maps",
+    "Keep ordinary schema field names strict and reject unsafe intent keys",
+    "Exercise admission through actual Firestore serialization for four real ID formats, duplicate tick and restart without redispatch",
+    "Do not change providers, IAM, budget, batch size, retry policy or deployment"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/firestore.mjs",
+    "google-v0/tests/firestore.test.mjs",
+    "google-v0/tests/worker-admission.test.mjs",
+    "tasks/MEG-84.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "Strict nested field encoding rejects valid reel IDs",
+      "max_chars": 4000,
+      "sections": [
+        "encodeValue",
+        "encodeFields",
+        "patch"
+      ]
+    },
+    {
+      "path": "google-v0/tests/worker-admission.test.mjs",
+      "reason": "Existing mock did not encode writes; add regression at persistence boundary",
+      "max_chars": 5000,
+      "sections": [
+        "fixture",
+        "concurrent and duplicate admission ticks"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/firestore.test.mjs google-v0/tests/worker-admission.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-84.json --diff-base 73f9bc18cc4471ebc18d739d48bf8456111e7114 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Human independent review required before merge/publication; no additional model execution authorized."
+  }
+}

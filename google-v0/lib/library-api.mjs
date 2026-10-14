@@ -1,3 +1,4 @@
+import {pipelineProgress}from './pipeline-progress.mjs';
 // Framework-neutral route handlers; identity comes from the v0 session adapter.
 // No database, credential or production fallback is accepted here.
 export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImportEnabled=false}){
@@ -22,7 +23,12 @@ export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImpo
     async library(request){
       if(!await access(request))return reply({error:'Não autorizado'},401);
       if(request.method!=='GET')return reply({error:'Método inválido'},405);
-      const url=new URL(request.url),cursor=url.searchParams.get('cursor')??undefined;
+      const url=new URL(request.url),cursor=url.searchParams.get('cursor')??undefined,ids=url.searchParams.get('ids');
+      if(ids!==null){
+        const selected=ids.split(',');
+        if(cursor||selected.length>40||new Set(selected).size!==selected.length||selected.some(id=>! /^[A-Za-z0-9_-]{5,32}$/.test(id)))return reply({error:'Seleção de vídeos inválida.'},400);
+        try{return reply({videos:await repository.selected(selected)});}catch{return reply({error:'Atualização dos vídeos temporariamente indisponível.'},503);}
+      }
       if(cursor&&cursor.length>4096)return reply({error:'Cursor inválido'},400);
       try{return reply(await repository.page({cursor,pageSize:40}));}catch{return reply({error:'Biblioteca Google temporariamente indisponível.'},503);}
     },
@@ -52,13 +58,14 @@ export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImpo
       if(request.method!=='GET')return reply({error:'Método inválido'},405);
       try{
         const state=(await ledgerStore.get('settings/financial'))?.data;
-        if(!state)return reply({configured:false,paused:true});
+        if(!state)return reply({configured:false,paused:true,progress:{items:[],active:false}});
         const pending=Object.values(state.jobs??{});
         return reply({configured:true,paused:state.paused!==false,coverage_verified:state.coverage_verified===true,
           billing_snapshot:state.billing_snapshot?Object.fromEntries(["project_usage_cents","account_usage_cents","account_net_cents","credit_remaining_cents","period_label","observed_label","credit_observed_label","refreshed_at","source","refresh_status"].map(k=>[k,state.billing_snapshot[k]])):null,
           pilot_envelope_cents:state.pilot_envelope_cents,ongoing_commitment_cents:state.ongoing_commitment_cents,
           allocation_cents:state.allocation_cents,reserve_cents:state.reserve_cents,spent_cents:state.spent_cents,reserved_cents:state.reserved_cents,
           remaining_credit_cents:state.remaining_credit_cents,balance_observed_at:state.balance_observed_at,credit_expires_at:state.credit_expires_at,
+          progress:pipelineProgress(state.jobs),
           uncertain_operations:pending.filter(j=>j.status==='uncertain').length,
           note:'Controle interno; não é bloqueio de cobrança do Google. Saldo atualizado e custos persistentes precisam de reconciliação.'});
       }catch{return reply({error:'Controle financeiro indisponível; novos trabalhos devem permanecer pausados.'},503);}

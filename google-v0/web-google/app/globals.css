@@ -21,3 +21,6 @@ main{padding:26px 32px}header h1{margin:10px 0;font-size:29px}header p{margin:8p
 .curation-summary,.reading-panel{max-width:860px;margin:auto}.summary-lead{font-size:1.08rem;line-height:1.7;color:#deedf3}.summary-group{margin:18px 0;padding:16px 18px;border:1px solid #294652;border-radius:12px;background:#142a34}.summary-group h4{margin:0 0 12px;color:#65e5d2}.summary-group ul,.reading-panel ul{padding-left:20px;margin:0}.summary-group li{margin:10px 0;line-height:1.6}.summary-group li strong{color:#edf9fc}.source-pills{display:inline-flex;gap:6px;margin-left:10px;flex-wrap:wrap}.source-pills button{font-size:11px;padding:3px 8px;background:#1e3b44;color:#91d9d0;border:1px solid #35615e;border-radius:20px}.hashtag-list{display:flex;gap:10px;flex-wrap:wrap;padding:14px 0}.hashtag-list span{font-size:15px;color:#65e5d2;background:#173831;padding:9px 13px;border-radius:22px}.reading-panel li{margin:14px 0;line-height:1.7}.summary-group details,.summary-group summary{cursor:pointer}.curation-summary small,.reading-panel small{color:#9bbbc7}
 
 .review-register{font-size:12px;color:#9bbbc7;overflow-wrap:anywhere}.review-register summary{cursor:pointer}.hashtag-list span{overflow-wrap:anywhere;max-width:100%}
+
+.sync-status{display:block;margin:0 0 16px;color:var(--muted,#93bdcb)}
+.media-waiting{position:absolute;bottom:8px;left:10px;right:10px;color:#b9d7dc}

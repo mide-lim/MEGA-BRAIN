@@ -276,5 +276,96 @@ class SmokeOriginTests(unittest.TestCase):
                 network.assert_not_called()
 
 
+class DeploymentDiagnosticsTests(unittest.TestCase):
+    def test_readiness_polls_only_reads_without_extra_patch(self):
+        original = services()
+        api = FakeGoogle(original)
+        reads = 0
+        base_service = api.service
+        def service(kind):
+            nonlocal reads
+            value = base_service(kind)
+            if kind == "worker" and api.calls:
+                reads += 1
+                if reads < 3:
+                    value["reconciling"] = True
+            return value
+        api.service = service
+        with patch.object(deployment.time, "sleep"):
+            deployment.rollout(api, CONFIG, original, images(), smoke=lambda origin: None)
+        self.assertEqual(len(api.calls), 2)
+        self.assertEqual(reads, 3)
+
+    def test_readiness_rejects_configuration_changes_without_wait(self):
+        original = services()
+        api = FakeGoogle(original)
+        api.values["worker"]["template"]["containers"][0]["env"] = []
+        with patch.object(deployment.time, "sleep") as sleep:
+            with self.assertRaisesRegex(deployment.DeploymentError, "configuration"):
+                deployment.wait_ready(api, "worker", original["worker"], images()["worker"])
+        sleep.assert_not_called()
+        self.assertEqual(api.calls, [])
+
+    def test_readiness_timeout_never_repeats_patch(self):
+        original = services()
+        api = FakeGoogle(original)
+        with patch.object(deployment.time, "sleep") as sleep:
+            with self.assertRaises(deployment.DeploymentError) as error:
+                deployment.wait_ready(api, "worker", original["worker"], images()["worker"])
+        self.assertEqual(error.exception.code, "readiness_timeout")
+        self.assertEqual(sleep.call_count, 29)
+        self.assertEqual(api.calls, [])
+
+    def test_rollout_reports_phase_and_safe_cause_without_private_message(self):
+        original = services()
+        api = FakeGoogle(original)
+        def fail(origin):
+            raise deployment.DeploymentError("private-url token=SECRET", "smoke_video_http_503")
+        with self.assertRaises(deployment.DeploymentError) as error:
+            deployment.rollout(api, CONFIG, original, images(), smoke=fail)
+        text = str(error.exception)
+        self.assertIn("phase=web_smoke", text)
+        self.assertIn("cause=smoke_video_http_503", text)
+        self.assertNotIn("SECRET", text)
+        self.assertEqual(deployment.baseline_digest(api.values), deployment.baseline_digest(original))
+        self.assertEqual(deployment.safe_failure_code(deployment.DeploymentError("", "secret_value")), "operation_failed")
+
+    def test_smoke_retries_transient_reads_but_never_authentication_mismatch(self):
+        class Response:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, size):
+                return b'Entrar com Google <link href="/style.css">'
+        origin = "https://test.run.app"
+        responses = [deployment.urllib.error.URLError("secret"), Response(), Response(),
+                     *[deployment.urllib.error.HTTPError(origin, 401, "", {}, None) for _ in range(3)],
+                     deployment.urllib.error.HTTPError(origin, 503, "", {}, None),
+                     deployment.urllib.error.HTTPError(origin, 401, "", {}, None),
+                     deployment.urllib.error.HTTPError(origin, 403, "", {}, None)]
+        with patch.object(deployment.urllib.request, "urlopen", side_effect=responses) as network, patch.object(deployment.time, "sleep") as sleep:
+            deployment.smoke_web(origin)
+        self.assertEqual(network.call_count, 9)
+        self.assertEqual(sleep.call_count, 2)
+        with patch.object(deployment.urllib.request, "urlopen", side_effect=[Response(), Response(), Response()]) as network, patch.object(deployment.time, "sleep") as sleep:
+            with self.assertRaises(deployment.DeploymentError) as error:
+                deployment.smoke_web(origin)
+        self.assertEqual(error.exception.code, "smoke_library_http_200")
+        self.assertEqual(network.call_count, 3)
+        sleep.assert_not_called()
+
+    def test_smoke_transport_attempts_are_bounded_and_redacted(self):
+        with patch.object(deployment.urllib.request, "urlopen", side_effect=TimeoutError("private token")) as network, patch.object(deployment.time, "sleep") as sleep:
+            with self.assertRaises(deployment.DeploymentError) as error:
+                deployment.smoke_web("https://test.run.app")
+        self.assertEqual(network.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(error.exception.code, "smoke_transport")
+        self.assertNotIn("private", str(error.exception))
+
+
+
 if __name__ == "__main__":
     unittest.main()

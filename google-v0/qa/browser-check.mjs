@@ -30,7 +30,39 @@ try{
   await syncPage.clock.fastForward(60001);await stat('Vídeos cadastrados').filter({hasText:/^283$/}).waitFor();assert.equal(await stat('Análises disponíveis').innerText(),'66');
   await syncPage.screenshot({path:join(output,'frontend-full-library.png'),fullPage:true});await syncPage.close();server.setLibraryVideos([fixtureVideo]);
  });
- assert.deepEqual(failures,[]);assert.ok(server.calls.some(x=>x.path.startsWith('/api/media/')));assert.ok(server.calls.every(x=>x.method==='GET'));
+
+ await record('automatic_registration_stage_changes_and_live_curated_details',async()=>{
+  const id='Live_target',registered='Live_new_01';
+  let target={id,status:'pending',analysis:null,transcript:'',media_verified:false};
+  const rows=()=>[fixtureVideo,target,{id:registered,status:'pending',analysis:null,transcript:'',media_verified:false}];
+  server.setLibraryVideos([fixtureVideo,target]);
+  const live=await context.newPage();await live.clock.install();await live.goto(server.origin);
+  await live.locator('.dashboard-stats div').filter({has:live.getByText('Vídeos cadastrados',{exact:true})}).locator('b').filter({hasText:/^2$/}).waitFor();
+  await live.getByRole('button',{name:'Biblioteca',exact:true}).click();await live.getByText('Adicionar Reels',{exact:true}).click();await live.getByLabel('Até 100 links, um por linha').fill('https://www.instagram.com/reel/'+registered+'/');
+  const hold=server.holdNextLibrary();await live.clock.fastForward(60001);await hold.started;
+  const imported=live.waitForResponse(r=>r.url().endsWith('/api/import'));
+  await live.getByRole('button',{name:'Cadastrar links',exact:true}).click();await imported;hold.release();
+  await live.getByRole('heading',{name:registered,exact:true}).waitFor();
+  await live.getByRole('button').filter({has:live.getByRole('heading',{name:id,exact:true})}).click();
+  await live.getByRole('dialog').waitFor();
+  const fullReads=()=>server.calls.filter(x=>x.path==='/api/library'&&!x.query?.includes('ids=')).length;
+  const before=fullReads();
+  target={...target,status:'downloaded',media_verified:true};server.setLibraryVideos(rows());await live.clock.fastForward(15001);
+  await live.getByRole('dialog').getByText(/Transcrevendo áudio/).waitFor();
+  target={...target,status:'transcribed',transcript_status:'recognized',transcript:'Transcrição final preservada.'};server.setLibraryVideos(rows());await live.clock.fastForward(15001);
+  await live.getByRole('dialog').getByText(/Analisando vídeo/).waitFor();
+  const curated=structuredClone(fixtureVideo);target={...curated,id,status:'analyzed',analysis_quality_status:'accepted',analysis_generation:'456',transcript:'Transcrição final preservada.'};
+  target.analysis.title='Resultado curado automático';target.analysis.summary='Conhecimento final disponível automaticamente.';target.analysis.knowledge.keywords[0].term='Atualizacao';
+  server.setLibraryVideos(rows());await live.clock.fastForward(15001);
+  await live.getByRole('dialog').getByRole('heading',{name:'Resultado curado automático',exact:true}).waitFor();
+  assert.equal(fullReads(),before,'Fast ticks must not reload the complete corpus');
+  assert.ok((await live.getByRole('dialog').innerText()).includes('Conhecimento final disponível automaticamente.'));
+  await live.getByRole('button',{name:'Palavras-chave',exact:true}).click();assert.ok((await live.getByRole('dialog').innerText()).includes('#atualizacao'));
+  await live.getByRole('button',{name:'Transcrição de áudio',exact:true}).click();assert.ok((await live.getByRole('dialog').innerText()).includes('Transcrição final preservada.'));
+  await live.screenshot({path:join(output,'frontend-live-curated-result.png'),fullPage:true});await live.close();server.setLibraryVideos([fixtureVideo]);
+ });
+
+ assert.deepEqual(failures,[]);assert.ok(server.calls.some(x=>x.path.startsWith('/api/media/')));assert.ok(server.calls.every(x=>x.method==='GET'||x.method==='POST'&&x.path==='/api/import'));
  await page.screenshot({path:join(output,'frontend-check.png'),fullPage:true});const report={passed:true,checks,mode:'synthetic_fixture_actual_components',google_calls:0,production_data_modified:false,credentials_loaded:false,http_calls:server.calls.length,limitations:['This does not validate production Google login or a real Instagram video.','Anonymous-route security is independently checked by existing image smoke tests.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.message,checks,failures}));throw error;}
 finally{await browser?.close();await server.close();}

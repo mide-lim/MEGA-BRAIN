@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "id": "MEG-88",
+  "paperclip_issue_id": "c3d42e42-bd19-4e70-b16f-27c0e0d7cf16",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "f08a6a1833ae164b31a10d785ab2211a5d4d7c16",
+  "objective": "Automatic video lifecycle: immediate registration, lightweight processing updates, targeted changed-record refresh, curated results and live details. Preserve processing/finance/review gates; conventional tools only.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Registration remains visible automatically even during an in-flight refresh",
+    "Stage changes and accepted curated results update automatically including open details",
+    "Fast polls use lightweight progress; only changed videos are loaded between full discovery snapshots",
+    "Serialize refreshes, preserve complete prior data on failure, retry on next tick and refresh on tab return",
+    "Expose safe stage/status metadata without financial entries, execution IDs or secrets",
+    "Retained candidates never replace curated analysis; failures remain visible",
+    "No inference, corpus expansion, budget changes, models or unreviewed publication"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/library-sync.mjs",
+    "google-v0/lib/library-api.mjs",
+    "google-v0/lib/library-repository.mjs",
+    "google-v0/lib/pipeline-progress.mjs",
+    "google-v0/tests/library-sync.test.mjs",
+    "google-v0/tests/library-api.test.mjs",
+    "google-v0/tests/library-repository.test.mjs",
+    "google-v0/tests/pipeline-progress.test.mjs",
+    "google-v0/web-google/app/library.jsx",
+    "google-v0/web-google/app/video-preview.jsx",
+    "google-v0/web-google/app/globals.css",
+    "google-v0/qa/server.mjs",
+    "google-v0/qa/browser-check.mjs",
+    "docs/live-library-sync.md",
+    "tasks/MEG-88.json",
+    "google-v0/web-google/app/reel-details.jsx"
+  ],
+  "context": [
+    {
+      "path": "google-v0/web-google/app/library.jsx",
+      "reason": "Current refresh and import/detail race",
+      "max_chars": 4500,
+      "sections": [
+        "load",
+        "register",
+        "useEffect"
+      ]
+    },
+    {
+      "path": "google-v0/lib/library-sync.mjs",
+      "reason": "Full snapshot and minute timer",
+      "max_chars": 2200,
+      "sections": [
+        "loadLibrarySnapshot",
+        "watchLibrary"
+      ]
+    },
+    {
+      "path": "google-v0/lib/library-api.mjs",
+      "reason": "Authorized APIs and shared ledger read",
+      "max_chars": 3500,
+      "sections": [
+        "library",
+        "financial"
+      ]
+    },
+    {
+      "path": "google-v0/lib/library-repository.mjs",
+      "reason": "Immediate create and public projection",
+      "max_chars": 1800,
+      "sections": [
+        "page",
+        "registerLinks"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "npm --prefix google-v0/qa run check",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-88.json --diff-base f08a6a1833ae164b31a10d785ab2211a5d4d7c16 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Independent human review of synchronization and scoped read-only APIs before publication."
+  }
+}

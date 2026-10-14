@@ -8,3 +8,10 @@ test('controls require initialized state and conditional write, without activati
  await repository.updateControls({action:'set',parallelism:4});assert.deepEqual(write,['settings/automation',{parallelism:4},{updateTime:'version1'}]);
  await assert.rejects(repository.updateControls({action:'set',parallelism:5}));await assert.rejects(repository.video('../../production'));
 });
+
+test('selected updates bound concurrent reads and use the same safe projection',async()=>{
+ let active=0,max=0;const repository=new LibraryRepository({get:async path=>{active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,1));active--;return {data:{id:path.split('/').at(-1),status:'analyzed',analysis:{title:'Curado'},video_key:'private',provider_diagnostic:'private'}};}});
+ const ids=Array.from({length:40},(_,i)=>'Reel_'+i);const selected=await repository.selected(ids);
+ assert.equal(max,8);assert.equal(selected.length,40);assert.deepEqual(selected.map(x=>x.id),ids);assert.equal(selected[0].analysis.title,'Curado');assert.ok(!('video_key'in selected[0]));assert.ok(!('provider_diagnostic'in selected[0]));
+ const absent=new LibraryRepository({get:async()=>null});await assert.rejects(absent.selected(['Reel_1']),/não encontrado/);
+});

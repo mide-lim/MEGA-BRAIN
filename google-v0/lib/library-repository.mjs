@@ -1,15 +1,21 @@
 import {automationChanges} from './controls.mjs';
 import {parseReelLinks}from './links.mjs';
 const idPattern=/^[A-Za-z0-9_-]{5,32}$/;
+const publicVideo=data=>({id:data.id,source_url:data.source_url,status:data.status,
+      duration_seconds:data.duration_seconds,has_audio:data.has_audio,audio_status:data.audio_status,
+      media_verified:data.media_verified,transcript:data.transcript??'',transcript_status:data.transcript_status??null,analysis:data.analysis??null,
+      source_caption:data.source_caption??null,knowledge_supplement:data.knowledge_supplement??null,analysis_key:data.analysis_key??null,analysis_generation:data.analysis_generation??null,
+      analysis_quality_status:data.analysis_quality_status??null,analysis_candidate:data.analysis_candidate??null,candidate_analysis_key:data.candidate_analysis_key??null,candidate_analysis_generation:data.candidate_analysis_generation??null,analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at});
 export class LibraryRepository{
   constructor(store){this.store=store;}
   async page({cursor,pageSize=40}={}){
     const result=await this.store.list('videos',{pageSize,pageToken:cursor});
-    return {videos:result.records.map(({data})=>({id:data.id,source_url:data.source_url,status:data.status,
-      duration_seconds:data.duration_seconds,has_audio:data.has_audio,audio_status:data.audio_status,
-      media_verified:data.media_verified,transcript:data.transcript??'',transcript_status:data.transcript_status??null,analysis:data.analysis??null,
-      source_caption:data.source_caption??null,knowledge_supplement:data.knowledge_supplement??null,analysis_key:data.analysis_key??null,analysis_generation:data.analysis_generation??null,
-      analysis_quality_status:data.analysis_quality_status??null,analysis_candidate:data.analysis_candidate??null,candidate_analysis_key:data.candidate_analysis_key??null,candidate_analysis_generation:data.candidate_analysis_generation??null,analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at})),next_cursor:result.nextPageToken};
+    return {videos:result.records.map(({data})=>publicVideo(data)),next_cursor:result.nextPageToken};
+  }
+  async selected(ids){
+    const rows=[];
+    for(let i=0;i<ids.length;i+=8){const group=await Promise.all(ids.slice(i,i+8).map(id=>this.video(id)));if(group.some(v=>!v))throw Error('Vídeo não encontrado.');rows.push(...group.map(publicVideo));}
+    return rows;
   }
   async video(id){if(!idPattern.test(id??''))throw new Error('Vídeo inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
   async registerLinks(input){

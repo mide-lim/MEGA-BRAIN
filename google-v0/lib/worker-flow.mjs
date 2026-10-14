@@ -1,4 +1,3 @@
-import {terminalSourceFailure,recordSourceHold} from './source-hold.mjs';
 import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
 import {validateBatch,batchLimits} from './batch-budget.mjs';
@@ -30,9 +29,9 @@ const failureDiagnostic=error=>({operation_step:['download_media','inspect_downl
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.
 export class WorkerFlow {
-  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,autoHoldTerminalSources=false,clock=()=>Date.now()}){
+  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,clock=()=>Date.now()}){
     if(analysisRevision!==null&&!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision))throw new Error('Revisão de análise inválida.');
-    this.analysisRevision=analysisRevision;this.batchId=batchId;this.autoHoldTerminalSources=autoHoldTerminalSources===true;
+    this.analysisRevision=analysisRevision;this.batchId=batchId;
     if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
     Object.assign(this,{store,ledger,operations,quotes,clock});
@@ -100,18 +99,6 @@ export class WorkerFlow {
       }
       return await this.finish({path,id,videoId,stage,result,maximumCents});
     }catch(error){
-      const diagnostic=failureDiagnostic(error);
-      if(started&&stage==='upload'&&this.autoHoldTerminalSources&&this.batchId&&terminalSourceFailure(diagnostic)&&typeof this.operations.sourceFailureMediaAbsent==='function'){
-        try{
-          const current=await this.store.get(`videos/${videoId}`);
-          if(await this.operations.sourceFailureMediaAbsent({video:{...current.data,id:videoId}})!==true)throw Error('Ausência de mídia não confirmada.');
-          await save({status:'uncertain',failure_diagnostic:diagnostic,source_hold_proof:{media_absent:true,review_record:`analyses/ig_error_${videoId}`}});
-          await this.store.patch(`videos/${videoId}`,{status:'needs_attention',instagram_review_status:'awaiting_user_verdict',instagram_error_case:`ig_error_${videoId}`,error:'Falha de origem registrada para seu veredito; nenhuma análise executada.',updated_at:new Date(this.clock()).toISOString()},{updateTime:current.updateTime});
-          await recordSourceHold(this.store,{videoId,executionId:id,diagnostic,observedAt:new Date(this.clock()).toISOString()});
-          await this.ledger.settleTerminalSourceFailure(id);
-          return {status:'source_held',execution_id:id};
-        }catch{try{await this.ledger.pauseFailedSourceReconciliation(id);}catch{/* Failed writes remain uncertain; no automatic replay. */}}
-      }
       if(started){try{await this.ledger.transition(id,'uncertain');}catch{/* An open started reservation also prevents replay. */}}
       await save({status:started?'uncertain':'blocked',failure_diagnostic:failureDiagnostic(error)});
       const current=await this.store.get(`videos/${videoId}`);

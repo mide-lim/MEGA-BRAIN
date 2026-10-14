@@ -62,6 +62,17 @@ try{
   await live.screenshot({path:join(output,'frontend-live-curated-result.png'),fullPage:true});await live.close();server.setLibraryVideos([fixtureVideo]);
  });
 
+
+ await record('late_playback_permission_recovers_without_manual_refresh',async()=>{
+  const row={...structuredClone(fixtureVideo),id:'Late_ready'};server.setLibraryVideos([row]);server.setPlaybackReady(false);
+  const late=await context.newPage();await late.clock.install();await late.goto(server.origin);await late.getByRole('button',{name:'Biblioteca',exact:true}).click();
+  await late.getByRole('button').filter({has:late.getByRole('heading',{name:row.analysis.title,exact:true})}).click();
+  await late.getByRole('button',{name:'Vídeo original',exact:true}).click();await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();
+  await late.getByText('Reprodução ainda não liberada',{exact:true}).waitFor();server.setPlaybackReady(true);
+  await late.clock.fastForward(15001);await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).waitFor();
+  await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();await late.locator('.video-preview.full video').waitFor();
+  await late.close();server.setPlaybackReady(true);server.setLibraryVideos([fixtureVideo]);
+ });
  assert.deepEqual(failures,[]);assert.ok(server.calls.some(x=>x.path.startsWith('/api/media/')));assert.ok(server.calls.every(x=>x.method==='GET'||x.method==='POST'&&x.path==='/api/import'));
  await page.screenshot({path:join(output,'frontend-check.png'),fullPage:true});const report={passed:true,checks,mode:'synthetic_fixture_actual_components',google_calls:0,production_data_modified:false,credentials_loaded:false,http_calls:server.calls.length,limitations:['This does not validate production Google login or a real Instagram video.','Anonymous-route security is independently checked by existing image smoke tests.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.message,checks,failures}));throw error;}

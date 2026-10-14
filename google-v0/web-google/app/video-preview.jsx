@@ -1,9 +1,9 @@
 'use client';
 import {useEffect,useRef,useState}from 'react';
 const cache=new Map();
-export default function VideoPreview({id,controls=false,ready=true,revision=null}){
+export default function VideoPreview({id,controls=false,ready=true,revision=null,refreshKey=null}){
  const video=useRef(null),hovering=useRef(false),pending=useRef(false),[source,setSource]=useState(null),[error,setError]=useState('');
- useEffect(()=>{setError('');if(!ready)setSource(null);else if(hovering.current&&!controls)prepare();},[id,ready,revision]);
+ useEffect(()=>{if(error){cache.delete(id);setSource(null);}setError('');if(!ready)setSource(null);else if(hovering.current&&!controls)prepare();},[id,ready,revision,refreshKey]);
  useEffect(()=>{if(source&&hovering.current&&!controls)video.current?.play().catch(()=>{});},[source,controls]);
  async function prepare(){
   if(!ready||pending.current)return;const current=cache.get(id);

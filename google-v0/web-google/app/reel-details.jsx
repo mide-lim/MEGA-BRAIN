@@ -3,7 +3,7 @@ import {useEffect,useRef,useState} from 'react';
 import VideoPreview from './video-preview.jsx';
 import {combinedKnowledge,reviewIdentity,audioTranscriptLabel,keywordTag,knowledgeSummary} from '../../lib/knowledge.mjs';
 const tabs=[['player','Vídeo original'],['knowledge','Conhecimento consolidado'],['keywords','Palavras-chave'],['transcript','Transcrição de áudio'],['caption','Legenda do post'],['visual','Análise do vídeo']];
-export default function ReelDetails({video,onClose,statusLabel}){
+export default function ReelDetails({video,onClose,statusLabel,refreshKey}){
  const sourceLabel={caption:'Legenda do post',transcript:'Transcrição de áudio',video:'Análise do vídeo'};
  const sourceTab={caption:'caption',transcript:'transcript',video:'visual'};
  const summary=knowledgeSummary(video);
@@ -17,7 +17,7 @@ export default function ReelDetails({video,onClose,statusLabel}){
  {tab==='keywords'&&<><h3>Palavras-chave</h3><div className="hashtag-list">{knowledge?.keywords.map((k,i)=><span key={i} title={k.term}>{keywordTag(k.term)}</span>)}</div>{!knowledge?.keywords.length&&<p>Ainda não disponíveis.</p>}</>}
  {tab==='transcript'&&<><h3>Transcrição de áudio</h3><p className="transcript">{audioTranscriptLabel(video)}</p></>}
  {tab==='caption'&&<><h3>Legenda publicada no Instagram</h3>{video.source_caption?<><small>Capturada em {video.source_caption.captured_at} · ID {video.source_caption.capture_id}</small><p className="transcript">{video.source_caption.text}</p></>:<p className="notice">Legenda ainda não capturada. Não significa que o post esteja sem descrição.</p>}</>}
- {tab==='player'&&<VideoPreview id={video.id} controls ready={Boolean(video.media_verified&&video.analysis&&video.status==='analyzed')} revision={video.analysis_generation}/>}
+ {tab==='player'&&<VideoPreview id={video.id} controls ready={Boolean(video.media_verified&&video.analysis&&video.status==='analyzed')} revision={video.analysis_generation} refreshKey={refreshKey}/>}
  {tab==='visual'&&<section className="reading-panel"><h3>O que aparece no vídeo</h3>{report?.visual_observations?.length?<ul>{report.visual_observations.map((s,i)=><li key={i}>{s}</li>)}</ul>:<p>Observações visuais ainda não disponíveis.</p>}<small>Observações da revisão registrada; texto ilegível e detalhes não conferidos permanecem incertos.</small></section>}
 
  </div></section></div>;

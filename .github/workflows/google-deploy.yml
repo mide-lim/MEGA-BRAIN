@@ -124,6 +124,8 @@ jobs:
         working-directory: .
         env:
           MEGABRAIN_DEPLOY_CONFIG: ${{ secrets.MEGABRAIN_DEPLOY_CONFIG }}
+          # Exact reviewed current limits; image publication must preserve them.
+          MEGABRAIN_RUNTIME_MAX_INSTANCES: '{"worker":4,"web":1}'
           GOOGLE_ACCESS_TOKEN: ${{ steps.google.outputs.access_token }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           REVIEWED_BASELINE: ${{ inputs.reviewed_baseline }}

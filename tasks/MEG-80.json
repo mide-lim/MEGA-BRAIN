@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "MEG-80",
+  "paperclip_issue_id": "e8292dd1-d137-42f7-9078-f2750fbaf7a9",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "8b18b5ea71809021d31053bcdca9604982c98da1",
+  "objective": "Fix deployment guard rejecting reviewed existing worker4/web1 runtime; compare against explicit expected limits without changing actual runtime, IAM or processing. Prepare reviewable PR only.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Preserve default singleton guard when explicit expected limits are absent",
+    "Validate explicit exact worker/web map with integer limits1..4 and compare actual instance limits for equality",
+    "Reviewed workflow declares expected worker4/web1; reject conflicting protected configuration",
+    "Keep baseline, paused-queue, pinned secrets/images, identity, image-only updates and rollback checks intact",
+    "Test approved4, unauthorized differences, invalid maps, preserved4 in rollout and rollback"
+  ],
+  "allowed_paths": [
+    "ops/deploy-existing-services.py",
+    "ops/test_deploy_existing_services.py",
+    ".github/workflows/google-deploy.yml",
+    "docs/deployment-runtime-limits.md",
+    "tasks/MEG-80.json"
+  ],
+  "context": [
+    {
+      "path": "ops/deploy-existing-services.py",
+      "reason": "Runtime singleton check blocks PR32 publication",
+      "max_chars": 6000,
+      "sections": [
+        "validate_config",
+        "validate_services",
+        "main",
+        "rollout"
+      ]
+    },
+    {
+      "path": ".github/workflows/google-deploy.yml",
+      "reason": "Declare reviewed current worker4/web1 without modifying secrets",
+      "max_chars": 3000,
+      "sections": [
+        "Review or deploy the existing services"
+      ]
+    }
+  ],
+  "validation_commands": [
+    "python3 -m unittest discover -s ops -p test_*.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-80.json --diff-base 8b18b5ea71809021d31053bcdca9604982c98da1 --diff-head HEAD"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Deployment guard change requires independent human review before merge/deploy"
+  }
+}

@@ -1,3 +1,4 @@
+import {fragmentSpec,hydrateFragments,planFragmentPatch} from './control-fragments.mjs';
 function plain(value){return value!==null&&typeof value==='object'&&Object.getPrototypeOf(value)===Object.prototype;}
 export function encodeValue(value){
   if(value===null)return {nullValue:null};
@@ -39,17 +40,27 @@ export function decodeValue(value){
   throw new Error('Tipo Firestore desconhecido.');
 }
 export const decodeFields=fields=>Object.fromEntries(Object.entries(fields).map(([key,value])=>[key,decodeValue(value)]));
-const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations']);
+const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks']);
 function documentPath(path){
   const [collection,id,...rest]=String(path).split('/');
   if(!collections.has(collection)||!id||rest.length||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw new Error('Documento fora do escopo permitido.');
   return `${collection}/${id}`;
 }
 export class Firestore {
-  constructor(api){this.api=api;this.root=`https://firestore.googleapis.com/v1/projects/${api.project}/databases/(default)/documents`;}
+  constructor(api){this.api=api;this.fragmentSnapshots=new Map();this.root=`https://firestore.googleapis.com/v1/projects/${api.project}/databases/(default)/documents`;}
   async get(path){
-    try{const doc=await this.api.request(`${this.root}/${documentPath(path)}`);return {data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};}
-    catch(error){if(error.status===404)return null;throw error;}
+    for(let attempt=0;attempt<4;attempt++){
+      let doc;try{doc=await this.api.request(`${this.root}/${documentPath(path)}`);}catch(error){if(error.status===404)return null;throw error;}
+      const snapshot={data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};
+      if(!fragmentSpec(path)||!snapshot.data.control_fragments){if(fragmentSpec(path))this.fragmentSnapshots.set(path,snapshot);return snapshot;}
+      const records=[];let pageToken;
+      do{const page=await this.list('control_chunks',{pageSize:100,pageToken});records.push(...page.records);pageToken=page.nextPageToken;}while(pageToken);
+      const latest=await this.api.request(`${this.root}/${documentPath(path)}`);
+      if(latest.updateTime!==snapshot.updateTime)continue;
+      const hydrated=hydrateFragments(path,snapshot.data,records),view={...snapshot,data:hydrated.data,chunks:hydrated.chunks};
+      this.fragmentSnapshots.set(path,view);return view;
+    }
+    throw Object.assign(Error('Controle mudou durante leitura consistente.'),{status:412});
   }
   async list(collection,{pageSize=100,pageToken}={}){
     if(!collections.has(collection)||!Number.isInteger(pageSize)||pageSize<1||pageSize>100)throw new Error('Consulta inválida.');
@@ -69,12 +80,32 @@ export class Firestore {
     try{const doc=await this.api.request(url,{method:'PATCH',json:{fields:encodeFields(data)}});return {created:true,data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};}
     catch(error){if([409,412].includes(error.status))return {created:false};throw error;}
   }
+  async metadataWrite(url,options){
+    try{return await this.api.request(url,options);}
+    catch(error){if(error.status===429&&error.provider_diagnostic?.status==='RESOURCE_EXHAUSTED')error.metadata_write_rejected=true;throw error;}
+  }
   async patch(path,changes,{updateTime}={}){
     if(!updateTime)throw new Error('Atualização requer controle de concorrência.');
+    if(fragmentSpec(path)){
+      let snapshot=this.fragmentSnapshots.get(path);
+      if(!snapshot||snapshot.updateTime!==updateTime)snapshot=await this.get(path);
+      if(snapshot?.updateTime!==updateTime)throw Object.assign(Error('Versão de controle mudou.'),{status:412});
+      if(snapshot.chunks){
+        const {rootChanges,updates}=planFragmentPatch(path,snapshot,changes);
+        if(!Object.keys(rootChanges).length&&!updates.length)return snapshot;
+        const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
+        const write=(target,fields,version)=>({update:{name:prefix+documentPath(target),fields:encodeFields(fields)},updateMask:{fieldPaths:Object.keys(fields)},currentDocument:{updateTime:version}});
+        const writes=[write(path,Object.keys(rootChanges).length?rootChanges:{control_fragments:snapshot.data.control_fragments},updateTime),...updates.map(x=>write(x.path,x.changes,x.updateTime))];
+        const receipt=await this.metadataWrite(this.root+':commit',{method:'POST',json:{writes}});
+        this.fragmentSnapshots.delete(path);
+        if(receipt?.writeResults?.length!==writes.length||!receipt.writeResults.every(x=>typeof x.updateTime==='string'&&x.updateTime))throw Error('Confirmação de commit incompleta; conferir estado sem repetir.');
+        return {data:{...snapshot.data,...changes,...(rootChanges.control_fragments?{control_fragments:rootChanges.control_fragments}:{})},updateTime:receipt.writeResults[0].updateTime};
+      }
+    }
     const fields=encodeFields(changes);if(!Object.keys(fields).length)throw new Error('Atualização vazia.');
     const query=new URLSearchParams({'currentDocument.updateTime':updateTime});
     for(const field of Object.keys(fields))query.append('updateMask.fieldPaths',field);
-    const doc=await this.api.request(`${this.root}/${documentPath(path)}?${query}`,{method:'PATCH',json:{fields}});
+    const doc=await this.metadataWrite(`${this.root}/${documentPath(path)}?${query}`,{method:'PATCH',json:{fields}});
     return {data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};
   }
 }
@@ -82,12 +113,17 @@ export class Firestore {
 // Only definite rejected metadata writes can be recalculated. This helper never
 // encloses a provider call, object upload or create-only execution claim.
 export const rejectedVersion=error=>error?.status===412||(error?.status===400&&error.provider_diagnostic?.status==='FAILED_PRECONDITION'&&/does not match the required base version/.test(error.provider_diagnostic?.message??''));
-export async function mutateDocument(store,path,calculate){
+export async function mutateDocument(store,path,calculate,{sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
+ let rateRejections=0;
  for(let attempt=0;attempt<8;attempt++){
   const snapshot=await store.get(path);if(!snapshot)throw Error('Documento de controle ausente.');
   const {changes,result}=await calculate(snapshot);
   if(!changes)return result;
   try{await store.patch(path,changes,{updateTime:snapshot.updateTime});return result;}
-  catch(error){if(!rejectedVersion(error)||attempt===7)throw error;}
+  catch(error){
+   if(attempt===7)throw error;
+   if(error.metadata_write_rejected===true&&error.status===429&&error.provider_diagnostic?.status==='RESOURCE_EXHAUSTED'){if(++rateRejections>2)throw error;await sleep(100*2**(rateRejections-1));continue;}
+   if(!rejectedVersion(error))throw error;
+  }
  }
 }

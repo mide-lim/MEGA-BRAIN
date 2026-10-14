@@ -1,3 +1,4 @@
+import {terminalSourceFailure} from './source-hold.mjs';
 import {mutateDocument} from './firestore.mjs';
 import {recoverableUploadFailure} from './upload-recovery.mjs';
 import {recoverableAnalysis429} from './analysis-retry.mjs';
@@ -126,6 +127,25 @@ export class FinancialLedger{
     const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
     if(!decision.ready)throw Error(decision.reasons.join(' '));
     return {changes:{jobs:{...state.jobs,[executionId]:{...job,status:'started',recovery_429_count:(job.recovery_429_count??0)+1,updated_at:new Date(this.clock()).toISOString()}}}};
+    });
+  }
+  async pauseFailedSourceReconciliation(executionId){
+    if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+      const state=snapshot?.data;validate(state);const job=state.jobs[executionId];
+      if(state.batch?.video_ids.length!==262||job?.batch_id!==state.batch.id||job.stage!=='upload'||!['started','uncertain','completed'].includes(job.status))throw Error('Pausa exige a própria reserva de origem.');
+      return {changes:{paused:true}};
+    });
+  }
+  async settleTerminalSourceFailure(executionId){
+    if(!executionPattern.test(executionId??''))throw Error('Execução inválida.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+      const state=snapshot?.data;validate(state);const job=state.jobs[executionId];
+      if(state.batch?.video_ids.length!==262||job?.batch_id!==state.batch.id||job.stage!=='upload'||job.status!=='started')throw Error('Isolamento exige upload iniciado do lote ativo.');
+      const claim=(await this.store.get(`jobs/${executionId}`))?.data,video=(await this.store.get(`videos/${job.video_id}`))?.data,review=(await this.store.get(`analyses/ig_error_${job.video_id}`))?.data,audit=(await this.store.get(`analyses/source_hold_${executionId}`))?.data;
+      if(claim?.video_id!==job.video_id||claim.stage!=='upload'||claim.status!=='uncertain'||!terminalSourceFailure(claim.failure_diagnostic)||claim.source_hold_proof?.media_absent!==true||claim.source_hold_proof.review_record!==`analyses/ig_error_${job.video_id}`||video?.status!=='needs_attention'||video.media_verified||video.video_key||video.transcript_key||video.analysis||review?.review_status!=='awaiting_user_verdict'||!review.events?.some(x=>x.event_id===`source_${executionId}`)||audit?.execution_id!==executionId||audit.original_object_absent!==true)throw Error('Prova, mídia ausente e veredito obrigatórios.');
+      const updated={...job,status:'completed',actual_cents:job.maximum_cents,manual_reconciliation:'terminal_metadata_estimate_accounted_user_verdict_pending',updated_at:new Date(this.clock()).toISOString()};
+      return {changes:{jobs:{...state.jobs,[executionId]:updated},spent_cents:state.spent_cents+job.maximum_cents,reserved_cents:state.reserved_cents-job.maximum_cents,remaining_credit_cents:Math.max(0,state.remaining_credit_cents-job.maximum_cents),batch:{...state.batch,active_video_ids:state.batch.active_video_ids.filter(id=>id!==job.video_id)}},result:updated};
     });
   }
   async transition(executionId,action,{actualCents,pause=false}={}){

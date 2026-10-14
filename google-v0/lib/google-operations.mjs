@@ -1,3 +1,4 @@
+import {measureGeminiUsage,measureSpeechUsage} from './usage-costs.mjs';
 import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
@@ -32,6 +33,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   }
   const speechOrigin=()=>config.speech_location==='us'?'https://us-speech.googleapis.com':'https://speech.googleapis.com';
   return {
+    async sourceFailureMediaAbsent({video}){return video.media_verified!==true&&!video.video_key&&!video.transcript_key&&!video.analysis&&!await storage.metadata(`originals/instagram/${video.id}/video.mp4`);},
     async prepareUploadRecovery({video}){if(video.media_verified||video.video_key||await storage.metadata(`originals/instagram/${video.id}/video.mp4`))throw Error('Mídia existente impede repetir download.');},
     async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
     async upload({video,executionId}){
@@ -55,7 +57,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
         const response=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:recognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},content:audio.toString('base64')},timeoutMs:120000});
         const text=(response.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
         const key=`results/instagram/${video.id}/${executionId}/transcription.json`;
-        const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response});
+        const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'})});
         return result(video.id,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
       }
       const operation=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:batchRecognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},files:[{uri:`gs://${storage.bucket}/${audioKey}`}],recognitionOutputConfig:{inlineResponseConfig:{}}},timeoutMs:120000});
@@ -76,7 +78,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       const text=(transcript?.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
       // Preserve raw results, including timing and uncertainty, even if no speech.
       const key=`results/instagram/${videoId}/${executionId}/transcription.json`;
-      const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response});
+      const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response,usage_cost:measureSpeechUsage(operation.response,{model:config.speech_model,location:config.speech_location,mode:'batch',audioUri})});
       return result(videoId,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
     },
     async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
@@ -97,7 +99,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts}):await submit();
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
-      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics}));
+      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:measureGeminiUsage(response,{model:config.gemini_model,location:'global'})}));
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost);

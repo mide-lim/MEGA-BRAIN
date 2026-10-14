@@ -57,7 +57,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     const enumIds=schema.properties.categories.anyOf.flatMap(branch=>branch.items.enum);
     assert.ok(enumIds.includes('tecnologia-geral'));assert.ok(!enumIds.includes('Unknown category'));
     if(profile.gemini==='gemini-3.5-flash-lite'){const config=JSON.parse(options.body).generationConfig;assert.equal(config.thinkingConfig.thinkingLevel,'MINIMAL');assert.equal(config.temperature,undefined);}
-    return Response.json({candidates:[{finishReason:profile.fault==='incomplete_response'?'MAX_TOKENS':'STOP',content:{parts:[{text:profile.fault==='invalid_json'?'{broken':JSON.stringify(report)}]}}],usageMetadata:{totalTokenCount:123}});
+    return Response.json({candidates:[{finishReason:profile.fault==='incomplete_response'?'MAX_TOKENS':'STOP',content:{parts:[{text:profile.fault==='invalid_json'?'{broken':JSON.stringify(report)}]}}],usageMetadata:{promptTokenCount:100,candidatesTokenCount:20,thoughtsTokenCount:3,totalTokenCount:123,trafficType:'ON_DEMAND'}});
   }});
   seed('settings/capacity',{...newCapacity(),enabled:true,limit_bytes:10000});
   const financial=await store.get('settings/financial');await store.patch('settings/financial',{ongoing_storage_planned_bytes:10000},{updateTime:financial.updateTime});
@@ -88,6 +88,13 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
     await flow.run({videoId,stage:'analysis'});assert.equal(analyses,1);return;
   }
   assert.equal((await flow.run({videoId,stage:'analysis'})).status,'completed');
+  const analysisArtifact=JSON.parse([...objects.entries()].find(([key])=>key.endsWith('/analysis.json'))[1].bytes.toString());
+  assert.equal(analysisArtifact.usage_cost.status,profile.gemini==='gemini-3.5-flash-lite'?'measured':'unavailable');
+  assert.equal(analysisArtifact.usage_cost.billing_confirmed,false);
+  assert.equal(analysisArtifact.response.usageMetadata.totalTokenCount,123);
+  const sttArtifact=JSON.parse([...objects.entries()].find(([key])=>key.endsWith('/transcription.json'))[1].bytes.toString());
+  assert.equal(sttArtifact.usage_cost.status,'unavailable');
+
   assert.deepEqual((await store.get('videos/'+videoId)).data.analysis.categories,['tecnologia-geral']);
   assert.equal((await store.get('videos/'+videoId)).data.analysis.category_taxonomy_version,'categories-v2');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
@@ -96,4 +103,13 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   assert.equal((await store.get('settings/financial')).data.spent_cents,30);
   assert.ok(calls.every(c=>!c.url.includes('megabrain-stt')&&!c.url.includes('cloudflare')));
   config.enabled=false;await assert.rejects(operations.analysis({video:{id:videoId},executionId:'fake'}),/desligadas/);
+});
+
+test('source absence requires an actual missing original object; stored media and failed storage reads never qualify',async()=>{
+ const project='megabrain-v0-1017370021431';let lookups=0,state=null;
+ const operations=googleOperations({api:{project},storage:{bucket:project+'-media',async metadata(key){lookups++;assert.equal(key,'originals/instagram/Reel_123/video.mp4');if(state instanceof Error)throw state;return state;}},config:{},gate:async()=>{},tools:{},preset:{}});
+ const video={id:'Reel_123',media_verified:false};assert.equal(await operations.sourceFailureMediaAbsent({video}),true);
+ state={generation:'1'};assert.equal(await operations.sourceFailureMediaAbsent({video}),false);
+ state=Object.assign(Error('permission denied'),{status:403});await assert.rejects(operations.sourceFailureMediaAbsent({video}),/permission/);
+ const before=lookups;assert.equal(await operations.sourceFailureMediaAbsent({video:{...video,video_key:'existing'}}),false);assert.equal(lookups,before);
 });

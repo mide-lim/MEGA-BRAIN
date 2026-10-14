@@ -11,11 +11,20 @@ export function encodeValue(value){
   if(plain(value))return {mapValue:{fields:encodeFields(value)}};
   throw new Error('Valor não suportado no Firestore.');
 }
+// Admission intents are keyed by reel identity, not by application field name.
+// Keep this exception at that map boundary; all other schema keys stay strict.
+function encodeIntentMap(value){
+  if(!plain(value))throw new Error('Mapa de admissão inválido.');
+  return {mapValue:{fields:Object.fromEntries(Object.entries(value).map(([id,intent])=>{
+    if(!/^[A-Za-z0-9_-]{5,32}$/.test(id)||['__proto__','constructor','prototype'].includes(id)||!plain(intent))throw new Error('Identidade de admissão inválida.');
+    return [id,{mapValue:{fields:encodeFields(intent)}}];
+  }))}};
+}
 export function encodeFields(data){
   if(!plain(data))throw new Error('Documento deve ser um objeto simples.');
   return Object.fromEntries(Object.entries(data).map(([key,value])=>{
     if(!/^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(key)||['__proto__','constructor','prototype'].includes(key))throw new Error('Campo fora do schema permitido.');
-    return [key,encodeValue(value)];
+    return [key,key==='intents'?encodeIntentMap(value):encodeValue(value)];
   }));
 }
 export function decodeValue(value){

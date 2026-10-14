@@ -21,3 +21,18 @@ test('patch changes only selected fields and requires an optimistic-lock timesta
   assert.ok(calls[0].url.includes('currentDocument.updateTime='));
   await assert.rejects(()=>db.get('videos/id/../../settings/private'));
 });
+
+test('admission intent keys accept reel identities without relaxing ordinary schema fields',()=>{
+  const ids=['C1xnKh5PLwZ','DC9-c4-Rg11','_Reel-123','9Reel_123'];
+  const data={intents:Object.fromEntries(ids.map(id=>[id,{status:'pending',created_at:'2026-10-14T01:22:53Z'}]))};
+  assert.deepEqual(decodeFields(encodeFields(data)),data);
+  for(const id of ['unsafe.field','unsafe/path','x'.repeat(33),'__proto__','constructor','prototype']){
+    assert.throws(()=>encodeFields({intents:JSON.parse(`{"${id}":{"status":"pending"}}`)}));
+  }
+  assert.throws(()=>encodeFields({intents:{abc:{status:'pending'}}}));
+  assert.throws(()=>encodeFields({intents:{Reel_123:null}}));
+  assert.throws(()=>encodeFields({intents:[]}));
+  assert.throws(()=>encodeFields({'unsafe-field':1}));
+  assert.throws(()=>encodeFields({other_map:{'DC9-c4-Rg11':{status:'pending'}}}));
+  assert.throws(()=>encodeFields({intents:{'DC9-c4-Rg11':{'unsafe-field':1}}}));
+});

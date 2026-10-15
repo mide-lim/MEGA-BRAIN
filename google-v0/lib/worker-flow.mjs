@@ -32,12 +32,12 @@ const failureDiagnostic=error=>({operation_step:['download_media','inspect_downl
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.
 export class WorkerFlow {
-  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,autoHoldTerminalSources=false,clock=()=>Date.now()}){
+  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,autoHoldTerminalSources=false,verifyExecutionStopped,clock=()=>Date.now()}){
     if(analysisRevision!==null&&!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision))throw new Error('Revisão de análise inválida.');
     this.analysisRevision=analysisRevision;this.batchId=batchId;this.autoHoldTerminalSources=autoHoldTerminalSources===true;
     if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
-    Object.assign(this,{store,ledger,operations,quotes,clock});
+    Object.assign(this,{store,ledger,operations,quotes,verifyExecutionStopped,clock});
     if(eligibleVideos!==null&&(!Array.isArray(eligibleVideos)||eligibleVideos.length>(batchId?batchLimits.videos:20)||batchId&&eligibleVideos.length>62&&eligibleVideos.length!==262||eligibleVideos.some(id=>!validId(id))||new Set(eligibleVideos).size!==eligibleVideos.length))throw new Error('Amostra do piloto inválida.');
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
@@ -152,12 +152,20 @@ export class WorkerFlow {
     if(id!==originalId&&id!==settledRetryId(originalId))return {status:'blocked',reason:'result_execution_mismatch'};
     const path=`jobs/${id}`,j=await this.store.get(path),video=await this.store.get(`videos/${videoId}`),reservation=f.jobs?.[id],parent=f.jobs?.[originalId],child=id!==originalId;
     if(child&&(j?.data.recovery_of!==originalId||j.data.settled_retry_count!==1||j.data.recovery_authorization!==settledRetryAuthorizationPath(originalId)||reservation?.recovery_of!==originalId||reservation.recovery_kind!=='settled_retry_v1'||parent?.status!=='completed'||parent.recovery_of||parent.video_id!==videoId||parent.stage!==stage||parent.actual_cents!==parent.maximum_cents||parent.maximum_cents!==reservation.maximum_cents||parent.batch_id!==reservation.batch_id||parent.analysis_revision!==this.analysisRevision||reservation.analysis_revision!==this.analysisRevision||parent.manual_reconciliation!=='confirmed_schema400_full_estimate_accounted_analysis_pending'))return {status:'blocked',reason:'result_retry_linkage_mismatch'};
-    const conflicting=Object.entries(f.jobs??{}).some(([key,value])=>key!==id&&value.video_id===videoId&&value.stage===stage&&value.status!=='cancelled'&&!(value.status==='completed'&&(child&&key===originalId||value.analysis_revision!==this.analysisRevision)));
-    if(!j||!video||j.data.video_id!==videoId||j.data.stage!==stage||!['uncertain','completed','reconciling_result','reconciliation_failed'].includes(j.data.status)||!['started','uncertain','completed'].includes(reservation?.status)||reservation.video_id!==videoId||reservation.stage!==stage||reservation.maximum_cents!==this.quotes.analysis||conflicting||typeof this.operations.restoreAnalysisResult!=='function')return {status:'blocked',reason:'result_requires_reconciliation'};
+    const conflicting=Object.entries(f.jobs??{}).some(([key,value])=>key!==id&&value.video_id===videoId&&value.stage===stage&&value.status!=='cancelled'&&!(value.status==='completed'&&(child&&key===originalId||(value.analysis_revision??null)!==(this.analysisRevision??null))));
+    if(!j||!video||j.data.video_id!==videoId||j.data.stage!==stage||!['started','uncertain','completed','reconciling_result','reconciliation_failed'].includes(j.data.status)||!['started','uncertain','completed'].includes(reservation?.status)||reservation.video_id!==videoId||reservation.stage!==stage||reservation.maximum_cents!==this.quotes.analysis||conflicting||typeof this.operations.restoreAnalysisResult!=='function')return {status:'blocked',reason:'result_requires_reconciliation'};
     if(video.data.analysis_quality_status==='accepted'&&video.data.analysis_key===`results/instagram/${videoId}/${id}/analysis.json`&&j.data.status==='completed')return {status:'completed',duplicate:true};
+    let stopProof=null;
+    if(j.data.status==='started'){
+      // A saved response proves the provider replied, not that its worker stopped.
+      if(typeof this.verifyExecutionStopped!=='function')return {status:'blocked',reason:'execution_stop_unconfirmed'};
+      let proof;try{proof=await this.verifyExecutionStopped({executionId:id,videoId,stage,claimUpdateTime:j.updateTime,authorizationRef});}catch{return {status:'blocked',reason:'execution_stop_unconfirmed'};}
+      if(proof?.ended!==true||proof.execution_id!==id||proof.claim_update_time!==j.updateTime||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(proof.evidence_ref??''))return {status:'blocked',reason:'execution_stop_unconfirmed'};
+      stopProof={execution_id:id,claim_update_time:j.updateTime,evidence_ref:proof.evidence_ref,verified_at:new Date(this.clock()).toISOString()};
+    }
     const result=await this.operations.restoreAnalysisResult({video:{...video.data,id:videoId},executionId:id});
     if(!ownsResult(result,videoId,stage)||result.artifact?.key!==`results/instagram/${videoId}/${id}/analysis.json`||!/^\d+$/.test(result.artifact.generation??''))throw Error('Artefato da própria execução obrigatório.');
-    await this.store.patch(path,{status:'reconciling_result',original_failure_diagnostic:j.data.original_failure_diagnostic??j.data.failure_diagnostic??null,result_artifact:result.artifact,reconciliation_authorization_ref:authorizationRef},{updateTime:j.updateTime});
+    await this.store.patch(path,{status:'reconciling_result',original_failure_diagnostic:j.data.original_failure_diagnostic??j.data.failure_diagnostic??null,result_artifact:result.artifact,reconciliation_authorization_ref:authorizationRef,...(stopProof?{reconciliation_stop_proof:stopProof}:{})},{updateTime:j.updateTime});
     try{return await this.finish({path,id,videoId,stage,result,maximumCents:this.quotes.analysis,reconcile:true});}
     catch(error){const current=await this.store.get(path);await this.store.patch(path,{status:'reconciliation_failed'},{updateTime:current.updateTime});throw error;}
   }

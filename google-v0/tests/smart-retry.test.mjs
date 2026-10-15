@@ -215,3 +215,60 @@ test('legacy retry_ready continues with the original request, while reservation,
   const result=await guarded.request({videoId:g.videoId,recoveryId:g.recoveryId,authorizationRef:'owner:guard:20261015'});assert.ok(['needs_reconciliation','paused'].includes(result.status));assert.equal(g.calls(),0);
  }
 });
+
+async function processLossSnapshot(boundary){
+ const f=fixture('analysis');completeSources(f);
+ const childId=settledRetryId(f.originalId),patch=f.store.patch.bind(f.store);let snapshot,submissions=0,restores=0;
+ const saved=savedResult(f,childId);
+ f.operations.analysis=async()=>{submissions++;if(boundary==='artifact_saved')snapshot=structuredClone(f.docs);return structuredClone(saved);};
+ f.operations.restoreAnalysisResult=async({executionId:id})=>{assert.equal(id,childId);restores++;return structuredClone(saved);};
+ f.store.patch=async(path,changes,options)=>{
+  const out=await patch(path,changes,options);
+  if(boundary==='video_saved'&&path===`videos/${f.videoId}`&&changes.analysis||boundary==='settlement_saved'&&path==='settings/financial'&&changes.jobs?.[childId]?.status==='completed')snapshot=structuredClone(f.docs);
+  return out;
+ };
+ assert.equal((await f.flow.run(f.task)).status,'completed');assert.ok(snapshot);
+ f.docs.clear();for(const [key,value]of snapshot)f.docs.set(key,value);
+ const makeRetry=flow=>new SmartRetry({store:f.store,queue:{enqueue(){assert.fail('Persisted response cannot dispatch');}},quotes:f.quotes,batchId:f.batchId,flow,artifactInspector:async({executionId:id})=>id===childId?saved.artifact:null});
+ const stoppedFlow=verifyExecutionStopped=>new WorkerFlow({store:f.store,ledger:f.ledger,operations:f.operations,quotes:f.quotes,batchId:f.batchId,analysisRevision:'megabrain-video-text-v4',clock:()=>f.now,verifyExecutionStopped});
+ return {...f,childId,makeRetry,stoppedFlow,submissions:()=>submissions,restores:()=>restores};
+}
+const stoppedProof=info=>({ended:true,execution_id:info.executionId,claim_update_time:info.claimUpdateTime,evidence_ref:'operator:ended:20261015'});
+for(const boundary of ['artifact_saved','video_saved','settlement_saved'])test(`process loss after ${boundary} requires stopped-worker evidence, then settles the saved child once while paused`,async()=>{
+ const f=await processLossSnapshot(boundary),before=structuredClone(f.docs),retry=f.makeRetry(f.flow);
+ assert.equal((await retry.inspect(f.videoId)).status,'reconcile_saved_result');
+ assert.deepEqual(await retry.request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:hardstop:20261015'}),{status:'blocked',reason:'execution_stop_unconfirmed'});assert.deepEqual(f.docs,before);
+ const parent=await f.store.get(`jobs/${f.originalId}`),state=(await f.store.get('settings/financial')).data,parentFinancial=structuredClone(state.jobs[f.originalId]);state.paused=true;state.batch.status='paused';f.seed('settings/financial',state);f.seed('settings/automation',{enabled:false});
+ let verifications=0;const confirmed=f.makeRetry(f.stoppedFlow(async info=>{verifications++;assert.equal(info.executionId,f.childId);assert.equal(info.videoId,f.videoId);assert.equal(info.stage,'analysis');assert.equal(info.claimUpdateTime,(await f.store.get(`jobs/${f.childId}`)).updateTime);return stoppedProof(info);}));
+ assert.equal((await confirmed.request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:hardstop:20261015'})).status,'completed');
+ const ledger=(await f.store.get('settings/financial')).data,claim=(await f.store.get(`jobs/${f.childId}`)).data;
+ assert.equal(ledger.reserved_cents,0);assert.equal(ledger.spent_cents,670);assert.equal(ledger.jobs[f.childId].status,'completed');assert.equal(ledger.paused,true);assert.equal(ledger.batch.status,'paused');assert.equal(claim.status,'completed');assert.equal(claim.reconciliation_stop_proof.execution_id,f.childId);assert.equal(claim.reconciliation_stop_proof.evidence_ref,'operator:ended:20261015');assert.deepEqual(ledger.jobs[f.originalId],parentFinancial);assert.deepEqual(await f.store.get(`jobs/${f.originalId}`),parent);
+ assert.equal((await confirmed.request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:hardstop:20261015'})).status,'completed');assert.deepEqual((await f.store.get('settings/financial')).data,ledger);assert.equal(verifications,1);assert.equal(f.restores(),1);assert.equal(f.submissions(),1);
+});
+test('live, unconfirmed, stale, foreign or unavailable stopped-worker evidence never writes or restores',async()=>{
+ const cases=[async()=>false,async()=>({ended:false}),async info=>({...stoppedProof(info),execution_id:'job_other'}),async info=>({...stoppedProof(info),claim_update_time:'stale'}),async info=>({...stoppedProof(info),evidence_ref:'bad'}),async()=>{throw Error('Evidence source unavailable');}];
+ for(const verify of cases){
+  const f=await processLossSnapshot('video_saved'),before=structuredClone(f.docs);
+  const result=await f.makeRetry(f.stoppedFlow(verify)).request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:hardstop:20261015'});
+  assert.deepEqual(result,{status:'blocked',reason:'execution_stop_unconfirmed'});assert.deepEqual(f.docs,before);assert.equal(f.restores(),0);assert.equal(f.submissions(),1);
+ }
+});
+test('claim change during stopped-worker verification fails its version fence before video or accounting changes',async()=>{
+ const f=await processLossSnapshot('artifact_saved'),video=await f.store.get(`videos/${f.videoId}`),ledger=await f.store.get('settings/financial');
+ const flow=f.stoppedFlow(async info=>{const claim=await f.store.get(`jobs/${f.childId}`);await f.store.patch(`jobs/${f.childId}`,{concurrent_observation:'changed'},{updateTime:claim.updateTime});return stoppedProof(info);});
+ await assert.rejects(f.makeRetry(flow).request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:hardstop:20261015'}),error=>error.status===412);
+ assert.deepEqual(await f.store.get(`videos/${f.videoId}`),video);assert.deepEqual(await f.store.get('settings/financial'),ledger);assert.equal((await f.store.get(`jobs/${f.childId}`)).data.status,'started');assert.equal(f.submissions(),1);
+});
+test('v0 normalizes missing/null competitor revision and blocks the same revision before restoration',async()=>{
+ for(const explicitDefault of [false,true])for(const revision of [undefined,null]){
+  const f=fixture('analysis'),id=executionId(f.videoId,'analysis'),state=(await f.store.get('settings/financial')).data,job={...f.financial};delete job.analysis_revision;delete state.jobs[f.originalId];state.jobs[id]=job;state.jobs.job_same_v0={...job,...(revision===undefined?{}:{analysis_revision:revision})};state.spent_cents+=250;f.seed('settings/financial',state);f.seed(`jobs/${id}`,{...f.claim});
+  f.operations.restoreAnalysisResult=async()=>assert.fail('Same v0 revision must block');
+  const flow=new WorkerFlow({store:f.store,ledger:f.ledger,operations:f.operations,quotes:f.quotes,batchId:f.batchId,...(explicitDefault?{analysisRevision:null}:{})}),before=structuredClone(f.docs);
+  assert.deepEqual(await flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:v0:20261015'}),{status:'blocked',reason:'result_requires_reconciliation'});assert.deepEqual(f.docs,before);assert.equal(f.calls(),0);
+ }
+});
+test('v0 without a same-revision competitor still reconciles its own saved result',async()=>{
+ const f=fixture('analysis'),id=executionId(f.videoId,'analysis'),state=(await f.store.get('settings/financial')).data,job={...f.financial};delete job.analysis_revision;delete state.jobs[f.originalId];state.jobs[id]=job;f.seed('settings/financial',state);f.seed(`jobs/${id}`,{...f.claim});f.operations.restoreAnalysisResult=async()=>savedResult(f,id);
+ const flow=new WorkerFlow({store:f.store,ledger:f.ledger,operations:f.operations,quotes:f.quotes,batchId:f.batchId});
+ assert.equal((await flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:v0:20261015'})).status,'completed');assert.equal((await f.store.get(`videos/${f.videoId}`)).data.analysis_key,savedResult(f,id).artifact.key);assert.equal(f.calls(),0);
+});

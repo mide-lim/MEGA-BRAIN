@@ -4,14 +4,18 @@
   "paperclip_issue_id": "9e62fece-a415-46bf-a965-ffb09c589212",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "1166829cf1f5a621f58a0dd92e2274e89ef55718",
-  "objective": "Owner-authorized corrective follow-up to PR39: reconcile a saved deterministic child analysis, preserve completed prior-revision history, and resume an unsubmitted retry_ready dispatch idempotently. No deploy, public route, new queues or paid processing.",
+  "objective": "Owner-authorized PR40 follow-up: resolve independent-review IR1 process-loss recovery with trusted stopped-execution proof and no premature completion, and IR2 legacy v0 revision normalization. Preserve prior retry fixes. No deploy, public route, new queues or paid processing.",
   "risk": "high",
   "acceptance_criteria": [
     "A saved child response is reconciled by its deterministic execution identity and generation, without new inference; parent history and accounting remain unchanged",
     "Completed analyses of prior revisions do not block the current saved result; conflicting active/uncertain or same-revision executions remain blocked",
     "A crash after marking retry_ready resumes the same dispatch identity; concurrent requests converge and uncertain outbox delivery is never blindly retried",
     "Regression tests cover pause, rejected candidate preservation, wrong identity/linkage, lost receipts, concurrent requests, and no duplicate model calls or settlement",
-    "Run the existing packet checks and full offline test suites; independent review of final head is pending, no merge/deploy or paid calls in this follow-up"
+    "Run the existing packet checks and full offline test suites; independent review of final head is pending, no merge/deploy or paid calls in this follow-up",
+    "For a persisted response left in a started claim after process loss, fail closed unless a trusted server verifier confirms the exact execution and claim version ended; reconcile only its saved artifact and own reservation",
+    "Accepted video alone is not completion when the configured analysis claim or reservation remains unfinished; snapshots after artifact, video and settlement writes recover idempotently",
+    "Treat absent analysis_revision and null as the same v0 identity; completed same-revision competitors remain blocked",
+    "After the authorized fixes, run one independent read-only model review of the exact published head, without implementer history; no automatic fixes or deployment"
   ],
   "allowed_paths": [
     "google-v0/lib/smart-retry.mjs",
@@ -65,7 +69,7 @@
   ],
   "execution_budget": {
     "worker_runs": 1,
-    "reviewer_runs": 0,
+    "reviewer_runs": 1,
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "medium"
@@ -73,6 +77,6 @@
   "review": {
     "mode": "independent_human",
     "status": "pending",
-    "reason": "Owner authorized these three fixes and a small corrective PR on 2026-10-15. Independent review is still required before merge/deploy; no additional model agents authorized."
+    "reason": "Owner explicitly authorized the two independent-review fixes, updating the same PR40/MEG-92 and one new independent review on 2026-10-15. Human approval before merge/deploy remains required."
   }
 }

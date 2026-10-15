@@ -30,7 +30,14 @@ export class SmartRetry{
   const video=await this.store.get(`videos/${videoId}`),financial=await this.store.get('settings/financial');
   if(!video||!financial||financial.data.batch?.id!==this.batchId||!financial.data.batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_batch'};
   const v=video.data;
-  if(v.status==='analyzed'&&v.analysis_quality_status==='accepted')return {status:'completed'};
+  if(v.status==='analyzed'&&v.analysis_quality_status==='accepted'){
+   const original=executionId(videoId,'analysis',this.analysisRevision);
+   const pending=await Promise.all([original,settledRetryId(original)].map(async id=>{
+    const claim=await this.store.get(`jobs/${id}`),reservation=financial.data.jobs?.[id];
+    return !!(claim||reservation)&&!(claim?.data.status==='completed'&&reservation?.status==='completed');
+   }));
+   if(!pending.some(Boolean))return {status:'completed'};
+  }
   for(const stage of ['upload','transcription','analysis']){
    const originalId=executionId(videoId,stage,stage==='analysis'?this.analysisRevision:null),snapshot=await this.store.get(`jobs/${originalId}`),reservation=financial.data.jobs?.[originalId];
    const childId=settledRetryId(originalId),child=await this.store.get(`jobs/${childId}`),childReservation=financial.data.jobs?.[childId];

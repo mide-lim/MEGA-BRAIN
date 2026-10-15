@@ -7,6 +7,7 @@ import {Storage} from './storage.mjs';
 import {StorageCapacity} from './storage-capacity.mjs';
 import {FinancialLedger} from './financial-ledger.mjs';
 import {WorkerFlow} from './worker-flow.mjs';
+import {AcquisitionControl} from './acquisition-control.mjs';
 import {ExecutionStops} from './execution-stops.mjs';
 import {workerReservationGate} from './worker-reservation-gate.mjs';
 import {googleOperations} from './google-operations.mjs';
@@ -25,12 +26,13 @@ export function workerRuntime(config,preset,{withHandler=false}={}){
   const operations=googleOperations({api,storage,tools,preset,config,gate:workerReservationGate(store)});
   if(config.analysis_revision&&config.analysis_revision!==preset.version)throw new Error('Preset diverge da revisão autorizada.');
   const stops=new ExecutionStops({store,analysisRevision:config.analysis_revision??null});
-  const flow=new WorkerFlow({recordExecutionStopped:input=>stops.record(input),verifyExecutionStopped:input=>stops.verify(input),store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null,autoHoldTerminalSources:config.auto_hold_terminal_sources===true});
+  const acquisition=new AcquisitionControl({store,verifyExecutionStopped:input=>stops.verify(input)});
+  const flow=new WorkerFlow({acquisition,recordExecutionStopped:input=>stops.record(input),verifyExecutionStopped:input=>stops.verify(input),store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null,autoHoldTerminalSources:config.auto_hold_terminal_sources===true});
   if(!withHandler)return flow;
   const queue=new WorkerQueue({api,store,workerOrigin:config.worker_origin,enabled:config.dispatch_enabled===true});
   const authorize=workerAuthorization({audience:config.worker_origin});
   const processing=workerHandler({flow,queue,authorize});
   const probe=metadataProbeHandler({store,tools,authorize,batchId:config.batch_id,eligibleVideos:config.pilot_video_ids??[]});
-  const admission=admissionHandler({authorize,admission:new WorkerAdmission({store,queue,batchId:config.batch_id,quotes:config.quotes,enabled:config.admission_enabled===true})});
+  const admission=admissionHandler({authorize,admission:new WorkerAdmission({store,queue,acquisition,batchId:config.batch_id,quotes:config.quotes,enabled:config.admission_enabled===true})});
   return request=>{const path=new URL(request.url).pathname;return path==='/tasks/diagnose'?probe(request):path==='/tasks/admit'?admission(request):processing(request);};
 }

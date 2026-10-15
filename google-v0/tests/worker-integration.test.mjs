@@ -64,7 +64,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   const capacity=new StorageCapacity(store),storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input)}),quotes={upload:10,transcription:10,analysis:10};
   const preset=JSON.parse(await readFile(new URL('../config/analysis-preset.json',import.meta.url)));
   const config={enabled:true,uploads_enabled:true,speech_model:profile.model,speech_location:profile.location,language_codes:['pt-BR'],gemini_model:profile.gemini,synchronous_short_audio:profile.synchronous===true,quotes};
-  const operations=googleOperations({api,storage,preset,config,gate:workerReservationGate(store,{clock:()=>now}),tools:{...(profile.location==='global'?{captureCaption:async()=>({text:'Descrição do post: ferramenta de organização.',capture_id:createHash('sha256').update('Descrição do post: ferramenta de organização.').digest('hex'),captured_at:new Date().toISOString()})}:{}),download:async()=>{if(profile.uploadFault==='download_media')throw Object.assign(Error('private-download-error'),{code:1});return Buffer.from('simulated video');},extractAudio:async()=>Buffer.from('simulated flac')},inspect:async()=>{if(profile.uploadFault==='inspect_download')throw Error('private-inspector-error');return {audio_status:'present',duration_seconds:10};}});
+  const operations=googleOperations({api,storage,preset,config,gate:workerReservationGate(store,{clock:()=>now}),tools:{download:async()=>{if(profile.uploadFault==='download_media')throw Object.assign(Error('private-download-error'),{code:1});return {bytes:Buffer.from('simulated video'),...(profile.location==='global'?{source_caption:{text:'Descrição do post: ferramenta de organização.',capture_id:createHash('sha256').update('Descrição do post: ferramenta de organização.').digest('hex'),captured_at:new Date().toISOString()}}:{})};},extractAudio:async()=>Buffer.from('simulated flac')},inspect:async()=>{if(profile.uploadFault==='inspect_download')throw Error('private-inspector-error');return {audio_status:'present',duration_seconds:10};}});
   const flow=new WorkerFlow({store,operations,quotes,eligibleVideos:[videoId],ledger:new FinancialLedger(store,{clock:()=>now}),clock:()=>now});
   assert.equal((await flow.run({videoId:'Other_123',stage:'upload'})).reason,'outside_pilot');
   assert.equal((await flow.poll({videoId:'Other_123'})).reason,'outside_pilot');
@@ -98,7 +98,7 @@ for(const profile of [{location:'global',model:'offline_model',gemini:'gemini-of
   assert.deepEqual((await store.get('videos/'+videoId)).data.analysis.categories,['tecnologia-geral']);
   assert.equal((await store.get('videos/'+videoId)).data.analysis.category_taxonomy_version,'categories-v2');
   await flow.run({videoId,stage:'analysis'});assert.equal(submits,1);assert.equal(analyses,1);
-  assert.equal(objects.size,profile.location==='global'?5:4);assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
+  assert.equal(objects.size,4); // Caption is already persisted on the video by acquisition.assert.equal((await store.get('videos/'+videoId)).data.analysis.title,'Tecnologia');
   assert.equal((await store.get('videos/'+videoId)).data.analysis.knowledge.fields.length,1);
   assert.equal((await store.get('settings/financial')).data.spent_cents,30);
   assert.ok(calls.every(c=>!c.url.includes('megabrain-stt')&&!c.url.includes('cloudflare')));

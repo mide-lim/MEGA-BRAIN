@@ -12,7 +12,7 @@ function validControl(control,batch,task){
  if(!control||control.schema_version!==1||control.batch_id!==batch.id||control.run_id!==task.runId||!runPattern.test(control.run_id)||!control.intents||Array.isArray(control.intents)||Object.keys(control.intents).some(id=>!batch.video_ids.includes(id))||Object.values(control.intents).some(x=>!x||!['pending','queued','uncertain'].includes(x.status)))throw Error('Controle durável de admissão inválido.');
 }
 export class WorkerAdmission{
- constructor({store,queue,batchId,quotes,enabled=false,clock=()=>Date.now()}){Object.assign(this,{store,queue,batchId,quotes,enabled,clock});}
+ constructor({store,queue,batchId,quotes,acquisition,enabled=false,clock=()=>Date.now()}){Object.assign(this,{store,queue,batchId,quotes,acquisition,enabled,clock});}
  async reconcilePlayback(control,financial){
   for(const [videoId,intent] of Object.entries(control.intents)){
    if(intent.playback_reconciled||!Object.values(financial.jobs??{}).some(j=>j.video_id===videoId&&j.stage==='analysis'&&j.status==='completed'))continue;
@@ -71,8 +71,9 @@ export class WorkerAdmission{
     if(!settled&&!blockedBeforePayment)busy.add(id);
    }
    const intents={...state.intents};const chosen=[];
+   const acquisitionSlots=this.acquisition?await this.acquisition.admissionCapacity({intents,financial:current}):limit;
    for(const id of currentBatch.video_ids){
-    if(busy.size>=limit)break;
+    if(busy.size>=limit||chosen.length>=acquisitionSlots)break;
     if(intents[id]||busy.has(id)||Object.values(current.jobs??{}).some(j=>j.video_id===id))continue;
     const video=(await this.store.get(`videos/${id}`))?.data;
     if(video?.status!=='pending'||video.instagram_review_status||video.analysis||video.media_verified)continue;

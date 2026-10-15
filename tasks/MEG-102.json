@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "id": "MEG-102",
+  "paperclip_issue_id": "70d24240-b9eb-472f-9c16-7aac42f8e5d6",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "3abaa715b2bbad64f115ebd03db9fce442ac89c9",
+  "objective": "Owner-authorized PR42 R1/P1 fix only: do not attest upload end or release acquisition after a download rejection with unconfirmed subprocess end. Preserve normal success and safe post-download cleanup. Regression with a real surviving subprocess, offline suites, same PR update and one fresh independent read-only review. No reprocessing, paid calls, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "A real execFile timeout with a surviving extractor descendant cannot create ended:true or release its acquisition slot; another upload remains blocked even if financial controls are manually resumed in the offline fixture.",
+    "Ambiguous download rejection, timeout, output limit or lost confirmation remains held without time-based release or automatic replay; retry is explicitly reconciled.",
+    "Successful download/awaited cleanup preserves normal proof/release; pre-download blocks and failures after a confirmed download remain safe without changing auth, pause, budget or stage/global limits.",
+    "Retained acquisitions record bounded metrics and safe unconfirmed-end status without raw messages, credentials, signed URLs or forged positive proof.",
+    "Run offline regression/full suites, operations/orchestration/links/packets and scope; publish only PR42, update MEG-102/92, then run one fresh independent review of the exact final head. No further automatic fix run."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/acquisition-control.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/execution-stops.mjs",
+    "google-v0/lib/worker-admission.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/acquisition-control.test.mjs",
+    "google-v0/Dockerfile.worker",
+    "docs/acquisition-limit.md",
+    "tasks/MEG-102.json",
+    "google-v0/tests/worker-integration.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Bound positive upload end proof to downloader lifecycle",
+      "sections": [
+        "run/finally"
+      ],
+      "max_chars": 2700
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Report positive completed download boundary",
+      "sections": [
+        "upload"
+      ],
+      "max_chars": 1400
+    },
+    {
+      "path": "google-v0/lib/media-tools.mjs",
+      "reason": "Concrete subprocess and awaited cleanup dependency",
+      "sections": [
+        "download",
+        "temporary",
+        "execute"
+      ],
+      "max_chars": 1900
+    },
+    {
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Preserve immutable proof matching",
+      "sections": [
+        "record",
+        "verify"
+      ],
+      "max_chars": 1300
+    },
+    {
+      "path": "google-v0/lib/acquisition-control.mjs",
+      "reason": "Prove held capacity cannot admit overlap",
+      "sections": [
+        "acquire",
+        "release"
+      ],
+      "max_chars": 1100
+    },
+    {
+      "path": "google-v0/tests/acquisition-control.test.mjs",
+      "reason": "Extend existing real runtime fixture with subprocess regression",
+      "sections": [
+        "fixture",
+        "failure tests"
+      ],
+      "max_chars": 2300
+    },
+    {
+      "path": "docs/acquisition-limit.md",
+      "reason": "Document conservative unknown-end handling",
+      "sections": [
+        "Encerramento e incerteza"
+      ],
+      "max_chars": 600
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs google-v0/tests/worker-admission.test.mjs google-v0/tests/google-operations.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "R1/P1 independently reproduced at head559bef7; user now explicitly authorizes one narrow fix and one new independent review afterwards. Prior review preserved outside repository. No merge/deploy or further automatic fixes."
+  }
+}

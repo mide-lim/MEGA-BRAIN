@@ -10,13 +10,18 @@ export class ExecutionStops {
     Object.assign(this,{store,analysisRevision,clock});
   }
   matches(claim,{executionId,videoId:id,stage,attemptId:attempt}){
-    return jobId(executionId)&&videoId(id)&&stage==='analysis'&&attemptId(attempt)&&claim?.data.video_id===id&&claim.data.stage===stage&&claim.data.execution_attempt_id===attempt&&claim.data.analysis_revision===this.analysisRevision&&typeof claim.updateTime==='string'&&!!claim.updateTime;
+    return jobId(executionId)&&videoId(id)&&['analysis','upload'].includes(stage)&&(stage!=='upload'||claim?.data.acquisition_end_status!=='unconfirmed')&&attemptId(attempt)&&claim?.data.video_id===id&&claim.data.stage===stage&&claim.data.execution_attempt_id===attempt&&claim.data.analysis_revision===(stage==='analysis'?this.analysisRevision:null)&&typeof claim.updateTime==='string'&&!!claim.updateTime;
   }
-  async record({executionId,videoId,stage,attemptId}){
+  async record({executionId,videoId,stage,attemptId,acquisitionMetrics}){
     const claim=await this.store.get(`jobs/${executionId}`);
     if(!this.matches(claim,{executionId,videoId,stage,attemptId}))return false;
     // Create-only: an old attempt can never overwrite another attempt's proof.
-    const proof={schema_version:1,ended:true,execution_id:executionId,attempt_id:attemptId,video_id:videoId,stage,analysis_revision:this.analysisRevision,claim_update_time:claim.updateTime,ended_at:new Date(this.clock()).toISOString()};
+    const proof={schema_version:1,ended:true,execution_id:executionId,attempt_id:attemptId,video_id:videoId,stage,analysis_revision:stage==='analysis'?this.analysisRevision:null,claim_update_time:claim.updateTime,ended_at:new Date(this.clock()).toISOString()};
+    if(stage==='upload'&&acquisitionMetrics){
+      const m=acquisitionMetrics;
+      if(!Number.isSafeInteger(m.duration_ms)||m.duration_ms<0||![0,1].includes(m.adapter_calls)||![0,1].includes(m.extractions))return false;
+      proof.acquisition={duration_ms:m.duration_ms,adapter_calls:m.adapter_calls,extractions:m.extractions,outcome:['completed','uncertain','blocked'].includes(claim.data.status)?claim.data.status:'interrupted',diagnostic_ref:`jobs/${executionId}`};
+    }
     return (await this.store.create(pathFor(executionId,attemptId),proof)).created;
   }
   async verify({executionId,videoId,stage,claimUpdateTime}){
@@ -29,7 +34,7 @@ export class ExecutionStops {
     // A resumed CAS uses the current version; its acquisition must still match
     // the immutable evidence for the original ended attempt, not that new version.
     const endedClaimVersion=resuming?acquisition.claim_update_time:claimUpdateTime;
-    if(proof?.schema_version!==1||proof.ended!==true||proof.execution_id!==executionId||proof.attempt_id!==attempt||proof.video_id!==videoId||proof.stage!==stage||proof.analysis_revision!==this.analysisRevision||proof.claim_update_time!==endedClaimVersion||typeof proof.ended_at!=='string'||!Number.isFinite(Date.parse(proof.ended_at))||Date.parse(proof.ended_at)>this.clock())return null;
+    if(proof?.schema_version!==1||proof.ended!==true||proof.execution_id!==executionId||proof.attempt_id!==attempt||proof.video_id!==videoId||proof.stage!==stage||proof.analysis_revision!==(stage==='analysis'?this.analysisRevision:null)||proof.claim_update_time!==endedClaimVersion||typeof proof.ended_at!=='string'||!Number.isFinite(Date.parse(proof.ended_at))||Date.parse(proof.ended_at)>this.clock())return null;
     return {ended:true,execution_id:executionId,claim_update_time:claimUpdateTime,evidence_ref:evidenceRef};
   }
 }

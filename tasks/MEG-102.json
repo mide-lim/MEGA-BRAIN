@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "id": "MEG-102",
+  "paperclip_issue_id": "70d24240-b9eb-472f-9c16-7aac42f8e5d6",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "3abaa715b2bbad64f115ebd03db9fce442ac89c9",
+  "objective": "Implement only a separate aggregate acquisition limit in the existing runtime, starting at one; retain global/financial/auth controls and reuse persisted assets. Offline tests and draft PR/Paperclip updates only; no processing, paid calls, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Concurrent deliveries count actual simulated download calls and respect aggregate configured acquisition capacity.",
+    "Acquisition capacity does not change global, analysis, transcription, pause, authentication or budget controls.",
+    "Reuse valid media, caption and metadata without extra extraction; retain uncertain work for reconciliation.",
+    "Release only after positive same-attempt end evidence; no expiry, timeout, pause or lost receipt can imply end.",
+    "Persist bounded duration, extraction counts and safe diagnostics without raw errors, secrets or signed URLs.",
+    "Offline suites, CI and independent exact-head review required before release; no real execution or deployment."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/acquisition-control.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/execution-stops.mjs",
+    "google-v0/lib/worker-admission.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/acquisition-control.test.mjs",
+    "google-v0/Dockerfile.worker",
+    "docs/acquisition-limit.md",
+    "tasks/MEG-102.json",
+    "google-v0/tests/worker-integration.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Claim and awaited adapter lifecycle",
+      "sections": [
+        "relevant integration"
+      ],
+      "max_chars": 2300
+    },
+    {
+      "path": "google-v0/lib/worker-admission.mjs",
+      "reason": "Existing aggregate admission controls",
+      "sections": [
+        "relevant integration"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Reuse immutable positive attempt end evidence",
+      "sections": [
+        "relevant integration"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Wire existing runtime only",
+      "sections": [
+        "relevant integration"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Reuse acquisition/caption and count actual extractor calls",
+      "sections": [
+        "relevant integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/worker-admission.test.mjs",
+      "reason": "Reuse offline fixtures",
+      "sections": [
+        "fixture"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Preserve global financial gates",
+      "sections": [
+        "reservationDecision"
+      ],
+      "max_chars": 800
+    },
+    {
+      "path": "google-v0/tests/worker-integration.test.mjs",
+      "reason": "Concrete dependency: existing fixture captures caption during analysis; supply the same caption with download metadata to preserve verified content while removing extraction outside acquisition.",
+      "sections": [
+        "fixture"
+      ],
+      "max_chars": 500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs google-v0/tests/worker-admission.test.mjs google-v0/tests/google-operations.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Owner authorizes implementation and tests only. No extra model authorized. Independent final-head review and human acceptance remain pending before merge or deployment."
+  }
+}

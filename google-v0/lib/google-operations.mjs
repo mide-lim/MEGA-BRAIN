@@ -21,13 +21,11 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   const persist=(key,data)=>storage.writeImmutable(key,Buffer.from(JSON.stringify(data)),{contentType:'application/json',uploadsEnabled:true});
   async function captionFor(video,executionId){
     if(video.source_caption?.text)return {source_caption:video.source_caption,caption_status:'captured'};
-    if(typeof tools.captureCaption!=='function')return {caption_status:'unavailable'};
-    try{
-      const capture=await tools.captureCaption(video);
-      await persist(`results/instagram/${video.id}/${executionId}/caption.json`,capture);
-      return {source_caption:capture,caption_status:'captured'};
-    }catch{return {caption_status:'unavailable'};}
+    // Caption/metadata belong to acquisition. Legacy absence is explicit; an
+    // analysis must not start a fresh Instagram extraction outside that limit.
+    return {caption_status:'unavailable'};
   }
+
   function speechSettings(){
     if(!/^[a-z0-9_-]+$/.test(config.speech_model??'')||!['global','us'].includes(config.speech_location)||!Array.isArray(config.language_codes)||!config.language_codes.length||config.language_codes.length>3||config.language_codes.some(c=>!/^\w{2,3}-[A-Z]{2}$/.test(c))||(config.speech_model==='chirp_3'&&config.speech_location!=='us'))throw new Error('Modelo, idiomas e região STT precisam ser configurados.');
   }
@@ -57,13 +55,13 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       return object?{key,generation:object.generation}:null;
     },
     async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
-    async upload({video,executionId}){
+    async upload({video,executionId,recordAcquisitionExtraction}){
       await admitted(executionId,'upload',video.id);const cost=budget('upload');
-      const downloaded=await at('download_media',()=>tools.download(video,{withMetadata:true})),bytes=Buffer.isBuffer(downloaded)?downloaded:downloaded.bytes,media=await at('inspect_download',()=>inspect(bytes));
+      const downloaded=await at('download_media',()=>{recordAcquisitionExtraction?.();return tools.download(video,{withMetadata:true});}),bytes=Buffer.isBuffer(downloaded)?downloaded:downloaded.bytes,media=await at('inspect_download',()=>inspect(bytes));
       if(media.audio_status!=='present')throw Object.assign(new Error('Áudio ausente ou silencioso; transcrição não iniciada.'),{operation_step:'inspect_download'});
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
-      return result(video.id,'upload',{video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{})},cost);
+      return result(video.id,'upload',{video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
     },
     async transcription({video,executionId}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();

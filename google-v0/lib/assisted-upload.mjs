@@ -1,3 +1,4 @@
+import {isDeepStrictEqual} from 'node:util';
 import {validateTask} from './worker-queue.mjs';
 
 const requestId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{16,64}$/.test(value);
@@ -42,6 +43,10 @@ export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds
   }catch{outcome=uncertain('assisted_execution_unconfirmed');}
   // This is a request outcome, never an execution_stops proof. A lost receipt
   // keeps the consumed authorization and the real flow's result/reservation.
-  try{await store.patch(path,{outcome,observed_at:new Date(clock()).toISOString()},{updateTime:receipt.updateTime});}catch{return uncertain('assisted_result_unconfirmed');}
+  try{
+    const observedAt=new Date(clock()).toISOString();
+    const finalReceipt=await store.patch(path,{outcome,observed_at:observedAt},{updateTime:receipt.updateTime});
+    if(typeof finalReceipt?.updateTime!=='string'||!finalReceipt.updateTime||finalReceipt.updateTime===receipt.updateTime||finalReceipt.data?.status!=='consumed'||finalReceipt.data.consumed_at!==consumedAt||finalReceipt.data.observed_at!==observedAt||!isDeepStrictEqual(finalReceipt.data.outcome,outcome))return uncertain('assisted_result_unconfirmed');
+  }catch{return uncertain('assisted_result_unconfirmed');}
   return outcome;
 }

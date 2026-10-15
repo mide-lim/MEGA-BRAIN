@@ -5,6 +5,7 @@ import {workerRuntime} from '../lib/worker-runtime.mjs';
 import {workerHandler} from '../lib/worker-queue.mjs';
 import {FinancialLedger,newLedger} from '../lib/financial-ledger.mjs';
 import {readFileSync} from 'node:fs';
+import {Firestore,encodeFields,decodeFields} from '../lib/firestore.mjs';
 
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const request='assisted_request_20261015';
@@ -92,6 +93,56 @@ test('unconfirmed outcome preserves consumed request and does not repeat success
   const f=fixture(),patch=f.store.patch;
   f.store.patch=async(p,c,o)=>{if(c.outcome)throw Error('receipt lost');return patch(p,c,o);};
   assert.equal((await f.run()).reason,'assisted_result_unconfirmed');await f.run();assert.equal(f.stats().calls,1);
+});
+const incompleteFinalReceipts={
+  empty:()=>({}),
+  missing_version:r=>{delete r.updateTime;return r;},
+  invalid_version:r=>({...r,updateTime:42}),
+  empty_version:r=>({...r,updateTime:''}),
+  stale_version:(r,version)=>({...r,updateTime:version}),
+  missing_fields:r=>{delete r.fields;return r;},
+  missing_outcome:r=>{delete r.fields.outcome;return r;},
+  wrong_status:r=>{r.fields.outcome.mapValue.fields.status={stringValue:'waiting'};return r;},
+  wrong_reason:r=>{r.fields.outcome.mapValue.fields.reason={stringValue:'other_reason'};return r;},
+  wrong_execution:r=>{r.fields.outcome.mapValue.fields.execution_id={stringValue:'job_'+'b'.repeat(64)};return r;},
+  wrong_duplicate:r=>{r.fields.outcome.mapValue.fields.duplicate={booleanValue:true};return r;},
+  extra_outcome:r=>{r.fields.outcome.mapValue.fields.extra={stringValue:'unexpected'};return r;},
+  missing_observation:r=>{delete r.fields.observed_at;return r;},
+  wrong_observation:r=>{r.fields.observed_at={stringValue:'2000-01-01T00:00:00.000Z'};return r;},
+  wrong_consumed_status:r=>{r.fields.status={stringValue:'authorized'};return r;},
+  wrong_consumed_at:r=>{r.fields.consumed_at={stringValue:'2000-01-01T00:00:00.000Z'};return r;},
+};
+for(const committed of [false,true])for(const [name,alter] of Object.entries(incompleteFinalReceipts)){
+  test('actual Firestore '+name+' final receipt, committed='+committed+', stays uncertain without replay',async()=>{
+    const expected={status:'completed',reason:'upload_complete',execution_id:'job_'+'a'.repeat(64),duplicate:false};
+    const f=fixture(async()=>expected),patch=f.store.patch;let finalWrites=0,reads=0;const get=f.store.get;
+    f.store.get=async p=>{reads++;return get(p);};
+    const firestore=new Firestore({project:'offline-test',async request(url,options){
+      assert.equal(options.method,'PATCH');assert.equal(new URL(url).searchParams.get('currentDocument.updateTime'),f.docs.get(path).updateTime);
+      finalWrites++;const consumedVersion=f.docs.get(path).updateTime,changes=decodeFields(options.json.fields);
+      const data={...f.docs.get(path).data,...changes};
+      if(committed)await patch(path,changes,{updateTime:consumedVersion});
+      return alter({fields:encodeFields(data),updateTime:committed?f.docs.get(path).updateTime:'unconfirmed_new_version'},consumedVersion);
+    }});
+    f.store.patch=(p,c,o)=>c.outcome?firestore.patch(p,c,o):patch(p,c,o);
+    assert.deepEqual(await f.run(),{status:'uncertain',reason:'assisted_result_unconfirmed'});
+    assert.equal(f.docs.get(path).data.status,'consumed');
+    assert.deepEqual(f.docs.get(path).data.outcome,committed?expected:undefined);
+    assert.equal((await f.run()).reason,'assisted_already_requested');
+    assert.deepEqual(f.stats(),{calls:1,successors:0,polls:0});assert.equal(finalWrites,1);assert.equal(reads,2);
+  });
+}
+test('actual Firestore confirms rich outcome without depending on field order',async()=>{
+  const expected={status:'completed',reason:'upload_complete',execution_id:'job_'+'a'.repeat(64),duplicate:false};
+  const f=fixture(async()=>expected),patch=f.store.patch;let finalWrites=0;
+  const firestore=new Firestore({project:'offline-test',async request(url,options){
+    finalWrites++;const changes=decodeFields(options.json.fields),receipt=await patch(path,changes,{updateTime:new URL(url).searchParams.get('currentDocument.updateTime')});
+    receipt.data.outcome=Object.fromEntries(Object.entries(receipt.data.outcome).reverse());
+    return {fields:encodeFields(receipt.data),updateTime:receipt.updateTime};
+  }});
+  f.store.patch=(p,c,o)=>c.outcome?firestore.patch(p,c,o):patch(p,c,o);
+  assert.deepEqual(await f.run(),expected);assert.equal((await f.run()).reason,'assisted_already_requested');
+  assert.equal(finalWrites,1);assert.deepEqual(f.stats(),{calls:1,successors:0,polls:0});
 });
 test('unavailable authorization and partial consume receipt cannot invoke flow',async()=>{
   const f=fixture();f.store.get=async()=>{throw Error('unavailable');};

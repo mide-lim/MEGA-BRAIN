@@ -26,6 +26,8 @@ Exemplo estrutural, não autorização, quote ou registro de produção. A valid
 
 A autorização é consumida com CAS antes da execução. Só o vencedor com recibo confirmado chama o flow uma vez. Conflito, resposta de escrita desconhecida ou recibo incompleto não chamam o flow nem repetem a escrita automaticamente. Se o resultado da operação ou sua persistência forem incertos, a autorização continua consumida; uma nova chamada não retoma a operação. Conferir as evidências antes de qualquer nova decisão; não resetar o documento ou emitir outra autorização para contornar incerteza.
 
+O retorno da gravação final precisa confirmar uma nova versão não vazia, a autorização ainda consumida, o mesmo `consumed_at`, o `outcome` completo e o `observed_at` esperado. Resposta ausente, incompleta ou divergente retorna `uncertain / assisted_result_unconfirmed`, mesmo se a escrita tiver sido aplicada. Não há releitura, repetição da escrita ou nova chamada do flow para compensar essa incerteza; a autorização continua consumida.
+
 O `outcome` é uma observação da solicitação, **não** comprovante de encerramento de processo/provedor. O helper não grava `execution_stops`, não libera ocupações ou reservas e não transforma timeout/tempo decorrido em prova. WorkerFlow continua responsável por CAS, elegibilidade, livro financeiro, aquisição e comprovante interno após trabalho/limpeza aguardados.
 
 ## Limites operacionais

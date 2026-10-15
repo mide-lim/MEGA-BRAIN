@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {mediaTools} from '../lib/media-tools.mjs';
+import {ExecutionStops} from '../lib/execution-stops.mjs';
 import {workerRuntime} from '../lib/worker-runtime.mjs';
 import {workerHandler} from '../lib/worker-queue.mjs';
 import {WorkerAdmission} from '../lib/worker-admission.mjs';
@@ -91,13 +98,13 @@ test('success records bounded duration and actual extraction counts without sens
  assert.doesNotMatch(JSON.stringify(proof),/https:|token|raw|signed/);assert.equal(f.slots().length,0);
 });
 
-test('failure waits for awaited cleanup before proof/release and preserves safe diagnostics',async()=>{
+test('download failure waits for cleanup then retains capacity without end proof or sensitive diagnostics',async()=>{
  const f=fixture({download:async()=>{throw Object.assign(Error('https://private?token=secret'),{name:'TimeoutError',operation_step:'download_media'});}}),entered=deferred(),exit=deferred(),patch=f.store.patch.bind(f.store);
  f.store.patch=async(p,c,o)=>{const r=await patch(p,c,o);if(p===`jobs/${executionId(f.ids[0],'upload')}`&&c.status==='uncertain'){entered.resolve();await exit.promise;}return r;};
  const run=f.run(0);await entered.promise;assert.equal(f.slots().length,1);assert.equal(f.proof(0),undefined);
  await f.patch('settings/acquisition',{enabled:false});assert.equal(f.slots().length,1);
- exit.resolve();assert.equal((await run).status,'uncertain');assert.equal(f.slots().length,0);assert.equal(f.proof(0).acquisition.outcome,'uncertain');
- assert.doesNotMatch(JSON.stringify(f.proof(0)),/private|secret/);assert.doesNotMatch(JSON.stringify(f.docs.get(`jobs/${executionId(f.ids[0],'upload')}`).data),/private|secret/);
+ exit.resolve();assert.equal((await run).status,'uncertain');assert.equal(f.slots().length,1);assert.equal(f.proof(0),undefined);const claim=f.docs.get(`jobs/${executionId(f.ids[0],'upload')}`).data;assert.equal(claim.acquisition_end_status,'unconfirmed');assert.equal(claim.acquisition_metrics.extractions,1);
+ assert.doesNotMatch(JSON.stringify(f.docs.get(`jobs/${executionId(f.ids[0],'upload')}`).data),/private|secret/);
  assert.equal(f.docs.get('settings/financial').data.paused,true);await f.run(0);assert.equal(f.stats().downloads,1);
 });
 
@@ -209,4 +216,48 @@ test('an already stored original with missing metadata is held before download o
  assert.equal((await f.run(0)).status,'blocked');assert.equal(f.stats().downloads,0);assert.equal(f.slots().length,0);
  assert.equal(f.docs.get('settings/financial').data.reserved_cents,0);assert.deepEqual(f.objects.get(key),original);
  assert.equal(f.proof(0).acquisition.extractions,0);assert.equal(f.proof(0).acquisition.adapter_calls,0);
+});
+
+for(const code of ['ETIMEDOUT','ERR_CHILD_PROCESS_STDIO_MAXBUFFER','EIO'])test(`unconfirmed downloader rejection ${code} retains the slot despite resumed finance and elapsed time`,async()=>{
+ const f=fixture({download:async()=>{throw Object.assign(Error('https://private?token=secret'),{code});}});
+ assert.equal((await f.run(0)).status,'uncertain');assert.equal(f.proof(0),undefined);assert.equal(f.slots().length,1);
+ const x=f.slots()[0],input={executionId:x.execution_id,videoId:x.video_id,attemptId:x.attempt_id};
+ await f.patch('settings/financial',{paused:false});f.flow.acquisition.clock=()=>Date.now()+86400000;
+ assert.equal(await f.flow.acquisition.release(input),false);assert.equal((await f.run(1)).reason,'acquisition_capacity');assert.equal(f.stats().downloads,1);
+ const stops=new ExecutionStops({store:f.store});assert.equal(await stops.record({...input,stage:'upload'}),false);
+ const claim=f.docs.get(`jobs/${input.executionId}`).data;assert.equal(claim.acquisition_end_status,'unconfirmed');assert.doesNotMatch(JSON.stringify(claim),/private|secret/);
+});
+
+test('uncertain-end diagnostic write failure cannot create a proof or release capacity',async()=>{
+ const f=fixture({download:async()=>{throw Error('unconfirmed end');}}),patch=f.store.patch.bind(f.store);
+ f.store.patch=(p,c,o)=>c.acquisition_end_status?Promise.reject(Error('Diagnostic unavailable')):patch(p,c,o);
+ await f.run(0);assert.equal(f.proof(0),undefined);assert.equal(f.slots().length,1);
+});
+
+test('a failure after positive download completion still records end and releases acquisition',async()=>{
+ const f=fixture();
+ // The real download adapter has completed, but its artifact cannot be committed.
+ const original=f.flow.finish.bind(f.flow);f.flow.finish=async input=>{if(input.stage==='upload')throw Error('Persistence failed after download');return original(input);};
+ assert.equal((await f.run(0)).status,'uncertain');assert.equal(f.slots().length,0);assert.equal(f.proof(0).ended,true);assert.equal(f.proof(0).acquisition.extractions,1);
+});
+
+test('real execFile timeout with a surviving descendant cannot attest end or admit a second acquisition',async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'megabrain-r1-test-')),pidfile=join(folder,'descendant.pid'),marker=join(folder,'finished.json');
+ const exec=promisify(execFile);let childPid,childDone;
+ try{
+  const child=`const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(pidfile)},String(process.pid));setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify({finished_at:Date.now()})),4000);`;
+  const parent=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(child)}],{stdio:['ignore','pipe','pipe']});setInterval(()=>{},1000);`;
+  const tools=mediaTools({downloadEnabled:true,run:async(tool,args,options)=>{
+   if(args.includes('--version'))return {stdout:'2026.10.01\n'};
+   if(args.includes('-version'))return {stdout:'ffmpeg version 8.0\n'};
+   return exec(process.execPath,['-e',parent],{...options,timeout:1000});
+  }});
+  const f=fixture({download:()=>tools.download({id:'DGXmHhAIOXN',source_url:'https://www.instagram.com/reel/DGXmHhAIOXN/'},{withMetadata:true})});
+  assert.equal((await f.run(0)).status,'uncertain');childPid=Number(await readFile(pidfile,'utf8'));assert.doesNotThrow(()=>process.kill(childPid,0));
+  assert.equal(f.proof(0),undefined);assert.equal(f.slots().length,1);assert.equal(f.docs.get(`jobs/${executionId(f.ids[0],'upload')}`).data.acquisition_end_status,'unconfirmed');
+  await f.patch('settings/financial',{paused:false});assert.equal((await f.run(1)).reason,'acquisition_capacity');assert.equal(f.stats().downloads,1);
+  const x=f.slots()[0];assert.equal(await f.flow.acquisition.release({executionId:x.execution_id,videoId:x.video_id,attemptId:x.attempt_id}),false);
+  const until=Date.now()+5000;while(Date.now()<until){try{childDone=JSON.parse(await readFile(marker,'utf8'));break;}catch{await new Promise(r=>setTimeout(r,20));}}
+  assert.ok(childDone);assert.equal(f.slots().length,1);assert.equal(f.proof(0),undefined); // Observing time pass never synthesizes end evidence.
+ }finally{if(!childPid)try{childPid=Number(await readFile(pidfile,'utf8'));}catch{}if(childPid&&!childDone)try{process.kill(childPid,'SIGKILL');}catch{}await rm(folder,{recursive:true,force:true});}
 });

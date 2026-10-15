@@ -103,7 +103,7 @@ export class WorkerFlow {
     // accepted from a task payload. Failed ownership writes cannot run adapters.
     const limitedUpload=stage==='upload'&&!!this.acquisition;
     const attemptId=(stage==='analysis'||limitedUpload)&&typeof this.recordExecutionStopped==='function'?randomUUID():null;
-    let acquired=false,adapterCalls=0,extractions=0;const acquisitionStarted=this.clock();
+    let acquired=false,adapterCalls=0,extractions=0,extractionEndUnconfirmed=false;const acquisitionStarted=this.clock();
     if(attemptId&&!limitedUpload){const current=await this.store.get(path);await this.store.patch(path,{execution_attempt_id:attemptId,analysis_revision:revision},{updateTime:current.updateTime});}
     let started=false;
     const save=async changes=>{const current=await this.store.get(path);await this.store.patch(path,changes,{updateTime:current.updateTime});};
@@ -129,7 +129,7 @@ export class WorkerFlow {
       }
       await save({status:'started'});
       if(limitedUpload)adapterCalls++;
-      const result=await operation({...(limitedUpload?{recordAcquisitionExtraction:()=>{if(extractions)throw Error('Extração duplicada bloqueada.');extractions++;}}:{}),video:{...video.data,id:videoId},executionId:id,...(stage==='analysis'?{analysisAttempts,recordAnalysisAttempts:async history=>{if(history.at(-1)?.status==='started'){const controls=(await this.store.get('settings/automation'))?.data;if(!controls?.enabled||!controls.analysis_enabled)throw Error('Análise pausada durante espera.');}await save({analysis_attempts:history});}}:{})});
+      const result=await operation({...(limitedUpload?{recordAcquisitionExtraction:()=>{if(extractions)throw Error('Extração duplicada bloqueada.');extractions++;extractionEndUnconfirmed=true;return ()=>{extractionEndUnconfirmed=false;};}}:{}),video:{...video.data,id:videoId},executionId:id,...(stage==='analysis'?{analysisAttempts,recordAnalysisAttempts:async history=>{if(history.at(-1)?.status==='started'){const controls=(await this.store.get('settings/automation'))?.data;if(!controls?.enabled||!controls.analysis_enabled)throw Error('Análise pausada durante espera.');}await save({analysis_attempts:history});}}:{})});
       if(!ownsResult(result,videoId,stage))throw new Error('Resultado não pertence à tarefa.');
       if(result.operation_name){
         if(stage!=='transcription'||typeof result.operation_name!=='string'||!/^projects\/(?:megabrain-v0-1017370021431|711042421394)\/locations\/[a-z0-9-]+\/operations\/[A-Za-z0-9_-]+$/.test(result.operation_name))throw new Error('Operação assíncrona inválida.');
@@ -158,8 +158,13 @@ export class WorkerFlow {
     }finally{
       // All operation, persistence and error-cleanup promises above have settled.
       // A hard kill or failed evidence write leaves recovery blocked. No replay.
-      if(attemptId&&(!limitedUpload||acquired)){
-        try{await this.recordExecutionStopped({executionId:id,videoId,stage,attemptId,...(limitedUpload?{acquisitionMetrics:{duration_ms:Math.max(0,Math.round(this.clock()-acquisitionStarted)),adapter_calls:adapterCalls,extractions}}:{})});}catch{/* Verification below may recover a lost receipt, never missing evidence. */}
+      const acquisitionMetrics={duration_ms:Math.max(0,Math.round(this.clock()-acquisitionStarted)),adapter_calls:adapterCalls,extractions};
+      if(limitedUpload&&acquired&&extractionEndUnconfirmed){
+        // A rejected execFile promise may leave descendants alive. Neither
+        // timeout nor directory cleanup is positive process-tree end evidence.
+        try{await save({acquisition_end_status:'unconfirmed',acquisition_metrics:acquisitionMetrics});}catch{/* Capacity stays held even if this diagnostic write fails. */}
+      }else if(attemptId&&(!limitedUpload||acquired)){
+        try{await this.recordExecutionStopped({executionId:id,videoId,stage,attemptId,...(limitedUpload?{acquisitionMetrics}:{})});}catch{/* Verification below may recover a lost receipt, never missing evidence. */}
         if(limitedUpload)try{await this.acquisition.release({executionId:id,videoId,attemptId});}catch{/* Unknown evidence or release receipt stays held for explicit reconciliation. */}
       }
     }

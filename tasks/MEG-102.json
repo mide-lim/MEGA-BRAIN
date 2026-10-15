@@ -4,15 +4,14 @@
   "paperclip_issue_id": "70d24240-b9eb-472f-9c16-7aac42f8e5d6",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "3abaa715b2bbad64f115ebd03db9fce442ac89c9",
-  "objective": "Implement only a separate aggregate acquisition limit in the existing runtime, starting at one; retain global/financial/auth controls and reuse persisted assets. Offline tests and draft PR/Paperclip updates only; no processing, paid calls, merge or deploy.",
+  "objective": "Owner-authorized PR42 R1/P1 fix only: do not attest upload end or release acquisition after a download rejection with unconfirmed subprocess end. Preserve normal success and safe post-download cleanup. Regression with a real surviving subprocess, offline suites, same PR update and one fresh independent read-only review. No reprocessing, paid calls, merge or deploy.",
   "risk": "high",
   "acceptance_criteria": [
-    "Concurrent deliveries count actual simulated download calls and respect aggregate configured acquisition capacity.",
-    "Acquisition capacity does not change global, analysis, transcription, pause, authentication or budget controls.",
-    "Reuse valid media, caption and metadata without extra extraction; retain uncertain work for reconciliation.",
-    "Release only after positive same-attempt end evidence; no expiry, timeout, pause or lost receipt can imply end.",
-    "Persist bounded duration, extraction counts and safe diagnostics without raw errors, secrets or signed URLs.",
-    "Offline suites, CI and independent exact-head review required before release; no real execution or deployment."
+    "A real execFile timeout with a surviving extractor descendant cannot create ended:true or release its acquisition slot; another upload remains blocked even if financial controls are manually resumed in the offline fixture.",
+    "Ambiguous download rejection, timeout, output limit or lost confirmation remains held without time-based release or automatic replay; retry is explicitly reconciled.",
+    "Successful download/awaited cleanup preserves normal proof/release; pre-download blocks and failures after a confirmed download remain safe without changing auth, pause, budget or stage/global limits.",
+    "Retained acquisitions record bounded metrics and safe unconfirmed-end status without raw messages, credentials, signed URLs or forged positive proof.",
+    "Run offline regression/full suites, operations/orchestration/links/packets and scope; publish only PR42, update MEG-102/92, then run one fresh independent review of the exact final head. No further automatic fix run."
   ],
   "allowed_paths": [
     "google-v0/lib/acquisition-control.mjs",
@@ -30,67 +29,64 @@
   "context": [
     {
       "path": "google-v0/lib/worker-flow.mjs",
-      "reason": "Claim and awaited adapter lifecycle",
+      "reason": "Bound positive upload end proof to downloader lifecycle",
       "sections": [
-        "relevant integration"
+        "run/finally"
+      ],
+      "max_chars": 2700
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Report positive completed download boundary",
+      "sections": [
+        "upload"
+      ],
+      "max_chars": 1400
+    },
+    {
+      "path": "google-v0/lib/media-tools.mjs",
+      "reason": "Concrete subprocess and awaited cleanup dependency",
+      "sections": [
+        "download",
+        "temporary",
+        "execute"
+      ],
+      "max_chars": 1900
+    },
+    {
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Preserve immutable proof matching",
+      "sections": [
+        "record",
+        "verify"
+      ],
+      "max_chars": 1300
+    },
+    {
+      "path": "google-v0/lib/acquisition-control.mjs",
+      "reason": "Prove held capacity cannot admit overlap",
+      "sections": [
+        "acquire",
+        "release"
+      ],
+      "max_chars": 1100
+    },
+    {
+      "path": "google-v0/tests/acquisition-control.test.mjs",
+      "reason": "Extend existing real runtime fixture with subprocess regression",
+      "sections": [
+        "fixture",
+        "failure tests"
       ],
       "max_chars": 2300
     },
     {
-      "path": "google-v0/lib/worker-admission.mjs",
-      "reason": "Existing aggregate admission controls",
+      "path": "docs/acquisition-limit.md",
+      "reason": "Document conservative unknown-end handling",
       "sections": [
-        "relevant integration"
+        "Encerramento e incerteza"
       ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/execution-stops.mjs",
-      "reason": "Reuse immutable positive attempt end evidence",
-      "sections": [
-        "relevant integration"
-      ],
-      "max_chars": 1800
-    },
-    {
-      "path": "google-v0/lib/worker-runtime.mjs",
-      "reason": "Wire existing runtime only",
-      "sections": [
-        "relevant integration"
-      ],
-      "max_chars": 1000
-    },
-    {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Reuse acquisition/caption and count actual extractor calls",
-      "sections": [
-        "relevant integration"
-      ],
-      "max_chars": 1500
-    },
-    {
-      "path": "google-v0/tests/worker-admission.test.mjs",
-      "reason": "Reuse offline fixtures",
-      "sections": [
-        "fixture"
-      ],
-      "max_chars": 1000
-    },
-    {
-      "path": "google-v0/lib/financial-ledger.mjs",
-      "reason": "Preserve global financial gates",
-      "sections": [
-        "reservationDecision"
-      ],
-      "max_chars": 800
-    },
-    {
-      "path": "google-v0/tests/worker-integration.test.mjs",
-      "reason": "Concrete dependency: existing fixture captures caption during analysis; supply the same caption with download metadata to preserve verified content while removing extraction outside acquisition.",
-      "sections": [
-        "fixture"
-      ],
-      "max_chars": 500
+      "max_chars": 600
     }
   ],
   "validation_commands": [
@@ -101,15 +97,15 @@
     "python3 scripts/check_task_packets.py"
   ],
   "execution_budget": {
-    "worker_runs": 1,
-    "reviewer_runs": 0,
-    "fix_runs": 0,
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
     "timeout_minutes": 15,
     "reasoning": "high"
   },
   "review": {
-    "mode": "independent_human",
-    "status": "pending",
-    "reason": "Owner authorizes implementation and tests only. No extra model authorized. Independent final-head review and human acceptance remain pending before merge or deployment."
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "R1/P1 independently reproduced at head559bef7; user now explicitly authorizes one narrow fix and one new independent review afterwards. Prior review preserved outside repository. No merge/deploy or further automatic fixes."
   }
 }

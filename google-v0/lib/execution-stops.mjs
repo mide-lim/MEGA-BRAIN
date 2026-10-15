@@ -10,7 +10,7 @@ export class ExecutionStops {
     Object.assign(this,{store,analysisRevision,clock});
   }
   matches(claim,{executionId,videoId:id,stage,attemptId:attempt}){
-    return jobId(executionId)&&videoId(id)&&['analysis','upload'].includes(stage)&&attemptId(attempt)&&claim?.data.video_id===id&&claim.data.stage===stage&&claim.data.execution_attempt_id===attempt&&claim.data.analysis_revision===(stage==='analysis'?this.analysisRevision:null)&&typeof claim.updateTime==='string'&&!!claim.updateTime;
+    return jobId(executionId)&&videoId(id)&&['analysis','upload'].includes(stage)&&(stage!=='upload'||claim?.data.acquisition_end_status!=='unconfirmed')&&attemptId(attempt)&&claim?.data.video_id===id&&claim.data.stage===stage&&claim.data.execution_attempt_id===attempt&&claim.data.analysis_revision===(stage==='analysis'?this.analysisRevision:null)&&typeof claim.updateTime==='string'&&!!claim.updateTime;
   }
   async record({executionId,videoId,stage,attemptId,acquisitionMetrics}){
     const claim=await this.store.get(`jobs/${executionId}`);

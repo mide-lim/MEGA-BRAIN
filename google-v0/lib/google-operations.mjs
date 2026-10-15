@@ -57,7 +57,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
     async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
     async upload({video,executionId,recordAcquisitionExtraction}){
       await admitted(executionId,'upload',video.id);const cost=budget('upload');
-      const downloaded=await at('download_media',()=>{recordAcquisitionExtraction?.();return tools.download(video,{withMetadata:true});}),bytes=Buffer.isBuffer(downloaded)?downloaded:downloaded.bytes,media=await at('inspect_download',()=>inspect(bytes));
+      const downloaded=await at('download_media',async()=>{const completed=recordAcquisitionExtraction?.();const downloaded=await tools.download(video,{withMetadata:true});completed?.();return downloaded;}),bytes=Buffer.isBuffer(downloaded)?downloaded:downloaded.bytes,media=await at('inspect_download',()=>inspect(bytes));
       if(media.audio_status!=='present')throw Object.assign(new Error('Áudio ausente ou silencioso; transcrição não iniciada.'),{operation_step:'inspect_download'});
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));

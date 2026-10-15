@@ -24,7 +24,12 @@ export class ExecutionStops {
     const claim=await this.store.get(`jobs/${executionId}`),attempt=claim?.data.execution_attempt_id;
     if(!this.matches(claim,{executionId,videoId,stage,attemptId:attempt})||claim.updateTime!==claimUpdateTime)return null;
     const evidenceRef=pathFor(executionId,attempt),proof=(await this.store.get(evidenceRef))?.data;
-    if(proof?.schema_version!==1||proof.ended!==true||proof.execution_id!==executionId||proof.attempt_id!==attempt||proof.video_id!==videoId||proof.stage!==stage||proof.analysis_revision!==this.analysisRevision||proof.claim_update_time!==claimUpdateTime||typeof proof.ended_at!=='string'||!Number.isFinite(Date.parse(proof.ended_at))||Date.parse(proof.ended_at)>this.clock())return null;
+    const resuming=['reconciling_result','reconciliation_failed'].includes(claim.data.status),acquisition=claim.data.reconciliation_stop_proof;
+    if(resuming&&(acquisition?.execution_id!==executionId||acquisition.evidence_ref!==evidenceRef||typeof acquisition.claim_update_time!=='string'||!acquisition.claim_update_time||typeof acquisition.verified_at!=='string'||!Number.isFinite(Date.parse(acquisition.verified_at))||Date.parse(acquisition.verified_at)>this.clock()))return null;
+    // A resumed CAS uses the current version; its acquisition must still match
+    // the immutable evidence for the original ended attempt, not that new version.
+    const endedClaimVersion=resuming?acquisition.claim_update_time:claimUpdateTime;
+    if(proof?.schema_version!==1||proof.ended!==true||proof.execution_id!==executionId||proof.attempt_id!==attempt||proof.video_id!==videoId||proof.stage!==stage||proof.analysis_revision!==this.analysisRevision||proof.claim_update_time!==endedClaimVersion||typeof proof.ended_at!=='string'||!Number.isFinite(Date.parse(proof.ended_at))||Date.parse(proof.ended_at)>this.clock())return null;
     return {ended:true,execution_id:executionId,claim_update_time:claimUpdateTime,evidence_ref:evidenceRef};
   }
 }

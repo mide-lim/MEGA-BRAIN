@@ -152,3 +152,91 @@ test('runtime never treats an untracked legacy uncertain record as positive end 
  delete claim.execution_attempt_id;delete claim.analysis_revision;claim.status='uncertain';f.seed(`jobs/${f.id}`,claim);
  const before=structuredClone(f.docs);assert.deepEqual(await f.retry.request(f.action),{status:'blocked',reason:'execution_stop_unconfirmed'});assert.deepEqual(f.docs,before);assert.equal(f.stats().restores,0);
 });
+
+// R1: a legacy reconciliation status does not attest that the original worker
+// ended. These records were reachable before MEG-100 added durable evidence.
+for(const status of ['reconciling_result','reconciliation_failed'])test(`legacy ${status} resumes without end evidence must fail closed`,async()=>{
+ const f=await exitedAt('artifact_saved'),claim=(await f.store.get(`jobs/${f.id}`)).data;
+ delete claim.execution_attempt_id;delete claim.analysis_revision;delete claim.reconciliation_stop_proof;
+ f.seed(`jobs/${f.id}`,{...claim,status,result_artifact:f.saved.artifact,reconciliation_authorization_ref:'owner:legacy:20261014'});
+ const before=structuredClone(f.docs),stats=f.stats();assert.equal(proofEntry(f),undefined);
+ assert.deepEqual(await f.retry.request(f.action),{status:'blocked',reason:'execution_stop_unconfirmed'});
+ assert.deepEqual(f.docs,before);assert.deepEqual(f.stats(),stats);assert.equal(f.submissions,1);
+});
+
+// Enter each resume state through real reconciliation, rather than inventing a
+// successful audit object. The immutable proof comes from the exited attempt.
+async function acquiredResume(status){
+ const f=await exitedAt('artifact_saved');f.docs.set(...f.proof);pause(f);
+ const patch=f.store.patch.bind(f.store);let once=true;
+ f.store.patch=async(path,changes,options)=>{
+  if(once&&status==='reconciliation_failed'&&path===`videos/${f.videoId}`&&changes.analysis){once=false;throw Error('Interrupted result persistence');}
+  const out=await patch(path,changes,options);
+  if(once&&status==='reconciling_result'&&path===`jobs/${f.id}`&&changes.status==='reconciling_result'){once=false;throw Error('Lost acquisition receipt');}
+  return out;
+ };
+ await assert.rejects(f.retry.request(f.action));f.store.patch=patch;
+ const claim=await f.store.get(`jobs/${f.id}`);assert.equal(claim.data.status,status);
+ const audit=structuredClone(claim.data.reconciliation_stop_proof);assert.ok(audit);assert.notEqual(audit.claim_update_time,claim.updateTime);
+ assert.equal(audit.claim_update_time,f.proof[1].data.claim_update_time);
+ return {...f,audit};
+}
+for(const status of ['reconciling_result','reconciliation_failed'])test(`trusted ${status} resumes against original proof and current CAS version`,async()=>{
+ const f=await acquiredResume(status),parent=await f.store.get(`jobs/${f.originalId}`),prior=(await f.store.get('settings/financial')).data.jobs[f.originalId];
+ assert.equal((await f.retry.request(f.action)).status,'completed');
+ const claim=await f.store.get(`jobs/${f.id}`),state=(await f.store.get('settings/financial')).data,video=(await f.store.get(`videos/${f.videoId}`)).data;
+ assert.deepEqual(claim.data.reconciliation_stop_proof,f.audit);assert.deepEqual(await f.store.get(f.proof[0]),f.proof[1]);
+ assert.equal(video.analysis_key,f.saved.artifact.key);assert.equal(video.analysis_generation,f.saved.artifact.generation);
+ assert.equal(state.spent_cents,670);assert.equal(state.reserved_cents,0);assert.equal(state.paused,true);assert.equal(state.batch.status,'paused');assert.deepEqual(state.jobs[f.originalId],prior);assert.deepEqual(await f.store.get(`jobs/${f.originalId}`),parent);
+ assert.equal(f.submissions,1);assert.equal(f.stats().settlements,1);
+ f.flow.operations={};f.retry.artifactInspector=undefined;const before=structuredClone(f.docs);
+ assert.equal((await f.retry.request(f.action)).status,'completed');assert.deepEqual(f.docs,before);
+});
+
+for(const status of ['reconciling_result','reconciliation_failed'])for(const defect of ['missing_attempt','missing_audit','missing_record','stale_acquisition_version','foreign_reference','foreign_attempt','foreign_revision','malformed_audit','unavailable_record'])test(`${status} rejects ${defect} before restore or mutation`,async()=>{
+ const f=await acquiredResume(status),claim=(await f.store.get(`jobs/${f.id}`)).data;
+ if(defect==='missing_attempt')delete claim.execution_attempt_id;
+ if(defect==='missing_audit')delete claim.reconciliation_stop_proof;
+ if(defect==='missing_record')f.docs.delete(f.proof[0]);
+ if(defect==='stale_acquisition_version')claim.reconciliation_stop_proof.claim_update_time=(await f.store.get(`jobs/${f.id}`)).updateTime;
+ if(defect==='foreign_reference')claim.reconciliation_stop_proof.evidence_ref='execution_stops/foreign';
+ if(defect==='foreign_attempt')claim.execution_attempt_id=randomUUID();
+ if(defect==='foreign_revision')f.docs.get(f.proof[0]).data.analysis_revision='megabrain-video-text-v3';
+ if(defect==='malformed_audit')claim.reconciliation_stop_proof.verified_at=0;
+ f.seed(`jobs/${f.id}`,claim);
+ if(defect==='unavailable_record'){const get=f.store.get.bind(f.store);f.store.get=path=>path.startsWith('execution_stops/')?Promise.reject(Error('Evidence unavailable')):get(path);}
+ const before=structuredClone(f.docs),stats=f.stats();
+ assert.deepEqual(await f.retry.request(f.action),{status:'blocked',reason:'execution_stop_unconfirmed'});
+ assert.deepEqual(f.docs,before);assert.deepEqual(f.stats(),stats);assert.equal(f.submissions,1);
+});
+
+for(const status of ['reconciling_result','reconciliation_failed'])test(`${status} retains original acquisition through another lost CAS receipt`,async()=>{
+ const f=await acquiredResume(status),patch=f.store.patch.bind(f.store);let once=true;
+ f.store.patch=async(path,changes,options)=>{const out=await patch(path,changes,options);if(once&&path===`jobs/${f.id}`&&changes.status==='reconciling_result'){once=false;throw Error('Second lost acquisition receipt');}return out;};
+ await assert.rejects(f.retry.request(f.action));assert.deepEqual((await f.store.get(`jobs/${f.id}`)).data.reconciliation_stop_proof,f.audit);
+ f.store.patch=patch;assert.equal((await f.retry.request(f.action)).status,'completed');
+ assert.deepEqual((await f.store.get(`jobs/${f.id}`)).data.reconciliation_stop_proof,f.audit);assert.equal(f.stats().settlements,1);assert.equal(f.submissions,1);
+});
+
+for(const status of ['reconciling_result','reconciliation_failed'])for(const boundary of ['video','settlement','claim'])test(`${status} reuses immutable proof after another ${boundary} failure`,async()=>{
+ const f=await acquiredResume(status),patch=f.store.patch.bind(f.store);let once=true;
+ f.store.patch=async(path,changes,options)=>{
+  if(once&&(boundary==='video'&&path===`videos/${f.videoId}`&&changes.analysis||boundary==='settlement'&&path==='settings/financial'&&changes.jobs?.[f.id]?.status==='completed'||boundary==='claim'&&path===`jobs/${f.id}`&&changes.status==='completed')){once=false;throw Error('Interrupted resumed persistence');}
+  return patch(path,changes,options);
+ };
+ await assert.rejects(f.retry.request(f.action));const failed=await f.store.get(`jobs/${f.id}`);assert.equal(failed.data.status,'reconciliation_failed');assert.deepEqual(failed.data.reconciliation_stop_proof,f.audit);
+ f.store.patch=patch;assert.equal((await f.retry.request(f.action)).status,'completed');
+ const state=(await f.store.get('settings/financial')).data;assert.equal(state.spent_cents,670);assert.equal(state.reserved_cents,0);assert.equal(state.paused,true);assert.equal(state.batch.status,'paused');assert.equal(f.stats().settlements,1);assert.equal(f.submissions,1);assert.deepEqual((await f.store.get(`jobs/${f.id}`)).data.reconciliation_stop_proof,f.audit);
+});
+
+for(const status of ['reconciling_result','reconciliation_failed'])test(`${status} current-version CAS rejects a changed claim before video and ledger writes`,async()=>{
+ const f=await acquiredResume(status),video=await f.store.get(`videos/${f.videoId}`),financial=await f.store.get('settings/financial');
+ f.operations.restoreAnalysisResult=async()=>{const j=await f.store.get(`jobs/${f.id}`);await f.store.patch(`jobs/${f.id}`,{observation:'changed-during-restore'},{updateTime:j.updateTime});return structuredClone(f.saved);};
+ await assert.rejects(f.retry.request(f.action),e=>e.status===412);assert.deepEqual(await f.store.get(`videos/${f.videoId}`),video);assert.deepEqual(await f.store.get('settings/financial'),financial);assert.equal(f.submissions,1);
+});
+
+for(const status of ['reconciling_result','reconciliation_failed'])test(`${status} concurrent recoveries settle once and preserve acquisition`,async()=>{
+ const f=await acquiredResume(status),results=await Promise.allSettled([f.retry.request(f.action),f.retry.request(f.action)]);
+ assert.ok(results.some(x=>x.status==='fulfilled'&&x.value.status==='completed'));assert.ok(results.every(x=>x.status==='fulfilled'||x.reason.status===412));
+ assert.equal((await f.retry.request(f.action)).status,'completed');assert.equal(f.stats().settlements,1);assert.equal(f.submissions,1);assert.deepEqual((await f.store.get(`jobs/${f.id}`)).data.reconciliation_stop_proof,f.audit);
+});

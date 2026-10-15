@@ -3,98 +3,69 @@
   "id": "MEG-100",
   "paperclip_issue_id": "ea841de1-eebc-47ab-b0c0-a3a67eea8d15",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "5fba828685c037b9e5e33ca25011c16cca27d13e",
-  "objective": "Owner-authorized MEG-100: integrate trusted, durable per-attempt execution-end evidence in the existing runtime and saved-analysis reconciliation. Offline tests only; no public route, processing, new service, deploy or merge.",
+  "base_commit": "547abdadeeef6ff049728cb7a3795d0d3738256a",
+  "objective": "Owner-authorized PR41 P1/R1 correction only: require validated original acquisition/end evidence for reconciling_result and reconciliation_failed; preserve legitimate own-artifact idempotent resumes. Tests, same PR update and one new independent review; no processing, paid calls, merge or deploy.",
   "risk": "high",
   "acceptance_criteria": [
-    "Runtime records proof only after its awaited analysis attempt has exited, bound to server-generated attempt ID, video, stage, revision and exact claim updateTime",
-    "Live, absent, malformed, stale, foreign or unavailable evidence fails closed without result restoration or operational mutations",
-    "Saved own-generation results recover with existing CAS and idempotent accounting; preserve parent, pause, candidates and earlier costs",
-    "Abrupt death before proof remains blocked; cover artifact/video/settlement boundaries and concurrent/repeated reconciliation without new inference",
-    "Run focused and full offline processing/operations suites, links, task-packet scope and CI; independent human review pending before merge"
+    "Both legacy resume states without trusted attempt/acquisition evidence fail closed before artifact restoration, video/ledger/claim writes or dispatch",
+    "Stored acquisition proof is checked against the immutable original end record, execution/attempt/video/stage/revision and original claim version; current claim version still fences the resumed CAS",
+    "Legitimate resumed reconciliation succeeds across interruption/failure, preserving the original proof through repeated resumes rather than rebinding it to each new claim version",
+    "Regression coverage includes missing/malformed/stale/foreign/unavailable evidence, claim changes, both resume states, interrupted legitimate resumes, concurrency/repeated requests and no inference/duplicate settlement",
+    "Run focused/full offline suites, operations, links, packet/scope; publish only same PR and run one fresh read-only independent review of exact final head; no automatic further fix run"
   ],
   "allowed_paths": [
     "google-v0/lib/execution-stops.mjs",
     "google-v0/lib/worker-flow.mjs",
-    "google-v0/lib/worker-runtime.mjs",
-    "google-v0/lib/firestore.mjs",
     "google-v0/tests/execution-stops.test.mjs",
-    "google-v0/tests/firestore.test.mjs",
+    "google-v0/tests/smart-retry.test.mjs",
     "docs/smart-retry.md",
-    "tasks/MEG-100.json",
-    "google-v0/Dockerfile.worker"
+    "tasks/MEG-100.json"
   ],
   "context": [
     {
-      "path": "google-v0/lib/worker-flow.mjs",
-      "reason": "Attempt ownership, exit and existing CAS reconciliation",
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Validate immutable evidence and original acquisition on resume",
       "sections": [
-        "run",
+        "verify",
+        "matches"
+      ],
+      "max_chars": 2800
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Acquire/resume with version fence and preserved stop audit",
+      "sections": [
         "reconcileAnalysis",
         "finish"
       ],
       "max_chars": 3500
     },
     {
-      "path": "google-v0/lib/worker-runtime.mjs",
-      "reason": "Wire trusted producer and verifier",
+      "path": "google-v0/tests/execution-stops.test.mjs",
+      "reason": "Real runtime fixture and new P1 regression cases",
       "sections": [
-        "workerRuntime"
+        "fixture",
+        "exitedAt",
+        "tests"
       ],
-      "max_chars": 2900
-    },
-    {
-      "path": "google-v0/lib/firestore.mjs",
-      "reason": "Bounded evidence collection and create-only/CAS semantics",
-      "sections": [
-        "documentPath",
-        "create",
-        "patch"
-      ],
-      "max_chars": 1400
+      "max_chars": 2800
     },
     {
       "path": "google-v0/tests/smart-retry.test.mjs",
-      "reason": "Existing crash and reconciliation regression fixture",
+      "reason": "Concrete dependency: retain legitimate existing lost-receipt reconciliation tests with explicit trusted acquisition proof",
       "sections": [
-        "processLossSnapshot",
-        "stoppedProof"
+        "reconciliation",
+        "processLossSnapshot"
       ],
-      "max_chars": 2000
+      "max_chars": 1500
     },
     {
       "path": "docs/smart-retry.md",
-      "reason": "Existing fail-closed contract and publication limits",
+      "reason": "Document bounded legacy/resume proof behavior",
       "sections": [
-        "verifyExecutionStopped",
-        "Operação e publicação"
+        "Comprovante interno de encerramento"
       ],
-      "max_chars": 1000
-    },
-    {
-      "path": "google-v0/Dockerfile.worker",
-      "reason": "Concrete packaging dependency: include the new runtime import in the existing image file allowlist; no build or deploy",
-      "sections": [
-        "COPY lib/"
-      ],
-      "max_chars": 500
-    },
-    {
-      "path": "google-v0/lib/media-tools.mjs",
-      "reason": "Concrete lifecycle dependency: caption capture awaits execFile and cleanup before returning; no detached task can attest its own end",
-      "sections": [
-        "captureCaption",
-        "temporary"
-      ],
-      "max_chars": 400
-    },
-    {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Concrete lifecycle dependency: analysis awaits provider, immutable persistence and diagnostics before returning",
-      "sections": [
-        "analysis"
-      ],
-      "max_chars": 300
+      "max_chars": 700
     }
   ],
   "validation_commands": [
@@ -105,15 +76,15 @@
     "python3 scripts/check_task_packets.py"
   ],
   "execution_budget": {
-    "worker_runs": 1,
-    "reviewer_runs": 0,
-    "fix_runs": 0,
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
     "timeout_minutes": 15,
-    "reasoning": "medium"
+    "reasoning": "high"
   },
   "review": {
-    "mode": "independent_human",
-    "status": "pending",
-    "reason": "High-risk recovery/accounting boundary. Existing session implements owner request; no additional model or delegation authorized. Independent human review and approval remain required before merge; no deploy authorized."
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "Owner explicitly authorized one correction for independently reproduced R1/P1 and one new independent read-only review afterwards. Previous head review changes_requested is retained; exact new head will be reviewed separately before any acceptance. No merge/deploy or additional automatic fixes."
   }
 }

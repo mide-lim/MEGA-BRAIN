@@ -163,13 +163,19 @@ export class WorkerFlow {
     const conflicting=Object.entries(f.jobs??{}).some(([key,value])=>key!==id&&value.video_id===videoId&&value.stage===stage&&value.status!=='cancelled'&&!(value.status==='completed'&&(child&&key===originalId||(value.analysis_revision??null)!==(this.analysisRevision??null))));
     if(!j||!video||j.data.video_id!==videoId||j.data.stage!==stage||!['started','uncertain','completed','reconciling_result','reconciliation_failed'].includes(j.data.status)||!['started','uncertain','completed'].includes(reservation?.status)||reservation.video_id!==videoId||reservation.stage!==stage||reservation.maximum_cents!==this.quotes.analysis||conflicting||typeof this.operations.restoreAnalysisResult!=='function')return {status:'blocked',reason:'result_requires_reconciliation'};
     if(video.data.analysis_quality_status==='accepted'&&video.data.analysis_key===`results/instagram/${videoId}/${id}/analysis.json`&&j.data.status==='completed')return {status:'completed',duplicate:true};
+    const resuming=['reconciling_result','reconciliation_failed'].includes(j.data.status);
+    const acquisitionProof=resuming?j.data.reconciliation_stop_proof:null;
+    // A legacy resume status is not evidence that an earlier worker stopped.
+    if(resuming&&(!j.data.execution_attempt_id||acquisitionProof?.execution_id!==id||typeof acquisitionProof.claim_update_time!=='string'||!acquisitionProof.claim_update_time))return {status:'blocked',reason:'execution_stop_unconfirmed'};
     let stopProof=null;
-    if(['started','uncertain','completed'].includes(j.data.status)&&(j.data.status==='started'||typeof this.recordExecutionStopped==='function'||j.data.execution_attempt_id)){
+    if(resuming||['started','uncertain','completed'].includes(j.data.status)&&(j.data.status==='started'||typeof this.recordExecutionStopped==='function'||j.data.execution_attempt_id)){
       // A saved response proves the provider replied, not that its worker stopped.
       if(typeof this.verifyExecutionStopped!=='function')return {status:'blocked',reason:'execution_stop_unconfirmed'};
       let proof;try{proof=await this.verifyExecutionStopped({executionId:id,videoId,stage,claimUpdateTime:j.updateTime,authorizationRef});}catch{return {status:'blocked',reason:'execution_stop_unconfirmed'};}
-      if(proof?.ended!==true||proof.execution_id!==id||proof.claim_update_time!==j.updateTime||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(proof.evidence_ref??''))return {status:'blocked',reason:'execution_stop_unconfirmed'};
-      stopProof={execution_id:id,claim_update_time:j.updateTime,evidence_ref:proof.evidence_ref,verified_at:new Date(this.clock()).toISOString()};
+      if(proof?.ended!==true||proof.execution_id!==id||proof.claim_update_time!==j.updateTime||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(proof.evidence_ref??'')||resuming&&proof.evidence_ref!==acquisitionProof.evidence_ref)return {status:'blocked',reason:'execution_stop_unconfirmed'};
+      // Keep the original acquisition version: subsequent CAS writes deliberately
+      // change the claim version, but cannot rebind immutable end evidence.
+      stopProof=resuming?acquisitionProof:{execution_id:id,claim_update_time:j.updateTime,evidence_ref:proof.evidence_ref,verified_at:new Date(this.clock()).toISOString()};
     }
     const result=await this.operations.restoreAnalysisResult({video:{...video.data,id:videoId},executionId:id});
     if(!ownsResult(result,videoId,stage)||result.artifact?.key!==`results/instagram/${videoId}/${id}/analysis.json`||!/^\d+$/.test(result.artifact.generation??''))throw Error('Artefato da própria execução obrigatório.');

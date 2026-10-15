@@ -40,7 +40,7 @@ export function decodeValue(value){
   throw new Error('Tipo Firestore desconhecido.');
 }
 export const decodeFields=fields=>Object.fromEntries(Object.entries(fields).map(([key,value])=>[key,decodeValue(value)]));
-const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks']);
+const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks','execution_stops']);
 function documentPath(path){
   const [collection,id,...rest]=String(path).split('/');
   if(!collections.has(collection)||!id||rest.length||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw new Error('Documento fora do escopo permitido.');

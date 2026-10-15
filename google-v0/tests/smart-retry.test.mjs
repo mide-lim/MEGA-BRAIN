@@ -4,6 +4,8 @@ import {WorkerFlow,executionId} from '../lib/worker-flow.mjs';
 import {FinancialLedger,newLedger} from '../lib/financial-ledger.mjs';
 import {SmartRetry,settledRetryId,settledRetryAuthorizationPath,settledRetryAllowed} from '../lib/smart-retry.mjs';
 import {failureDigest} from '../lib/firestore-recovery.mjs';
+import {ExecutionStops} from '../lib/execution-stops.mjs';
+import {randomUUID} from 'node:crypto';
 import {WorkerQueue,workerHandler,validateTask} from '../lib/worker-queue.mjs';
 function fixture(stage='upload'){
  const now=Date.now(),videoId='Reel_1',batchId='pilot_retry',recoveryId='owner_retry_20261014',revision='megabrain-video-text-v4',originalId=executionId(videoId,stage,stage==='analysis'?revision:null),max=stage==='upload'?50:250;
@@ -81,8 +83,13 @@ test('persisted response reconciliation completes metadata without another infer
  assert.equal((await f.flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:test:20261014'})).status,'completed');
  assert.deepEqual((await f.store.get('settings/financial')).data,before);assert.equal((await f.flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:test:20261014'})).duplicate,true);assert.equal(restores,1);
 });
-test('a reconciliation lost receipt can be resumed without repeating the model or settling cost twice',async()=>{
+test('a reconciliation lost receipt with trusted acquisition can resume without inference or double settlement',async()=>{
  const f=fixture('analysis');const original=f.store.patch.bind(f.store);let fail=true;
+ const attemptId=randomUUID(),claim=(await f.store.get(`jobs/${f.originalId}`)).data;
+ f.seed(`jobs/${f.originalId}`,{...claim,execution_attempt_id:attemptId,analysis_revision:'megabrain-video-text-v4'});
+ const stops=new ExecutionStops({store:f.store,analysisRevision:'megabrain-video-text-v4',clock:()=>f.now});
+ assert.equal(await stops.record({executionId:f.originalId,videoId:f.videoId,stage:'analysis',attemptId}),true);
+ f.flow.verifyExecutionStopped=info=>stops.verify(info);
  f.operations.restoreAnalysisResult=async()=>({video_id:f.videoId,stage:'analysis',actual_cents:250,artifact:{key:`results/instagram/${f.videoId}/${f.originalId}/analysis.json`,generation:'8'},changes:{analysis:{title:'Recovered'},analysis_key:`results/instagram/${f.videoId}/${f.originalId}/analysis.json`,analysis_generation:'8',analysis_quality_status:'accepted'}});
  f.store.patch=async(path,changes,options)=>{if(path===`jobs/${f.originalId}`&&changes.status==='completed'&&fail){fail=false;throw Error('lost write');}return original(path,changes,options);};
  await assert.rejects(f.flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:test:20261014'}));

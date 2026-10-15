@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "id": "MEG-100",
+  "paperclip_issue_id": "ea841de1-eebc-47ab-b0c0-a3a67eea8d15",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "547abdadeeef6ff049728cb7a3795d0d3738256a",
+  "objective": "Owner-authorized PR41 P1/R1 correction only: require validated original acquisition/end evidence for reconciling_result and reconciliation_failed; preserve legitimate own-artifact idempotent resumes. Tests, same PR update and one new independent review; no processing, paid calls, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Both legacy resume states without trusted attempt/acquisition evidence fail closed before artifact restoration, video/ledger/claim writes or dispatch",
+    "Stored acquisition proof is checked against the immutable original end record, execution/attempt/video/stage/revision and original claim version; current claim version still fences the resumed CAS",
+    "Legitimate resumed reconciliation succeeds across interruption/failure, preserving the original proof through repeated resumes rather than rebinding it to each new claim version",
+    "Regression coverage includes missing/malformed/stale/foreign/unavailable evidence, claim changes, both resume states, interrupted legitimate resumes, concurrency/repeated requests and no inference/duplicate settlement",
+    "Run focused/full offline suites, operations, links, packet/scope; publish only same PR and run one fresh read-only independent review of exact final head; no automatic further fix run"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/execution-stops.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/tests/execution-stops.test.mjs",
+    "google-v0/tests/smart-retry.test.mjs",
+    "docs/smart-retry.md",
+    "tasks/MEG-100.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Validate immutable evidence and original acquisition on resume",
+      "sections": [
+        "verify",
+        "matches"
+      ],
+      "max_chars": 2800
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Acquire/resume with version fence and preserved stop audit",
+      "sections": [
+        "reconcileAnalysis",
+        "finish"
+      ],
+      "max_chars": 3500
+    },
+    {
+      "path": "google-v0/tests/execution-stops.test.mjs",
+      "reason": "Real runtime fixture and new P1 regression cases",
+      "sections": [
+        "fixture",
+        "exitedAt",
+        "tests"
+      ],
+      "max_chars": 2800
+    },
+    {
+      "path": "google-v0/tests/smart-retry.test.mjs",
+      "reason": "Concrete dependency: retain legitimate existing lost-receipt reconciliation tests with explicit trusted acquisition proof",
+      "sections": [
+        "reconciliation",
+        "processLossSnapshot"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "docs/smart-retry.md",
+      "reason": "Document bounded legacy/resume proof behavior",
+      "sections": [
+        "Comprovante interno de encerramento"
+      ],
+      "max_chars": 700
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/execution-stops.test.mjs google-v0/tests/smart-retry.test.mjs google-v0/tests/firestore.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "Owner explicitly authorized one correction for independently reproduced R1/P1 and one new independent read-only review afterwards. Previous head review changes_requested is retained; exact new head will be reviewed separately before any acceptance. No merge/deploy or additional automatic fixes."
+  }
+}

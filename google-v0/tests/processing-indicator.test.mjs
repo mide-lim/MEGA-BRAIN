@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {processingIndicator} from '../lib/processing-indicator.mjs';
-import {attentionFixtures} from '../qa/attention-fixtures.mjs';
+import {attentionFixtures,missingKnowledgeFixtures} from '../qa/attention-fixtures.mjs';
 import {loadLibrarySnapshot} from '../lib/library-sync.mjs';
 const job=(stage,status,reason_code)=>({stage,status,reason_code});
 
@@ -57,4 +57,23 @@ test('financial completion alone never implies published analysis or worker end'
 test('arbitrary diagnostics and unknown reason codes cannot enter fixed presentation',()=>{
  const out=processingIndicator({status:'needs_attention',error:'SECRET signed-url',provider_diagnostic:'TOKEN'},job('upload','uncertain','SECRET'));assert.ok(!JSON.stringify(out).includes('SECRET'));assert.ok(!JSON.stringify(out).includes('TOKEN'));
  assert.equal(processingIndicator({status:'pending'},job('__proto__','started')).code,'queued');
+});
+
+for(const [name,value,remove]of [['null',null],['false',false],['empty string',''],['missing',undefined,true],['undefined',undefined],['zero',0],['number',42],['string','invalid'],['array',[]],['object',{}]])test(`published whole knowledge ${name} is included for review without changing its report`,()=>{
+ const v=structuredClone(attentionFixtures().videos[6]);if(remove)delete v.analysis.knowledge;else v.analysis.knowledge=value;const before=structuredClone(v);
+ const i=processingIndicator(v,job('analysis','completed'));assert.equal(i.code,'knowledge_review');assert.equal(i.attention,true);assert.equal(i.stage,'analysis');assert.match(i.reason,/estrutura de conhecimento.*incompleta/);assert.match(i.action,/não solicitar nova análise paga/);assert.equal(i.retry_available,false);assert.deepEqual(v,before);
+});
+
+test('reported missing-whole-block variants all reconcile while their published reports remain available',()=>{
+ const f=missingKnowledgeFixtures(),before=structuredClone(f),p=new Map(f.items.map(i=>[i.id,i]));
+ assert.equal(f.videos.filter(v=>v.analysis).length,4);assert.equal(f.videos.filter(v=>processingIndicator(v,p.get(v.id)).attention).length,4);
+ assert.ok(f.videos.every(v=>processingIndicator(v,p.get(v.id)).code==='knowledge_review'));assert.deepEqual(f,before);
+});
+
+test('missing whole knowledge does not change active/reserved/candidate priority or unpublished classification',()=>{
+ const v=missingKnowledgeFixtures().videos[0];
+ for(const status of ['started','reserved']){const i=processingIndicator(v,job('analysis',status));assert.equal(i.code,status==='started'?'active':'reserved');assert.equal(i.attention,true);assert.match(i.action,/Aguardar/);assert.equal(i.retry_available,false);}
+ const candidate=processingIndicator({...v,analysis_candidate:{summary:'Retido'}});assert.equal(candidate.code,'candidate');assert.match(candidate.action,/preservar a análise publicada/);
+ assert.equal(processingIndicator({status:'pending',analysis:null}).code,'queued');assert.equal(processingIndicator({status:'pending',analysis:null}).attention,false);
+ const valid=attentionFixtures().videos[6];assert.equal(processingIndicator(valid).code,'accepted');assert.equal(processingIndicator(valid).attention,false);
 });

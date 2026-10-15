@@ -1,4 +1,4 @@
-import {attentionFixtures} from './attention-fixtures.mjs';
+import {attentionFixtures,missingKnowledgeFixtures} from './attention-fixtures.mjs';
 import assert from 'node:assert/strict';import {mkdir,writeFile} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';import {chromium} from 'playwright';import {startFixtureServer} from './server.mjs';import {video as fixtureVideo}from './fixture.mjs';
 const output=process.env.MEGABRAIN_QA_OUTPUT??join(tmpdir(),'megabrain-frontend-qa-results');await mkdir(output,{recursive:true});
 const server=await startFixtureServer();let browser;const failures=[],checks=[];const record=async(name,action)=>{await action();checks.push(name);};
@@ -103,6 +103,18 @@ try{
   await details.getByRole('button').filter({has:details.getByRole('heading',{name:'Active_1',exact:true})}).click();assert.ok((await details.getByRole('dialog').innerText()).includes('Aguardar a operação; não repetir o processamento.'));await details.getByRole('button',{name:'Fechar detalhes do Reel'}).click();
   await details.getByRole('button').filter({has:details.getByRole('heading',{name:'Model Distillation (destilação de modelos)',exact:true})}).click();assert.ok((await details.getByRole('dialog').innerText()).includes('A estrutura de conhecimento está incompleta.'));
   await details.screenshot({path:join(output,'frontend-attention-malformed.png'),fullPage:true});await details.close();server.setProgress(null);server.setLibraryVideos([fixtureVideo]);
+ });
+
+ await record('missing_whole_knowledge_counter_filter_and_preserved_details',async()=>{
+  const f=missingKnowledgeFixtures(),before=structuredClone(f);server.setLibraryVideos(f.videos);server.setProgress(f.items);
+  const review=await context.newPage();await review.goto(server.origin);
+  const stat=label=>review.locator('.dashboard-stats div').filter({has:review.getByText(label,{exact:true})}).locator('b');
+  await stat('Vídeos cadastrados').filter({hasText:/^4$/}).waitFor();assert.equal(await stat('Análises disponíveis').innerText(),'4');assert.equal(await stat('Itens para conferir').innerText(),'4');
+  await review.getByRole('button',{name:'Conferir itens',exact:true}).click();await review.getByText('4 resultados entre 4 vídeos cadastrados',{exact:true}).waitFor();
+  await review.getByLabel('Filtrar motivo para conferir').selectOption('knowledge_review');assert.equal(await review.locator('.card').count(),4);
+  await review.screenshot({path:join(output,'frontend-missing-knowledge-list.png'),fullPage:true});
+  for(const v of f.videos){await review.getByRole('button').filter({has:review.getByRole('heading',{name:v.analysis.title,exact:true})}).click();const dialog=review.getByRole('dialog');await dialog.getByRole('heading',{name:v.analysis.title,exact:true}).waitFor();const text=await dialog.innerText();assert.ok(text.includes(v.analysis.summary));assert.ok(text.includes('A estrutura de conhecimento está incompleta.'));assert.ok(text.includes('Conferir a extração preservada; não solicitar nova análise paga.'));assert.equal(await dialog.getByRole('button',{name:/tentar novamente|reprocessar|retry/i}).count(),0);await review.screenshot({path:join(output,`frontend-missing-knowledge-${v.id}.png`),fullPage:true});await review.getByRole('button',{name:'Fechar detalhes do Reel'}).click();}
+  assert.deepEqual(f,before);await review.close();server.setProgress(null);server.setLibraryVideos([fixtureVideo]);
  });
  assert.deepEqual(failures,[]);assert.ok(server.calls.some(x=>x.path.startsWith('/api/media/')));assert.ok(server.calls.every(x=>x.method==='GET'||x.method==='POST'&&x.path==='/api/import'));
  await page.screenshot({path:join(output,'frontend-check.png'),fullPage:true});const report={passed:true,checks,mode:'synthetic_fixture_actual_components',google_calls:0,production_data_modified:false,credentials_loaded:false,http_calls:server.calls.length,limitations:['This does not validate production Google login or a real Instagram video.','Anonymous-route security is independently checked by existing image smoke tests.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));

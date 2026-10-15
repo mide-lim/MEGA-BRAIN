@@ -3,11 +3,11 @@
 const stages={upload:'Aquisição',transcription:'Transcrição',analysis:'Análise',unknown:'Etapa não confirmada'};
 export function processingIndicator(video={},progress=null,{paused=false,stale=false}={}){
  const p=!stale&&progress&&Object.hasOwn(stages,progress.stage)&&['reserved','started','completed','cancelled','uncertain'].includes(progress.status)?progress:null;
- const knowledge=video.analysis?.knowledge;
- const malformedKnowledge=!!knowledge&&(!Array.isArray(knowledge.fields)||!Array.isArray(knowledge.keywords)||!Array.isArray(knowledge.missing_information)||knowledge.fields.some(f=>!f||typeof f.name!=='string'||typeof f.value!=='string'||!Array.isArray(f.evidence)));
- const emptyKnowledge=!!knowledge&&(malformedKnowledge||knowledge.fields.length===0);
- const candidate=!!video.analysis_candidate||!!video.candidate_analysis_key||video.analysis_quality_status==='review_required';
  const published=!!video.analysis;
+ const knowledge=video.analysis?.knowledge;
+ const malformedKnowledge=published&&(!knowledge||typeof knowledge!=='object'||Array.isArray(knowledge)||!Array.isArray(knowledge.fields)||!Array.isArray(knowledge.keywords)||!Array.isArray(knowledge.missing_information)||knowledge.fields.some(f=>!f||typeof f.name!=='string'||typeof f.value!=='string'||!Array.isArray(f.evidence)));
+ const emptyKnowledge=published&&(malformedKnowledge||knowledge.fields.length===0);
+ const candidate=!!video.analysis_candidate||!!video.candidate_analysis_key||video.analysis_quality_status==='review_required';
  const attention=video.status==='needs_attention'||emptyKnowledge||candidate||p?.status==='uncertain';
  const inferred=video.media_verified!==true?'upload':typeof video.transcript==='string'&&video.transcript.trim()||video.transcript_status==='no_speech_recognized'?'analysis':'transcription';
  const stage=p?.stage??(published||candidate?'analysis':inferred);

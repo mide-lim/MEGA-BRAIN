@@ -4,15 +4,14 @@
   "paperclip_issue_id": "8d924af9-b02d-4986-aa76-fc24490f67d9",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "ed758e8dcf1ade2eba3998c336ee524666ab7855",
-  "objective": "Implement only stage, known reason, unknown evidence and safe textual action in the existing indicator/list/details. Reuse current library and financial reads; no new retry action, route, queue/worker, state system, paid call, reprocessing, merge or deploy. Offline classification/API/browser tests and draft PR/Paperclip updates only.",
+  "objective": "Owner-authorized PR43 R1/P2 correction only: include published analyses whose whole knowledge block is absent/falsy/invalid in the existing read-only review classification; preserve published report, active/candidate precedence and no-paid-reanalysis actions. Tests, same PR update, MEG-103/92 updates and one new independent review. No data repair, reprocessing, paid calls, merge or deploy.",
   "risk": "high",
   "acceptance_criteria": [
-    "One shared predicate reconciles unique-Reel attention count/list and filters, including inventoried 51 acquisition,2 schema,1 uncertain,1 candidate and6 empty accepted knowledge fixtures.",
-    "Existing cards/details show stage, fixed known reason, unknown evidence and safe textual action for acquisition, pre-submission blocks, active operations, saved-response reference, held candidates and uncertain results.",
-    "Extractor failures never imply private/deleted; unknown cause/end remain explicit. Active/unconfirmed work never presents retry available; saved response never authorizes new inference.",
-    "Accepted/published analyses are preserved; empty/malformed structured knowledge and candidates are flagged without suggesting paid reanalysis.",
-    "Safe allowlisted messages never forward raw diagnostic/error strings, secrets or signed URLs; existing authenticated read routes only and no added store reads for indicators.",
-    "Offline unit/API/visual tests, full relevant suites and CI; independent final-head review and human acceptance remain pending before merge/release. No real operation or deployment."
+    "Whole knowledge null, false, empty string, missing/undefined and invalid scalar/array/object is classified for review when a published analysis exists, without dropping or mutating the published analysis.",
+    "Valid published knowledge remains accepted; pending/unpublished records do not become incomplete-publication cases. Active/reserved/candidate precedence and retry_available:false remain safe.",
+    "Actual-component browser fixture for four reported variants reconciles4 published/4 review items; filtering and each detail preserve title/summary and show safe check without new paid analysis.",
+    "Table-driven tests cover malformed whole knowledge and existing malformed members; existing inventory61 and projection/auth/read-only contracts continue passing.",
+    "Run focused/full offline suites, browser, ops/orchestration/links/packets/scope; publish same PR43, update MEG-103/92, then one new independent review of exact final head. No further automatic correction."
   ],
   "allowed_paths": [
     "google-v0/lib/processing-indicator.mjs",
@@ -35,74 +34,44 @@
   ],
   "context": [
     {
-      "path": "google-v0/web-google/app/library.jsx",
-      "reason": "Existing attention predicate, count/list and cards",
+      "path": "google-v0/lib/processing-indicator.mjs",
+      "reason": "Classify missing whole block without changing stage/action contracts",
       "sections": [
-        "attention",
-        "dashboard",
-        "cards"
+        "processingIndicator"
       ],
-      "max_chars": 3000
+      "max_chars": 4300
     },
     {
-      "path": "google-v0/web-google/app/reel-details.jsx",
-      "reason": "Existing detail status and raw notice",
+      "path": "google-v0/tests/processing-indicator.test.mjs",
+      "reason": "Table and invariants for R1/P2",
       "sections": [
-        "header",
-        "detail-scroll"
+        "published knowledge cases"
       ],
-      "max_chars": 1400
+      "max_chars": 2400
     },
     {
-      "path": "google-v0/lib/library-sync.mjs",
-      "reason": "Existing read-only synchronization/status contract",
+      "path": "google-v0/qa/attention-fixtures.mjs",
+      "reason": "Extend offline fixture preserving original inventory",
       "sections": [
-        "loadLibrarySnapshot",
-        "videoStatus"
-      ],
-      "max_chars": 1700
-    },
-    {
-      "path": "google-v0/lib/pipeline-progress.mjs",
-      "reason": "Safe aggregate job projection",
-      "sections": [
-        "pipelineProgress"
-      ],
-      "max_chars": 1500
-    },
-    {
-      "path": "google-v0/lib/library-repository.mjs",
-      "reason": "Existing safe video projection",
-      "sections": [
-        "publicVideo"
+        "attentionFixtures"
       ],
       "max_chars": 1500
     },
     {
       "path": "google-v0/qa/browser-check.mjs",
-      "reason": "Real component browser checks and screenshots",
+      "reason": "Actual-component counter/list/detail regression",
       "sections": [
-        "complete_library",
-        "live_updates"
+        "attention checks"
       ],
-      "max_chars": 1400
+      "max_chars": 2200
     },
     {
-      "path": "google-v0/qa/server.mjs",
-      "reason": "Isolated offline fixtures and request audit",
+      "path": "docs/processing-indicator.md",
+      "reason": "Describe only read-only P2 correction",
       "sections": [
-        "financial",
-        "library"
+        "validation"
       ],
-      "max_chars": 1000
-    },
-    {
-      "path": "google-v0/lib/knowledge.mjs",
-      "reason": "Concrete dependency: malformed/empty knowledge must be displayable for review without crashing or replacing published analysis.",
-      "sections": [
-        "combinedKnowledge"
-      ],
-      "max_chars": 500
+      "max_chars": 600
     }
   ],
   "validation_commands": [
@@ -115,15 +84,15 @@
     "python3 scripts/check_task_packets.py"
   ],
   "execution_budget": {
-    "worker_runs": 1,
-    "reviewer_runs": 0,
-    "fix_runs": 0,
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
     "timeout_minutes": 15,
     "reasoning": "high"
   },
   "review": {
-    "mode": "independent_human",
-    "status": "pending",
-    "reason": "User authorized implementation and tests, not another model session or merge/deploy. Independent final-head review remains pending before acceptance."
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "Owner explicitly authorizes one correction of independently reproduced R1/P2 at8eab2b08 and one fresh read-only review afterwards. Original finding/evidence preserved outside source. No further automatic fixes, merge or deploy."
   }
 }

@@ -31,11 +31,20 @@ export class SmartRetry{
   if(!video||!financial||financial.data.batch?.id!==this.batchId||!financial.data.batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_batch'};
   const v=video.data;
   if(v.status==='analyzed'&&v.analysis_quality_status==='accepted'){
-   const original=executionId(videoId,'analysis',this.analysisRevision);
-   const pending=await Promise.all([original,settledRetryId(original)].map(async id=>{
-    const claim=await this.store.get(`jobs/${id}`),reservation=financial.data.jobs?.[id];
+   const original=executionId(videoId,'analysis',this.analysisRevision),childId=settledRetryId(original);
+   const [parentClaim,childClaim]=await Promise.all([original,childId].map(id=>this.store.get(`jobs/${id}`)));
+   const parent=financial.data.jobs?.[original],child=financial.data.jobs?.[childId],c=childClaim?.data;
+   // The accounted parent remains historical after its one linked child finishes.
+   const completedChild=parentClaim?.data.status==='uncertain'&&parentClaim.data.video_id===videoId&&parentClaim.data.stage==='analysis'&&!parentClaim.data.recovery_of
+    &&c?.status==='completed'&&child?.status==='completed'&&c.video_id===videoId&&c.stage==='analysis'&&c.recovery_of===original&&c.settled_retry_count===1&&c.recovery_authorization===settledRetryAuthorizationPath(original)
+    &&child.video_id===videoId&&child.stage==='analysis'&&child.recovery_of===original&&child.recovery_kind==='settled_retry_v1'
+    &&parent?.status==='completed'&&!parent.recovery_of&&parent.video_id===videoId&&parent.stage==='analysis'&&parent.actual_cents===parent.maximum_cents&&parent.maximum_cents===child.maximum_cents&&parent.batch_id===child.batch_id
+    &&parent.analysis_revision===this.analysisRevision&&child.analysis_revision===this.analysisRevision&&parent.manual_reconciliation==='confirmed_schema400_full_estimate_accounted_analysis_pending'
+    &&v.analysis_key===`results/instagram/${videoId}/${childId}/analysis.json`&&/^\d+$/.test(v.analysis_generation??'');
+   const pending=[[original,parentClaim,parent],[childId,childClaim,child]].map(([id,claim,reservation])=>{
+    if(id===original&&completedChild)return false;
     return !!(claim||reservation)&&!(claim?.data.status==='completed'&&reservation?.status==='completed');
-   }));
+   });
    if(!pending.some(Boolean))return {status:'completed'};
   }
   for(const stage of ['upload','transcription','analysis']){

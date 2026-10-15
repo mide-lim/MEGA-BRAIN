@@ -15,7 +15,8 @@
     "For a persisted response left in a started claim after process loss, fail closed unless a trusted server verifier confirms the exact execution and claim version ended; reconcile only its saved artifact and own reservation",
     "Accepted video alone is not completion when the configured analysis claim or reservation remains unfinished; snapshots after artifact, video and settlement writes recover idempotently",
     "Treat absent analysis_revision and null as the same v0 identity; completed same-revision competitors remain blocked",
-    "After the authorized fixes, run one independent read-only model review of the exact published head, without implementer history; no automatic fixes or deployment"
+    "After the authorized fixes, run one independent read-only model review of the exact published head, without implementer history; no automatic fixes or deployment",
+    "Recognize an accepted, fully settled deterministic child as completed without requiring its historical parent claim to change or optional adapters; incomplete recovery evidence must still block completion"
   ],
   "allowed_paths": [
     "google-v0/lib/smart-retry.mjs",

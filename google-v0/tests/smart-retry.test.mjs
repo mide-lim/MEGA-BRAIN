@@ -272,3 +272,38 @@ test('v0 without a same-revision competitor still reconciles its own saved resul
  const flow=new WorkerFlow({store:f.store,ledger:f.ledger,operations:f.operations,quotes:f.quotes,batchId:f.batchId});
  assert.equal((await flow.reconcileAnalysis({videoId:f.videoId,authorizationRef:'owner:v0:20261015'})).status,'completed');assert.equal((await f.store.get(`videos/${f.videoId}`)).data.analysis_key,savedResult(f,id).artifact.key);assert.equal(f.calls(),0);
 });
+
+for(const inspector of ['omitted','absent','present'])for(const withFlow of [false,true])test(`completed child remains completed with ${inspector} inspector and flow=${withFlow}`,async()=>{
+ const f=await processLossSnapshot('video_saved');
+ assert.equal((await f.makeRetry(f.stoppedFlow(stoppedProof)).request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:complete:20261015'})).status,'completed');
+ const before=structuredClone(f.docs),restores=f.restores();
+ const retry=new SmartRetry({store:f.store,queue:{enqueue(){assert.fail('Completed child cannot dispatch');}},quotes:f.quotes,batchId:f.batchId,...(withFlow?{flow:f.flow}:{}),...(inspector==='omitted'?{}:{artifactInspector:async()=>inspector==='absent'?null:savedResult(f,f.childId).artifact})});
+ assert.deepEqual(await retry.inspect(f.videoId),{status:'completed'});
+ assert.deepEqual(await retry.request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:complete:20261015'}),{status:'completed'});
+ assert.deepEqual(f.docs,before);assert.equal(f.restores(),restores);assert.equal(f.submissions(),1);assert.equal((await f.store.get(`jobs/${f.originalId}`)).data.status,'uncertain');
+});
+test('accepted child with unfinished or mismatched recovery evidence never hides its pending parent',async()=>{
+ const edits=[
+  f=>f.docs.delete(`jobs/${f.originalId}`),
+  f=>f.docs.get(`jobs/${f.originalId}`).data.status='started',
+  f=>f.docs.get(`jobs/${f.originalId}`).data.video_id='Foreign',
+  f=>f.docs.get(`jobs/${f.childId}`).data.status='started',
+  f=>f.docs.get('settings/financial').data.jobs[f.childId].status='started',
+  f=>f.docs.get(`jobs/${f.childId}`).data.recovery_of='job_foreign',
+  f=>f.docs.get(`jobs/${f.childId}`).data.recovery_authorization='jobs/foreign',
+  f=>f.docs.get(`jobs/${f.childId}`).data.settled_retry_count=2,
+  f=>f.docs.get('settings/financial').data.jobs[f.childId].recovery_of='job_foreign',
+  f=>f.docs.get('settings/financial').data.jobs[f.childId].recovery_kind='foreign',
+  f=>f.docs.get('settings/financial').data.jobs[f.originalId].status='uncertain',
+  f=>f.docs.get('settings/financial').data.jobs[f.originalId].actual_cents=0,
+  f=>f.docs.get('settings/financial').data.jobs[f.childId].analysis_revision='foreign',
+  f=>f.docs.get('settings/financial').data.jobs[f.childId].batch_id='foreign',
+  f=>f.docs.get(`videos/${f.videoId}`).data.analysis_key=savedResult(f,f.originalId).artifact.key,
+  f=>delete f.docs.get(`videos/${f.videoId}`).data.analysis_generation,
+ ];
+ for(const edit of edits){
+  const f=await processLossSnapshot('video_saved');await f.makeRetry(f.stoppedFlow(stoppedProof)).request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:complete:20261015'});edit(f);const before=structuredClone(f.docs);
+  const retry=new SmartRetry({store:f.store,queue:{enqueue(){assert.fail('Incomplete recovery cannot dispatch');}},quotes:f.quotes,batchId:f.batchId});
+  assert.notEqual((await retry.inspect(f.videoId)).status,'completed');assert.notEqual((await retry.request({videoId:f.videoId,recoveryId:f.recoveryId,authorizationRef:'owner:complete:20261015'})).status,'completed');assert.deepEqual(f.docs,before);assert.equal(f.submissions(),1);
+ }
+});

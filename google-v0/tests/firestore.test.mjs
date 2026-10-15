@@ -36,3 +36,12 @@ test('admission intent keys accept reel identities without relaxing ordinary sch
   assert.throws(()=>encodeFields({other_map:{'DC9-c4-Rg11':{status:'pending'}}}));
   assert.throws(()=>encodeFields({intents:{'DC9-c4-Rg11':{'unsafe-field':1}}}));
 });
+
+
+test('execution-end evidence stays in the bounded internal collection with create-only semantics',async()=>{
+ const calls=[];const api={project:'megabrain-v0-test',request:async(url,options)=>{calls.push({url,options});return {fields:options.json.fields,updateTime:'2026-10-15T00:00:00Z'};}};
+ const db=new Firestore(api),path='execution_stops/job_'+('a'.repeat(64))+'_12345678-1234-4123-8123-123456789abc';
+ assert.equal((await db.create(path,{schema_version:1,ended:true,claim_update_time:'v1'})).created,true);
+ assert.ok(calls[0].url.includes('/execution_stops/'));assert.ok(calls[0].url.includes('currentDocument.exists=false'));
+ await assert.rejects(()=>db.get(path+'/extra'));await assert.rejects(()=>db.get('execution_stops/../jobs'));
+});

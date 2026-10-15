@@ -1,3 +1,4 @@
+import {assertAssistedScope} from './assisted-scope.mjs';
 import {settledRetryId,settledRetryAllowed,settledRetryAuthorizationPath} from './smart-retry.mjs';
 import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId} from './firestore-recovery.mjs';
 import {terminalSourceFailure,recordSourceHold} from './source-hold.mjs';
@@ -32,8 +33,9 @@ const failureDiagnostic=error=>({operation_step:['download_media','inspect_downl
 // Adapters must persist artifacts before returning. A submitted asynchronous
 // operation is polled by its persisted name, never submitted a second time.
 export class WorkerFlow {
-  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,autoHoldTerminalSources=false,verifyExecutionStopped,recordExecutionStopped,acquisition,clock=()=>Date.now()}){
+  constructor({store,ledger,operations,quotes,eligibleVideos=null,analysisRevision=null,batchId=null,autoHoldTerminalSources=false,verifyExecutionStopped,recordExecutionStopped,acquisition,assistedScope=null,clock=()=>Date.now()}){
     if(analysisRevision!==null&&!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision))throw new Error('Revisão de análise inválida.');
+    if(assistedScope)assertAssistedScope(assistedScope);this.assistedScope=assistedScope;
     this.analysisRevision=analysisRevision;this.batchId=batchId;this.autoHoldTerminalSources=autoHoldTerminalSources===true;
     if(batchId!==null&&!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(batchId))throw new Error('Lote inválido.');
     if(!store||!ledger||!operations||!quotes)throw new Error('Integrações do worker obrigatórias.');
@@ -42,15 +44,17 @@ export class WorkerFlow {
     this.eligibleVideos=eligibleVideos===null?null:new Set(eligibleVideos);
   }
   async run({videoId,stage,recoverAnalysis429=false,recoverUpload=false,recoverFirestoreWrite=false,recoverSettled=false,recoveryId}){
+    if(this.assistedScope){assertAssistedScope(this.assistedScope,{videoId,stage});if(recoverAnalysis429||recoverUpload||recoverFirestoreWrite||recoverSettled||recoveryId!==undefined)throw Error('Recuperação fora do escopo unitário.');}
     if(typeof recoverSettled!=='boolean'||recoverSettled&&(!['upload','analysis'].includes(stage)||recoverUpload||recoverAnalysis429||recoverFirestoreWrite||!/^[A-Za-z0-9_-]{16,64}$/.test(recoveryId??'')))throw Error('Retomada explícita inválida.');
     if(typeof recoverFirestoreWrite!=='boolean'||recoverFirestoreWrite&&(!['upload','transcription'].includes(stage)||recoverUpload||recoverAnalysis429||!/^[A-Za-z0-9_-]{16,64}$/.test(recoveryId??'')))throw new Error('Retomada de metadados inválida.');
     if(typeof recoverUpload!=='boolean'||recoverUpload&&(stage!=='upload'||recoverAnalysis429)||!validId(videoId)||!stages.includes(stage)||typeof recoverAnalysis429!=='boolean'||recoverAnalysis429&&stage!=='analysis')throw new Error('Tarefa fora do escopo.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
-    if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
+    if(this.batchId&&!this.assistedScope){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
     const controls=(await this.store.get('settings/automation'))?.data;
     if(!controls?.enabled||(stage==='transcription'&&!controls.transcription_enabled)||(stage==='analysis'&&!controls.analysis_enabled))return {status:'paused'};
     const video=await this.store.get(`videos/${videoId}`);
     if(!video)throw new Error('Vídeo não cadastrado.');
+    if(this.assistedScope&&['media_verified','video_key','video_generation','transcript_key','transcript_generation','transcript','analysis','analysis_key','candidate_analysis_key'].some(k=>!!video.data[k]))return {status:'blocked',reason:'assisted_existing_artifact'};
     if(stage!=='upload'&&video.data.media_verified!==true)return {status:'blocked',reason:'media_not_verified'};
     if(stage==='transcription'&&video.data.audio_status!=='present')return {status:'blocked',reason:'audio_not_verified'};
     if(stage==='analysis'&&(typeof video.data.transcript!=='string'||!video.data.transcript.trim())&&!completedEmptyTranscript(video.data,videoId))return {status:'blocked',reason:'transcript_missing'};
@@ -58,6 +62,7 @@ export class WorkerFlow {
     const originalId=executionId(videoId,stage,revision);
     const id=recoverSettled?settledRetryId(originalId):recoverFirestoreWrite&&stage==='upload'?uploadRecoveryId(originalId):originalId,path=`jobs/${id}`;
     const existing=await this.store.get(path);
+    if(this.assistedScope&&existing)return {status:'blocked',reason:'assisted_existing_claim',execution_id:id,duplicate:true};
     if(recoverSettled){
       if(existing)return {status:existing.data.status,execution_id:id,duplicate:true};
       const prior=(await this.store.get(`jobs/${originalId}`))?.data,financial=(await this.store.get('settings/financial'))?.data,authorization=(await this.store.get(settledRetryAuthorizationPath(originalId)))?.data;
@@ -170,6 +175,7 @@ export class WorkerFlow {
     }
   }
   async reconcileAnalysis({videoId,authorizationRef,executionId:requestedId}){
+    if(this.assistedScope)throw Error('Reconciliação fora do escopo unitário.');
     if(!validId(videoId)||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(authorizationRef??''))throw Error('Autorização explícita obrigatória.');
     const f=(await this.store.get('settings/financial'))?.data;
     // Persisting an already received result does not enable paid work or the queue.
@@ -203,6 +209,7 @@ export class WorkerFlow {
     catch(error){const current=await this.store.get(path);await this.store.patch(path,{status:'reconciliation_failed'},{updateTime:current.updateTime});throw error;}
   }
   async poll({videoId}){
+    if(this.assistedScope)throw Error('Polling fora do escopo unitário.');
     if(!validId(videoId))throw new Error('Vídeo inválido.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
     if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}

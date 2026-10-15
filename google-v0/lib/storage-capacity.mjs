@@ -1,11 +1,13 @@
+import {assertAssistedScope,verifyAssistedScope,assertAssistedJob} from './assisted-scope.mjs';
 import {mutateDocument} from './firestore.mjs';
 import {objectLimit,checkBatchObject} from './batch-budget.mjs';
 import {createHash} from 'node:crypto';
 const bucket='megabrain-v0-1017370021431-media';
 export function newCapacity(){return {schema_version:1,enabled:false,limit_bytes:0,admitted_bytes:0,claims:{}};}
 export class StorageCapacity{
- constructor(store){this.store=store;}
+ constructor(store,{assistedScope=null}={}){if(assistedScope)assertAssistedScope(assistedScope);this.store=store;this.assistedScope=assistedScope;}
  async reserveResult({bucket:target,key,maximumBytes=262144}){
+  if(this.assistedScope)throw Error('Resultados fora do escopo unitário.');
   if(target!==bucket||typeof key!=='string'||!key.startsWith('results/')||!Number.isSafeInteger(maximumBytes)||maximumBytes<1||maximumBytes>1048576)throw Error('Reserva de resultado fora do escopo.');
   return mutateDocument(this.store,'settings/capacity',async snapshot=>{
   const state=snapshot?.data,financial=(await this.store.get('settings/financial'))?.data;
@@ -20,11 +22,13 @@ export class StorageCapacity{
   });
  }
  async admit({bucket:target,key,bytes,digest}){
+  if(this.assistedScope){assertAssistedScope(this.assistedScope);if(key!==`originals/instagram/${this.assistedScope.videoId}/video.mp4`)throw Error('Objeto fora do escopo unitário.');await verifyAssistedScope(this.store,this.assistedScope);}
   if(target!==bucket||typeof key!=='string'||!key.startsWith('originals/')&&!key.startsWith('results/')||!Number.isSafeInteger(bytes)||bytes<1||bytes>100000000||!/^[a-f0-9]{64}$/.test(digest??''))throw new Error('Objeto fora do escopo de capacidade.');
   return mutateDocument(this.store,'settings/capacity',async snapshot=>{
   const state=snapshot?.data;
   if(state?.schema_version!==1||state.enabled!==true||!Number.isSafeInteger(state.limit_bytes)||state.limit_bytes<1||!Number.isSafeInteger(state.admitted_bytes)||state.admitted_bytes<0||!state.claims||Array.isArray(state.claims))throw new Error('Capacidade não liberada.');
   const financial=(await this.store.get('settings/financial'))?.data;
+  if(this.assistedScope){const job=financial?.jobs?.[this.assistedScope.executionId];assertAssistedJob(this.assistedScope,this.assistedScope.executionId,job);if(job.status!=='started')throw Error('Aquisição não iniciada.');}
   if(!Number.isSafeInteger(financial?.ongoing_storage_planned_bytes)||state.limit_bytes>financial.ongoing_storage_planned_bytes)throw new Error('Capacidade excede projeção financeira.');
   if(!Number.isSafeInteger(state.claim_limit??100)||(state.claim_limit??100)<100||(state.claim_limit??100)>objectLimit(financial))throw Error('Limite de objetos inválido.');
   const entries=Object.values(state.claims);
@@ -32,7 +36,7 @@ export class StorageCapacity{
   const id='object_'+createHash('sha256').update(target+'/'+key).digest('hex'),existing=state.claims[id];
   if(existing?.pending===true){if(bytes>existing.maximum_bytes)throw Error('Resultado excede reserva de capacidade.');return {changes:{claims:{...state.claims,[id]:{...existing,pending:false,bytes,digest}}},result:{reserved_bytes:existing.reserved_bytes}};}
   if(existing){if(existing.bytes!==bytes||existing.digest!==digest)throw new Error('Objeto diverge da reserva imutável.');return {result:{duplicate:true}};}
-  checkBatchObject(financial,key);
+  if(!this.assistedScope)checkBatchObject(financial,key);
   const reservedBytes=Math.ceil(bytes*1.05)+1024;
   if(entries.length>=(state.claim_limit??100)||state.admitted_bytes+reservedBytes>state.limit_bytes)throw new Error('Capacidade do piloto esgotada.');
   return {changes:{admitted_bytes:state.admitted_bytes+reservedBytes,claims:{...state.claims,[id]:{bytes,digest,reserved_bytes:reservedBytes}}},result:{reserved_bytes:reservedBytes}};

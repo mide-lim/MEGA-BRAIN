@@ -1,3 +1,4 @@
+import {assertAssistedScope,verifyAssistedScope,assertAssistedJob} from './assisted-scope.mjs';
 import {settledRetryId,settledRetryAllowed,settledRetryAuthorizationPath} from './smart-retry.mjs';
 import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId,settledMetadataUpload} from './firestore-recovery.mjs';
 import {terminalSourceFailure} from './source-hold.mjs';
@@ -22,6 +23,7 @@ function validate(state){
   let reserved=0;
   for(const [id,j]of Object.entries(state.jobs)){
     if(j.recovery_of!==undefined){const parent=state.jobs[j.recovery_of];const settled=j.recovery_kind==='settled_retry_v1'&&id===settledRetryId(j.recovery_of)&&parent?.status==='completed'&&!parent.recovery_of&&parent.actual_cents===parent.maximum_cents&&((j.stage==='upload'&&parent.manual_reconciliation==='terminal_metadata_estimate_accounted_user_verdict_pending')||(j.stage==='analysis'&&parent.manual_reconciliation==='confirmed_schema400_full_estimate_accounted_analysis_pending'&&j.analysis_revision===parent.analysis_revision));if(!(settled||j.stage==='upload'&&id===uploadRecoveryId(j.recovery_of)&&settledMetadataUpload(parent))||parent?.stage!==j.stage||parent.video_id!==j.video_id||parent.maximum_cents!==j.maximum_cents||parent.batch_id!==j.batch_id)throw Error('Tentativa vinculada inválida.');}
+    if(j.assisted_scope_ref!==undefined&&(j.stage!=='upload'||j.batch_id!==undefined||j.recovery_of!==undefined||!/^jobs\/assisted_upload_[A-Za-z0-9_-]{16,64}$/.test(j.assisted_scope_ref)||j.maximum_cents<1||j.maximum_cents>100))throw Error('Reserva unitária inválida.');
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
@@ -34,8 +36,8 @@ export function newLedger(){return {schema_version:1,allocation_cents:150000,res
   coverage_verified:false,balance_observed_at:null,credit_expires_at:null,balance_max_age_seconds:3600,expiry_margin_hours:72,
   ongoing_commitment_cents:0,ongoing_storage_planned_bytes:0,ongoing_costs_observed_at:null,ongoing_costs_valid_until:null,
   paused:true,enabled_stages:{upload:false,transcription:false,analysis:false,media_access:false},jobs:{}};}
-export function reservationDecision(state,{now=Date.now(),maximumCents,stage,videoId}={}){
-  validate(state);const reasons=[];
+export function reservationDecision(state,{now=Date.now(),maximumCents,stage,videoId,assistedScope=null}={}){
+  validate(state);if(assistedScope)assertAssistedScope(assistedScope,{stage,videoId,maximumCents});const reasons=[];
   if(!cents(maximumCents)||maximumCents===0||!stages.has(stage))reasons.push('Estimativa positiva e etapa válidas são obrigatórias.');
   if(state.paused!==false||state.enabled_stages?.[stage]!==true)reasons.push('Etapa pausada ou desligada.');
   if(state.coverage_verified!==true)reasons.push('Cobertura dos créditos não confirmada.');
@@ -48,7 +50,7 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage,vid
   // remaining_credit_cents must conservatively include account-wide consumption.
   const accountAvailable=Math.min(state.remaining_credit_cents,state.allocation_cents-state.spent_cents)-state.reserve_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
   const pilotAvailable=state.pilot_envelope_cents==null?accountAvailable:state.pilot_envelope_cents-state.spent_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
-  const batch=batchDecision(state,{videoId,maximumCents});reasons.push(...batch.reasons);
+  const batch=assistedScope?{reasons:[],available_cents:assistedScope.maximumCents}:batchDecision(state,{videoId,maximumCents});reasons.push(...batch.reasons);
   const available=Math.min(accountAvailable,pilotAvailable,batch.available_cents);
   if(!Number.isSafeInteger(available)||maximumCents>available)reasons.push('Reserva insuficiente.');
   return {ready:reasons.length===0,reasons,available_cents:Math.max(0,available),uploads_enabled:stage==='upload'&&state.enabled_stages.upload===true,
@@ -56,7 +58,7 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage,vid
     paid_calls_enabled:stage!=='upload'&&state.enabled_stages?.[stage]===true};
 }
 export class FinancialLedger{
-  constructor(store,{clock=()=>Date.now(),path='settings/financial'}={}){if(path!=='settings/financial')throw new Error('Livro financeiro deve usar documento fixo.');Object.assign(this,{store,clock,path});}
+  constructor(store,{clock=()=>Date.now(),path='settings/financial',assistedScope=null}={}){if(path!=='settings/financial')throw new Error('Livro financeiro deve usar documento fixo.');if(assistedScope)assertAssistedScope(assistedScope);Object.assign(this,{store,clock,path,assistedScope});}
   async recordOngoingCosts(estimates){
     return mutateDocument(this.store,this.path,async snapshot=>{
     if(!snapshot)throw new Error('Controle financeiro ausente.');
@@ -74,6 +76,7 @@ export class FinancialLedger{
     return mutateDocument(this.store,this.path,async snapshot=>{
     if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);
+    if(this.assistedScope){assertAssistedScope(this.assistedScope,{executionId,videoId,stage,maximumCents});await verifyAssistedScope(this.store,this.assistedScope);if(recoveryOf!==undefined||settledRetry||analysisRevision!==undefined||Object.values(state.jobs).some(j=>j.video_id===videoId))throw Error('Aquisição unitária exige vídeo sem histórico.');}
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
     if(settledRetry!==false&&settledRetry!==true||settledRetry&&recoveryOf===undefined)throw Error('Retomada explícita inválida.');
     if(settledRetry){
@@ -85,18 +88,18 @@ export class FinancialLedger{
     }
     if(Object.entries(state.jobs).some(([id,j])=>id!==recoveryOf&&j.video_id===videoId&&j.stage===stage&&j.status!=='cancelled'&&(state.batch||['reserved','started','uncertain'].includes(j.status)||j.analysis_revision===analysisRevision)))throw new Error('Etapa do vídeo já reservada, concluída ou com resultado incerto.');
     if(Object.keys(state.jobs).length>=jobLimit(state))throw new Error('Livro do piloto completo; reconciliação necessária.');
-    if(state.batch?.video_ids.length===262){
+    if(!this.assistedScope&&state.batch?.video_ids.length===262){
       const controls=(await this.store.get('settings/automation'))?.data;
       if(!Number.isInteger(controls?.parallelism)||controls.parallelism<1||controls.parallelism>4||controls.enabled!==true)throw Error('Automacao paralela nao liberada.');
       if(!state.batch.active_video_ids.includes(videoId)&&state.batch.active_video_ids.length>=controls.parallelism)throw Error('Vias ocupadas conforme controle atual.');
     }
-    const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage,videoId});if(!decision.ready)throw new Error(decision.reasons.join(' '));
+    const decision=reservationDecision(state,{now:this.clock(),maximumCents,stage,videoId,assistedScope:this.assistedScope});if(!decision.ready)throw new Error(decision.reasons.join(' '));
     const job={video_id:videoId,stage,maximum_cents:maximumCents,status:'reserved',created_at:new Date(this.clock()).toISOString()};
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;
     if(recoveryOf!==undefined)job.recovery_of=recoveryOf;
     if(settledRetry)job.recovery_kind='settled_retry_v1';
-    if(state.batch)job.batch_id=state.batch.id;
-    const batch=state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
+    if(this.assistedScope)job.assisted_scope_ref=this.assistedScope.reference;else if(state.batch)job.batch_id=state.batch.id;
+    const batch=!this.assistedScope&&state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
     return {changes:{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents,...(batch?{batch}:{})},result:{...decision,execution_id:executionId}};
     });
   }
@@ -176,10 +179,11 @@ export class FinancialLedger{
     return mutateDocument(this.store,this.path,async snapshot=>{
     if(!snapshot)throw new Error('Controle financeiro ausente.');
     const state=snapshot.data;validate(state);const job=state.jobs[executionId];if(!job)throw new Error('Reserva ausente.');
+    if(this.assistedScope){assertAssistedJob(this.assistedScope,executionId,job);await verifyAssistedScope(this.store,this.assistedScope);}
     const updated={...job},changes={};
     if(action==='start'){
       if(job.status!=='reserved')throw new Error('Execução não pode ser repetida.');
-      const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id});
+      const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id,assistedScope:this.assistedScope});
       if(!decision.ready)throw new Error(decision.reasons.join(' '));updated.status='started';
     }else if(action==='uncertain'){
       if(job.status!=='started')throw new Error('Apenas execução iniciada pode ficar incerta.');updated.status='uncertain';changes.paused=true;
@@ -194,7 +198,7 @@ export class FinancialLedger{
     }else throw new Error('Transição não permitida.');
     updated.updated_at=new Date(this.clock()).toISOString();
     if(pause===true)changes.paused=true;
-    if(state.batch?.video_ids.length===262&&((action==='complete'&&job.stage==='analysis')||(action==='cancel'&&job.stage==='upload')))changes.batch={...state.batch,active_video_ids:state.batch.active_video_ids.filter(v=>v!==job.video_id)};
+    if(!job.assisted_scope_ref&&state.batch?.video_ids.length===262&&((action==='complete'&&job.stage==='analysis')||(action==='cancel'&&job.stage==='upload')))changes.batch={...state.batch,active_video_ids:state.batch.active_video_ids.filter(v=>v!==job.video_id)};
     return {changes:{...changes,jobs:{...state.jobs,[executionId]:updated}},result:updated};
     });
   }

@@ -3,65 +3,58 @@
   "id": "MEG-92",
   "paperclip_issue_id": "9e62fece-a415-46bf-a965-ffb09c589212",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "4e0dc639a4c78b5580688bb5b48d45c180cffecf",
-  "objective": "Owner-requested explicit source retry and persisted-analysis reconciliation; preserve prior failures, artifacts, coverage and unknown inference holds.",
+  "base_commit": "1166829cf1f5a621f58a0dd92e2274e89ef55718",
+  "objective": "Owner-authorized corrective follow-up to PR39: reconcile a saved deterministic child analysis, preserve completed prior-revision history, and resume an unsubmitted retry_ready dispatch idempotently. No deploy, public route, new queues or paid processing.",
   "risk": "high",
   "acceptance_criteria": [
-    "Explicit retry of settled download-only failures creates one covered deterministic child, never resetting original claims",
-    "Reuse verified media and transcript; persisted analysis is reconciled without another model call",
-    "Duplicate deliveries, stale authorization, unknown provider results and existing original media cannot produce duplicate work",
-    "Classify empty Instagram media responses safely; capture caption during download to avoid repeat acquisition",
-    "Meaningful concurrency, accounting, partial failure, pause and artifact tests pass; independent review before publication",
-    "The worker image contains all imports of the retry module; task packet references the actual open Paperclip follow-up"
+    "A saved child response is reconciled by its deterministic execution identity and generation, without new inference; parent history and accounting remain unchanged",
+    "Completed analyses of prior revisions do not block the current saved result; conflicting active/uncertain or same-revision executions remain blocked",
+    "A crash after marking retry_ready resumes the same dispatch identity; concurrent requests converge and uncertain outbox delivery is never blindly retried",
+    "Regression tests cover pause, rejected candidate preservation, wrong identity/linkage, lost receipts, concurrent requests, and no duplicate model calls or settlement",
+    "Run the existing packet checks and full offline test suites; independent review of final head is pending, no merge/deploy or paid calls in this follow-up"
   ],
   "allowed_paths": [
     "google-v0/lib/smart-retry.mjs",
     "google-v0/lib/worker-flow.mjs",
-    "google-v0/lib/financial-ledger.mjs",
-    "google-v0/lib/worker-queue.mjs",
-    "google-v0/lib/google-operations.mjs",
-    "google-v0/lib/media-tools.mjs",
     "google-v0/tests/smart-retry.test.mjs",
-    "google-v0/tests/media-tools.test.mjs",
-    "google-v0/tests/google-operations.test.mjs",
     "docs/smart-retry.md",
-    "google-v0/lib/source-hold.mjs",
-    "tasks/MEG-92.json",
-    "google-v0/Dockerfile.worker",
-    "google-v0/tests/worker-packaging.test.mjs"
+    "tasks/MEG-92.json"
   ],
   "context": [
     {
-      "path": "google-v0/lib/worker-flow.mjs",
-      "reason": "Claim and finish invariants",
+      "path": "google-v0/lib/smart-retry.mjs",
+      "reason": "Planner, child artifact selection and unsubmitted dispatch",
       "sections": [
-        "run"
+        "inspect",
+        "request"
       ],
       "max_chars": 4000
     },
     {
-      "path": "google-v0/lib/financial-ledger.mjs",
-      "reason": "Accounting and recovery",
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Result reconciliation, conflicting executions and finish invariants",
       "sections": [
-        "reserve"
+        "reconcileAnalysis",
+        "finish"
       ],
-      "max_chars": 3500
+      "max_chars": 3000
     },
     {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Artifact persistence and reuse",
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Concrete dependency: keep existing idempotent settlement and parent-link validation unchanged",
       "sections": [
-        "analysis"
+        "validate",
+        "reconcileAnalysisResult"
       ],
       "max_chars": 2500
     },
     {
-      "path": "google-v0/lib/media-tools.mjs",
-      "reason": "Download and caption extraction",
+      "path": "google-v0/tests/smart-retry.test.mjs",
+      "reason": "Existing real flow/ledger fixture for regressions",
       "sections": [
-        "download"
+        "fixture"
       ],
-      "max_chars": 1500
+      "max_chars": 2000
     }
   ],
   "validation_commands": [
@@ -71,7 +64,7 @@
     "python3 scripts/check_task_packets.py"
   ],
   "execution_budget": {
-    "worker_runs": 0,
+    "worker_runs": 1,
     "reviewer_runs": 0,
     "fix_runs": 0,
     "timeout_minutes": 15,
@@ -80,6 +73,6 @@
   "review": {
     "mode": "independent_human",
     "status": "pending",
-    "reason": "Data recovery and infrastructure require independent human review of final head before merge or deployment."
+    "reason": "Owner authorized these three fixes and a small corrective PR on 2026-10-15. Independent review is still required before merge/deploy; no additional model agents authorized."
   }
 }

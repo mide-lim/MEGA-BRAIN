@@ -142,15 +142,19 @@ export class WorkerFlow {
       return {status:started?'uncertain':'blocked',execution_id:id};
     }
   }
-  async reconcileAnalysis({videoId,authorizationRef}){
+  async reconcileAnalysis({videoId,authorizationRef,executionId:requestedId}){
     if(!validId(videoId)||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(authorizationRef??''))throw Error('Autorização explícita obrigatória.');
     const f=(await this.store.get('settings/financial'))?.data;
     // Persisting an already received result does not enable paid work or the queue.
     if(!f)return {status:'blocked',reason:'missing_financial_state'};
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId)||this.batchId&&(f.batch?.id!==this.batchId||!f.batch.video_ids.includes(videoId)))return {status:'blocked',reason:'outside_active_batch'};
-    const stage='analysis',id=executionId(videoId,stage,this.analysisRevision),path=`jobs/${id}`,j=await this.store.get(path),video=await this.store.get(`videos/${videoId}`),reservation=f.jobs?.[id];
-    if(!j||!video||j.data.video_id!==videoId||j.data.stage!==stage||!['uncertain','completed','reconciling_result','reconciliation_failed'].includes(j.data.status)||!['started','uncertain','completed'].includes(reservation?.status)||reservation.video_id!==videoId||reservation.stage!==stage||reservation.maximum_cents!==this.quotes.analysis||Object.entries(f.jobs).some(([key,value])=>key!==id&&value.video_id===videoId&&value.stage===stage&&value.status!=='cancelled')||typeof this.operations.restoreAnalysisResult!=='function')return {status:'blocked',reason:'result_requires_reconciliation'};
-    if(video.data.analysis_quality_status==='accepted'&&j.data.status==='completed')return {status:'completed',duplicate:true};
+    const stage='analysis',originalId=executionId(videoId,stage,this.analysisRevision),id=requestedId??originalId;
+    if(id!==originalId&&id!==settledRetryId(originalId))return {status:'blocked',reason:'result_execution_mismatch'};
+    const path=`jobs/${id}`,j=await this.store.get(path),video=await this.store.get(`videos/${videoId}`),reservation=f.jobs?.[id],parent=f.jobs?.[originalId],child=id!==originalId;
+    if(child&&(j?.data.recovery_of!==originalId||j.data.settled_retry_count!==1||j.data.recovery_authorization!==settledRetryAuthorizationPath(originalId)||reservation?.recovery_of!==originalId||reservation.recovery_kind!=='settled_retry_v1'||parent?.status!=='completed'||parent.recovery_of||parent.video_id!==videoId||parent.stage!==stage||parent.actual_cents!==parent.maximum_cents||parent.maximum_cents!==reservation.maximum_cents||parent.batch_id!==reservation.batch_id||parent.analysis_revision!==this.analysisRevision||reservation.analysis_revision!==this.analysisRevision||parent.manual_reconciliation!=='confirmed_schema400_full_estimate_accounted_analysis_pending'))return {status:'blocked',reason:'result_retry_linkage_mismatch'};
+    const conflicting=Object.entries(f.jobs??{}).some(([key,value])=>key!==id&&value.video_id===videoId&&value.stage===stage&&value.status!=='cancelled'&&!(value.status==='completed'&&(child&&key===originalId||value.analysis_revision!==this.analysisRevision)));
+    if(!j||!video||j.data.video_id!==videoId||j.data.stage!==stage||!['uncertain','completed','reconciling_result','reconciliation_failed'].includes(j.data.status)||!['started','uncertain','completed'].includes(reservation?.status)||reservation.video_id!==videoId||reservation.stage!==stage||reservation.maximum_cents!==this.quotes.analysis||conflicting||typeof this.operations.restoreAnalysisResult!=='function')return {status:'blocked',reason:'result_requires_reconciliation'};
+    if(video.data.analysis_quality_status==='accepted'&&video.data.analysis_key===`results/instagram/${videoId}/${id}/analysis.json`&&j.data.status==='completed')return {status:'completed',duplicate:true};
     const result=await this.operations.restoreAnalysisResult({video:{...video.data,id:videoId},executionId:id});
     if(!ownsResult(result,videoId,stage)||result.artifact?.key!==`results/instagram/${videoId}/${id}/analysis.json`||!/^\d+$/.test(result.artifact.generation??''))throw Error('Artefato da própria execução obrigatório.');
     await this.store.patch(path,{status:'reconciling_result',original_failure_diagnostic:j.data.original_failure_diagnostic??j.data.failure_diagnostic??null,result_artifact:result.artifact,reconciliation_authorization_ref:authorizationRef},{updateTime:j.updateTime});

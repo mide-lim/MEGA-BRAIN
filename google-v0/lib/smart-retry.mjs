@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {failureDigest} from './firestore-recovery.mjs';
+import {mutateDocument} from './firestore.mjs';
 import {terminalSourceFailure} from './source-hold.mjs';
 import {executionId,completedEmptyTranscript} from './worker-flow.mjs';
 
@@ -34,6 +35,10 @@ export class SmartRetry{
    const originalId=executionId(videoId,stage,stage==='analysis'?this.analysisRevision:null),snapshot=await this.store.get(`jobs/${originalId}`),reservation=financial.data.jobs?.[originalId];
    const childId=settledRetryId(originalId),child=await this.store.get(`jobs/${childId}`),childReservation=financial.data.jobs?.[childId];
    if(child){
+    if(stage==='analysis'&&this.artifactInspector){
+     const artifact=await this.artifactInspector({videoId,executionId:childId,stage});
+     if(artifact)return {status:'reconcile_saved_result',stage,execution_id:childId,artifact};
+    }
     if(child.data.status==='completed'&&childReservation?.status==='completed'&&(stage!=='upload'||v.media_verified===true))continue;
     return {status:'needs_reconciliation',stage,execution_id:childId,reason:'retry_already_claimed'};
    }
@@ -44,7 +49,7 @@ export class SmartRetry{
    }
    if(!snapshot&&!reservation&&(stage==='upload'&&v.media_verified||stage==='transcription'&&(v.media_verified!==true||v.audio_status!=='present')||stage==='analysis'&&(v.media_verified!==true||!v.transcript?.trim()&&!completedEmptyTranscript(v,videoId))))return {status:'blocked',reason:'preserved_source_requires_reconciliation',stage};
    if(!snapshot&&!reservation)return {status:'ready_for_dispatch',stage,task:{videoId,stage,poll:0}};
-   if(snapshot?.data.status==='blocked'&&!reservation&&!snapshot.data.operation_name&&!snapshot.data.analysis_attempts?.length)return {status:'unsubmitted',stage,execution_id:originalId,task:{videoId,stage,poll:0}};
+   if(['blocked','retry_ready'].includes(snapshot?.data.status)&&!reservation&&!snapshot.data.operation_name&&!snapshot.data.analysis_attempts?.length)return {status:'unsubmitted',stage,execution_id:originalId,task:{videoId,stage,poll:0}};
    if(stage==='transcription'&&snapshot?.data.status==='waiting'&&reservation?.status==='started'&&/^projects\/(?:megabrain-v0-1017370021431|711042421394)\/locations\/(?:us|global)\/operations\/[A-Za-z0-9_-]+$/.test(snapshot.data.operation_name??''))return {status:'operation_pending',stage,task:{videoId,stage,poll:1}};
    const kind=settledRetryKind({claim:snapshot?.data,financial:reservation,video:v,videoId,stage});
    if(kind)return {status:'explicit_retry_available',kind,stage,execution_id:originalId};
@@ -55,15 +60,19 @@ export class SmartRetry{
  async request({videoId,recoveryId,authorizationRef}){
   if(!validRecovery(recoveryId)||!validReference(authorizationRef))throw Error('Identificador e autorização explícita obrigatórios.');
   const plan=await this.inspect(videoId);
-  if(plan.status==='reconcile_saved_result')return this.flow?.reconcileAnalysis?this.flow.reconcileAnalysis({videoId,authorizationRef}):plan;
+  if(plan.status==='reconcile_saved_result')return this.flow?.reconcileAnalysis?this.flow.reconcileAnalysis({videoId,authorizationRef,executionId:plan.execution_id}):plan;
   if(!['ready_for_dispatch','unsubmitted','operation_pending','explicit_retry_available'].includes(plan.status))return plan;
   const f=(await this.store.get('settings/financial'))?.data,a=(await this.store.get('settings/automation'))?.data;
   if(f?.paused!==false||f.batch?.status!=='active'||a?.enabled!==true||plan.stage==='analysis'&&!a.analysis_enabled||plan.stage==='transcription'&&!a.transcription_enabled)return {status:'paused'};
   if(plan.status==='unsubmitted'){
-   const path=`jobs/${plan.execution_id}`,j=await this.store.get(path);
-   const current=(await this.store.get('settings/financial'))?.data;
-   if(current.jobs?.[plan.execution_id]||j?.data.status!=='blocked'||j.data.operation_name||j.data.analysis_attempts?.length)return {status:'needs_reconciliation'};
-   await this.store.patch(path,{status:'retry_ready',original_failure_diagnostic:j.data.failure_diagnostic??null,recovery_authorization_ref:authorizationRef},{updateTime:j.updateTime});
+   const dispatchId=await mutateDocument(this.store,`jobs/${plan.execution_id}`,async j=>{
+    const current=(await this.store.get('settings/financial'))?.data,c=j.data;
+    if(!current||current.jobs?.[plan.execution_id]||c.video_id!==videoId||c.stage!==plan.stage||!['blocked','retry_ready'].includes(c.status)||c.operation_name||c.analysis_attempts?.length||c.retry_recovery_id!==undefined&&!validRecovery(c.retry_recovery_id))return {changes:null,result:null};
+    const id=c.retry_recovery_id??recoveryId;
+    return {changes:c.status==='retry_ready'&&c.retry_recovery_id?null:{status:'retry_ready',retry_recovery_id:id,original_failure_diagnostic:c.original_failure_diagnostic??c.failure_diagnostic??null,recovery_authorization_ref:c.recovery_authorization_ref??authorizationRef},result:id};
+   });
+   if(!dispatchId)return {status:'needs_reconciliation'};
+   recoveryId=dispatchId;
   }
   if(plan.status!=='explicit_retry_available')return this.queue.enqueue({...plan.task,recoveryId});
   const c=(await this.store.get(`jobs/${plan.execution_id}`))?.data,v=(await this.store.get(`videos/${videoId}`))?.data;

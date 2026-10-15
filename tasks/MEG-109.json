@@ -3,89 +3,94 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "d979e34d61c0b32b4062ab12c45911839b47ae48",
-  "objective": "Human authorizes one small PR implementing MEG-109 private assisted entrypoint, real image inclusion, concurrency-one runtime and publication contract, tests and Paperclip updates. Reuse helper, OIDC, CAS, ledger and execution-stop verifier. No new tasks/resources/IAM, actual approvals, paid calls, processing, merge or deployment.",
+  "base_commit": "3cbc957a4f79180728b156a34d284108d7a208b2",
+  "objective": "Implement one bounded assisted upload scope derived only from consumed durable approval, reuse existing flow/ledger/capacity, preserve262 batch and all legacy reserves; tests and draft PR and MEG109 update. No new Paperclip tasks, Google calls/config/IAM/resources, approvals, actual acquisition/analysis, merge or deploy.",
   "risk": "high",
   "acceptance_criteria": [
-    "Private POST accepts only requestId, validates existing OIDC before any store access or work, feature disabled by default, immutable server-owned allowlist <=6 and persisted helper authorization.",
-    "Assisted mode disables normal processing/admission/diagnosis entrypoints and cannot coexist with enabled dispatch/admission; checks automation1/acquisition1 with inference paused; CAS applies max1 even under configuration drift.",
-    "Keep helper approval/quote/CAS/uncertain receipt/no replay, zero successors and closure proofs unchanged; no authorization issued by endpoint or this task.",
-    "Package helper and entrypoint in existing image; isolated-package test imports and executes the real synthetic assisted entrypoint without network.",
-    "Workflow expected worker/web runtime map1/1; guard/baseline/identity/paused checks unchanged; no runtime configuration applied, financial batch4/262 preserved.",
-    "Focused/full processing/ops/orchestration/links/packet checks; PR exact-head CI; independent review remains required before readiness/merge, no reviewer or new model delegated this turn."
+    "Only consumed, valid one-use fresh upload approval can mint immutable invocation-owned scope; no client flag or recovery bypass; normal batch paths unchanged.",
+    "Unit scope binds ID/execution/request/quote and exact original key, permits only one upload, accounts in global existing ledger without262 batch association/mutation, all financial freshness/reserve/capacity/duplicate guards preserved.",
+    "Default off, runtime-only server opt-in; scoped flow and hooks never mutate shared singleton state; atomic acquisition limit1 and closure semantics retained.",
+    "Offline integration tests prove success, scope forgery/ID/stage/quote/replay/expiry blocks, concurrency, global finance, capacity/object and old262 accounting preserved.",
+    "Draft PR and exact MEG109 update; operational legacy isolation remains unproven and required before activation; no real workload, reserve release, new tasks, merge or deploy."
   ],
   "allowed_paths": [
     "google-v0/lib/assisted-upload.mjs",
+    "google-v0/lib/assisted-scope.mjs",
     "google-v0/lib/worker-runtime.mjs",
-    "google-v0/lib/worker-http.mjs",
-    "google-v0/lib/acquisition-control.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/batch-budget.mjs",
+    "google-v0/lib/storage-capacity.mjs",
     "google-v0/Dockerfile.worker",
-    "google-v0/config/worker-example.json",
-    "google-v0/tests/assisted-upload.test.mjs",
-    "google-v0/tests/acquisition-control.test.mjs",
-    "google-v0/tests/worker-packaging.test.mjs",
-    ".github/workflows/google-deploy.yml",
-    "ops/test_deploy_existing_services.py",
+    "google-v0/tests/assisted-scope.test.mjs",
     "docs/assisted-upload.md",
-    "tasks/MEG-109.json"
+    "tasks/MEG-109.json",
+    "google-v0/lib/worker-reservation-gate.mjs"
   ],
   "context": [
     {
       "path": "google-v0/lib/assisted-upload.mjs",
-      "reason": "Preserve approval consumption/outcome receipt and reuse helper",
+      "reason": "Approval authority and CAS",
       "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
+        "scope integration and existing validation"
       ],
-      "max_chars": 3000
+      "max_chars": 1800
     },
     {
       "path": "google-v0/lib/worker-runtime.mjs",
-      "reason": "Wire same trusted store/flow/identity; disable normal entrypoints in assisted mode",
+      "reason": "Per-invocation dependency binding",
       "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
+        "scope integration and existing validation"
       ],
-      "max_chars": 2000
+      "max_chars": 1400
     },
     {
-      "path": "google-v0/lib/acquisition-control.mjs",
-      "reason": "Retain global CAS and end-proof semantics while applying assisted ceiling1",
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Flow admission, reserve and completion",
       "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
+        "scope integration and existing validation"
       ],
-      "max_chars": 1500
+      "max_chars": 2200
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Global accounting and immutable262 batch",
+      "sections": [
+        "scope integration and existing validation"
+      ],
+      "max_chars": 2200
+    },
+    {
+      "path": "google-v0/lib/storage-capacity.mjs",
+      "reason": "Same capacity and exact original key",
+      "sections": [
+        "scope integration and existing validation"
+      ],
+      "max_chars": 1400
+    },
+    {
+      "path": "google-v0/lib/batch-budget.mjs",
+      "reason": "Original batch validation preserved",
+      "sections": [
+        "scope integration and existing validation"
+      ],
+      "max_chars": 1000
     },
     {
       "path": "google-v0/tests/assisted-upload.test.mjs",
-      "reason": "Existing real runtime and fake store fixtures",
+      "reason": "Existing synthetic store/flow fixtures",
       "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
+        "scope integration and existing validation"
       ],
-      "max_chars": 3000
-    },
-    {
-      "path": "ops/test_deploy_existing_services.py",
-      "reason": "Existing guards remain exact and change no production configuration",
-      "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
-      ],
-      "max_chars": 1000
-    },
-    {
-      "path": "google-v0/Dockerfile.worker",
-      "reason": "Explicit file selection and existing entrypoint",
-      "sections": [
-        "Existing functions and offline fixtures required for this bounded integration"
-      ],
-      "max_chars": 1000
+      "max_chars": 1800
     }
   ],
   "validation_commands": [
-    "node --test google-v0/tests/assisted-upload.test.mjs google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs google-v0/tests/worker-auth.test.mjs google-v0/tests/worker-packaging.test.mjs",
+    "node --test google-v0/tests/assisted-scope.test.mjs",
     "node --test google-v0/tests/*.test.mjs",
-    "python3 -m unittest discover -s ops -p \"test_*.py\"",
-    "python3 scripts/test_orchestration.py",
     "python3 scripts/check_links.py",
-    "python3 scripts/check_task_packets.py"
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/test_orchestration.py"
   ],
   "execution_budget": {
     "worker_runs": 1,

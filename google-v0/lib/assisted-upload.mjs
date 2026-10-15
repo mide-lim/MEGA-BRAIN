@@ -1,3 +1,4 @@
+import {createAssistedScope} from './assisted-scope.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {validateTask} from './worker-queue.mjs';
 
@@ -10,7 +11,7 @@ const uncertain=reason=>({status:'uncertain',reason});
 // Internal composition only: the caller supplies trusted server dependencies,
 // a server-owned allowlist and a request ID, never a task/HTTP bypass flag.
 // Approvals live in the existing private jobs collection; this does not issue one.
-export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds,clock=()=>Date.now(),...extra}){
+export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds,clock=()=>Date.now(),createScopedFlow=null,...extra}){
   if(Object.keys(extra).length||!requestId(id)||!Array.isArray(allowedVideoIds)||!allowedVideoIds.length||allowedVideoIds.length>6||allowedVideoIds.some(x=>!videoId(x))||new Set(allowedVideoIds).size!==allowedVideoIds.length)return blocked('assisted_scope_invalid');
   const allowed=new Set(allowedVideoIds),path='jobs/assisted_upload_'+id;
   let snapshot;
@@ -19,6 +20,7 @@ export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds
   if(!approval||approval.schema_version!==1||approval.kind!=='assisted_upload'||approval.request_id!==id||!reference(approval.authorization_ref)||typeof snapshot.updateTime!=='string'||!snapshot.updateTime)return blocked('assisted_authorization_invalid');
   let task;
   try{task=structuredClone(validateTask(approval.task));}catch{return blocked('assisted_task_invalid');}
+  if(createScopedFlow!==null&&(typeof createScopedFlow!=='function'||Object.keys(task).sort().join(',')!=='poll,stage,videoId'||allowed.size!==1||approval.maximum_cents>100))return blocked('assisted_scope_invalid');
   if(task.stage!=='upload'||task.poll!==0||!allowed.has(task.videoId))return blocked('assisted_scope_invalid');
   const start=Date.parse(approval.authorized_at),end=Date.parse(approval.expires_at);
   if(!Number.isFinite(now)||!Number.isFinite(start)||!Number.isFinite(end)||start>now||end<=now||end<=start||end-start>3600000)return blocked('assisted_authorization_expired');
@@ -34,7 +36,8 @@ export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds
   try{
     // WorkerFlow.run owns all eligibility, financial, acquisition and end-proof
     // guards. No WorkerQueue, handler, poll or admission is composed here.
-    const result=await flow.run(task);
+    const executionFlow=createScopedFlow?await createScopedFlow(await createAssistedScope({store,path,receipt,now:clock()})):flow;
+    const result=await executionFlow.run(task);
     if(typeof result?.status!=='string'||!/^[a-z][a-z0-9_]{0,63}$/.test(result.status))throw Error('Unknown result');
     outcome={status:result.status};
     if(typeof result.reason==='string'&&/^[a-z][a-z0-9_]{0,79}$/.test(result.reason))outcome.reason=result.reason;
@@ -53,7 +56,7 @@ export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds
 
 // Private entrypoint: the payload identifies an existing server approval only.
 // Neither this handler nor the helper creates approvals or enqueues work.
-export function assistedUploadHandler({store,flow,authorize,enabled=false,allowedVideoIds=[]}){
+export function assistedUploadHandler({store,flow,authorize,enabled=false,allowedVideoIds=[],createScopedFlow=null}){
   if(typeof authorize!=='function')throw Error('Autenticação do worker obrigatória.');
   const ids=structuredClone(allowedVideoIds);
   const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
@@ -72,6 +75,6 @@ export function assistedUploadHandler({store,flow,authorize,enabled=false,allowe
       const acquisition=(await store.get('settings/acquisition'))?.data;
       if(controls?.enabled!==true||controls.parallelism!==1||controls.transcription_enabled!==false||controls.analysis_enabled!==false||acquisition?.schema_version!==1||acquisition.enabled!==true||acquisition.parallelism!==1)return reply(blocked('assisted_controls_invalid'));
     }catch{return reply(blocked('assisted_controls_unavailable'));}
-    return reply(await runAssistedUpload({store,flow,requestId:input.requestId,allowedVideoIds:ids}));
+    return reply(await runAssistedUpload({store,flow,requestId:input.requestId,allowedVideoIds:ids,createScopedFlow}));
   };
 }

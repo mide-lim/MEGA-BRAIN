@@ -83,3 +83,37 @@ A MEG-108 mantém volume0/R$0 para aquisição, STT e Gemini na amostra atual.
 Não habilitar a rota, criar uma aprovação positiva ou fabricar quote0 para
 contornar esse escopo. A implantação/configuração e uma eventual operação por
 ID exigem suas liberações próprias, preservando o orçamento já autorizado.
+
+
+## Escopo unitário fora do lote (MEG-109)
+
+A opção de servidor `assisted_single_upload_enabled: true` é desligada por
+padrão e exige modo assistido, allowlist de exatamente um ID e quote upload
+positiva até100centavos. Ela não é uma flag de task/HTTP. O endpoint continua
+recebendo somente requestId e não emite aprovações. Nenhuma configuração
+operacional ou aprovação é criada por esta alteração.
+
+Após consumo CAS confirmado, a aprovação privada produz a capacidade opaca e
+imutável da invocação. Flow, ledger, gate e admissão de Storage recebem
+dependências novas por invocação, sem contexto mutável compartilhado. Somente
+um upload novo é permitido; recuperação, histórico prévio, outras etapas e
+objetos fora de originals/instagram/<ID>/video.mp4 são recusados.
+
+O lançamento guarda assisted_scope_ref no mesmo livro global, sem batch_id;
+conta em spent_cents/reserved_cents e conserva frescor, reserva preventiva,
+compromissos persistentes, limite de operações, capacidade e duplicidade.
+O lote262/parallelism4 e suas vias não são alterados. Sua validação continua
+no caminho normal; não há remoção temporária de batch ou ledger alternativo.
+O prazo da aprovação é verificado na admissão; conclusão da tentativa já
+admitida pode ultrapassá-lo, sem renovar permissão ou permitir replay.
+
+A trava de aquisição e ExecutionStops permanecem os existentes. Timeout ou
+perda de recibo não reiniciam autorização nem liberam vaga por tempo. O novo
+escopo não comprova nem encerra executores legados: cobertura operacional
+positiva de isolamento/encerramento continua obrigatória antes de ativar,
+sem conciliar nem liberar suas reservas. Nenhum Reel foi selecionado aqui.
+
+O orçamento proposto permanece atéR$1 por operação dentro do envelopeR$20,
+sujeito à quote/margem reais e autorização futura; STT/Gemini/sucessores0.
+Testes são sintéticos/offline; não constituem aquisição real nem aprovação
+de merge/deploy ou ativação.

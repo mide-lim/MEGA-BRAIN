@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {reviewKnowledge,searchKnowledge,keywordTag,audioTranscriptLabel} from '../lib/knowledge.mjs';
+import {reviewKnowledge,searchKnowledge,keywordTag,audioTranscriptLabel,combinedKnowledge} from '../lib/knowledge.mjs';
 const record={transcript:'Use 200 gramas de frango.',duration_seconds:30};
 const e={source:'transcript',start_seconds:1,end_seconds:4,excerpt:record.transcript};
 const knowledge=()=>({context:'recipe',keywords:[{term:'frango',evidence:[e]}],fields:[{kind:'ingredient',name:'Frango',value:'200 gramas',evidence:[e]}],missing_information:['Rendimento não informado.']});
@@ -50,3 +50,8 @@ test('display distinguishes missing audio from music without speech and shortens
  const result=reviewKnowledge({context:'technology',keywords:[],fields:[item('留下主板'),item('给20个主板'),item('给30个主板')],missing_information:[]},source);
  assert.equal(result.knowledge.fields.length,2);assert.equal(result.omitted,1);
  });
+
+test('malformed structured knowledge remains readable without mutating the published analysis',()=>{
+ const v={analysis:{title:'Preservada',knowledge:{fields:null,keywords:{},missing_information:null}}};const before=structuredClone(v);
+ const k=combinedKnowledge(v);assert.deepEqual(k.fields,[]);assert.deepEqual(k.keywords,[]);assert.deepEqual(k.missing_information,[]);assert.deepEqual(v,before);
+});

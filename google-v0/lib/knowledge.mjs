@@ -42,7 +42,11 @@ export function searchKnowledge(video,query){
 }
 
 export function reviewIdentity(video){const match=video.analysis_key?.match(/results\/instagram\/[A-Za-z0-9_-]+\/([^/]+)\/analysis\.json$/);return match?match[1]+(video.analysis_generation?'@'+video.analysis_generation:''):'Sem revisão registrada';}
-export function combinedKnowledge(video){const k=video.analysis?.knowledge;if(!k)return null;const supplement=video.analysis?.source_coverage?.caption?null:video.knowledge_supplement;return {...k,fields:[...k.fields,...(supplement?.fields??[])],keywords:[...k.keywords,...(supplement?.keywords??[])],missing_information:[...k.missing_information]};}
+export function combinedKnowledge(video){
+ const k=video.analysis?.knowledge;if(!k)return null;const supplement=video.analysis?.source_coverage?.caption?null:video.knowledge_supplement;
+ const list=value=>Array.isArray(value)?value:[];
+ return {...k,fields:[...list(k.fields),...list(supplement?.fields)].filter(f=>f&&typeof f.name==='string'&&typeof f.value==='string').map(f=>({...f,evidence:list(f.evidence).filter(e=>e&&typeof e.source==='string')})),keywords:[...list(k.keywords),...list(supplement?.keywords)].filter(w=>w&&typeof w.term==='string'),missing_information:list(k.missing_information).filter(x=>typeof x==='string')};
+}
 
 export function audioTranscriptLabel(video){
  if(video.audio_status==='absent'||video.has_audio===false)return 'Não tem áudio.';

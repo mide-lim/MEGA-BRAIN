@@ -24,3 +24,9 @@ main{padding:26px 32px}header h1{margin:10px 0;font-size:29px}header p{margin:8p
 
 .sync-status{display:block;margin:0 0 16px;color:var(--muted,#93bdcb)}
 .media-waiting{position:absolute;bottom:8px;left:10px;right:10px;color:#b9d7dc}
+
+/* Existing cards/details: read-only processing explanation. */
+.processing-indicator{font-size:.8rem;line-height:1.45;margin:0;padding:1rem;border-top:1px solid var(--border,#ddd);text-align:left}
+.processing-indicator div{margin-bottom:.45rem}.processing-indicator dt{font-weight:650}.processing-indicator dd{margin:0;overflow-wrap:anywhere}.attention-filter{display:block;margin:1rem 0}.attention-filter select{max-width:100%;margin-left:.5rem}
+
+.attention-filter select{background:#142a35;color:#dce8ee;border:1px solid #294957;border-radius:8px;padding:.55rem;font:inherit}

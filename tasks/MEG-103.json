@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "id": "MEG-103",
+  "paperclip_issue_id": "8d924af9-b02d-4986-aa76-fc24490f67d9",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "ed758e8dcf1ade2eba3998c336ee524666ab7855",
+  "objective": "Implement only stage, known reason, unknown evidence and safe textual action in the existing indicator/list/details. Reuse current library and financial reads; no new retry action, route, queue/worker, state system, paid call, reprocessing, merge or deploy. Offline classification/API/browser tests and draft PR/Paperclip updates only.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "One shared predicate reconciles unique-Reel attention count/list and filters, including inventoried 51 acquisition,2 schema,1 uncertain,1 candidate and6 empty accepted knowledge fixtures.",
+    "Existing cards/details show stage, fixed known reason, unknown evidence and safe textual action for acquisition, pre-submission blocks, active operations, saved-response reference, held candidates and uncertain results.",
+    "Extractor failures never imply private/deleted; unknown cause/end remain explicit. Active/unconfirmed work never presents retry available; saved response never authorizes new inference.",
+    "Accepted/published analyses are preserved; empty/malformed structured knowledge and candidates are flagged without suggesting paid reanalysis.",
+    "Safe allowlisted messages never forward raw diagnostic/error strings, secrets or signed URLs; existing authenticated read routes only and no added store reads for indicators.",
+    "Offline unit/API/visual tests, full relevant suites and CI; independent final-head review and human acceptance remain pending before merge/release. No real operation or deployment."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/processing-indicator.mjs",
+    "google-v0/lib/pipeline-progress.mjs",
+    "google-v0/lib/library-repository.mjs",
+    "google-v0/web-google/app/library.jsx",
+    "google-v0/web-google/app/reel-details.jsx",
+    "google-v0/web-google/app/processing-indicator.jsx",
+    "google-v0/web-google/app/globals.css",
+    "google-v0/tests/processing-indicator.test.mjs",
+    "google-v0/tests/pipeline-progress.test.mjs",
+    "google-v0/tests/library-repository.test.mjs",
+    "google-v0/qa/attention-fixtures.mjs",
+    "google-v0/qa/server.mjs",
+    "google-v0/qa/browser-check.mjs",
+    "docs/processing-indicator.md",
+    "tasks/MEG-103.json",
+    "google-v0/lib/knowledge.mjs",
+    "google-v0/tests/knowledge.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/web-google/app/library.jsx",
+      "reason": "Existing attention predicate, count/list and cards",
+      "sections": [
+        "attention",
+        "dashboard",
+        "cards"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/web-google/app/reel-details.jsx",
+      "reason": "Existing detail status and raw notice",
+      "sections": [
+        "header",
+        "detail-scroll"
+      ],
+      "max_chars": 1400
+    },
+    {
+      "path": "google-v0/lib/library-sync.mjs",
+      "reason": "Existing read-only synchronization/status contract",
+      "sections": [
+        "loadLibrarySnapshot",
+        "videoStatus"
+      ],
+      "max_chars": 1700
+    },
+    {
+      "path": "google-v0/lib/pipeline-progress.mjs",
+      "reason": "Safe aggregate job projection",
+      "sections": [
+        "pipelineProgress"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/library-repository.mjs",
+      "reason": "Existing safe video projection",
+      "sections": [
+        "publicVideo"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/qa/browser-check.mjs",
+      "reason": "Real component browser checks and screenshots",
+      "sections": [
+        "complete_library",
+        "live_updates"
+      ],
+      "max_chars": 1400
+    },
+    {
+      "path": "google-v0/qa/server.mjs",
+      "reason": "Isolated offline fixtures and request audit",
+      "sections": [
+        "financial",
+        "library"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/knowledge.mjs",
+      "reason": "Concrete dependency: malformed/empty knowledge must be displayable for review without crashing or replacing published analysis.",
+      "sections": [
+        "combinedKnowledge"
+      ],
+      "max_chars": 500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/processing-indicator.test.mjs google-v0/tests/pipeline-progress.test.mjs google-v0/tests/library-repository.test.mjs google-v0/tests/library-sync.test.mjs google-v0/tests/library-api.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "node google-v0/qa/browser-check.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/test_orchestration.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "User authorized implementation and tests, not another model session or merge/deploy. Independent final-head review remains pending before acceptance."
+  }
+}

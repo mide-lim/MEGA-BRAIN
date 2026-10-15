@@ -13,3 +13,13 @@ test('new revisions and stage transitions invalidate versions without rewriting 
  assert.equal(next.items[0].status,'reserved');assert.equal(next.active,true);assert.notEqual(previous.items[0].version,next.items[0].version);
  assert.equal(pipelineProgress(Object.fromEntries(Object.entries(jobs).reverse())).items[0].version,previous.items[0].version);
 });
+
+test('an unsettled earlier stage is not hidden by a completed historical analysis',()=>{
+ const result=pipelineProgress({old:{video_id:'Reel_123',stage:'analysis',status:'completed'},current:{video_id:'Reel_123',stage:'upload',status:'started'}});assert.equal(result.items.length,1);assert.equal(result.items[0].stage,'upload');assert.equal(result.active,true);
+});
+test('only allowlisted reconciliation categories are public and change the version',()=>{
+ const j={video_id:'Reel_123',stage:'upload',status:'completed'};const before=pipelineProgress({job:j});const after=pipelineProgress({job:{...j,manual_reconciliation:'terminal_metadata_estimate_accounted_user_verdict_pending',failure_diagnostic:'SECRET'}});
+ assert.equal(after.items[0].reason_code,'source_metadata_failed');assert.notEqual(before.items[0].version,after.items[0].version);assert.ok(!JSON.stringify(after).includes('SECRET'));
+ const schema=pipelineProgress({job:{...j,stage:'analysis',manual_reconciliation:'confirmed_schema400_full_estimate_accounted_analysis_pending'}});assert.equal(schema.items[0].reason_code,'schema_rejected');
+ for(const value of ['SECRET','__proto__','constructor'])assert.equal(pipelineProgress({job:{...j,manual_reconciliation:value}}).items[0].reason_code,undefined);
+});

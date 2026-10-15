@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "id": "MEG-92",
+  "paperclip_issue_id": "9e62fece-a415-46bf-a965-ffb09c589212",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "4e0dc639a4c78b5580688bb5b48d45c180cffecf",
+  "objective": "Owner-requested explicit source retry and persisted-analysis reconciliation; preserve prior failures, artifacts, coverage and unknown inference holds.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Explicit retry of settled download-only failures creates one covered deterministic child, never resetting original claims",
+    "Reuse verified media and transcript; persisted analysis is reconciled without another model call",
+    "Duplicate deliveries, stale authorization, unknown provider results and existing original media cannot produce duplicate work",
+    "Classify empty Instagram media responses safely; capture caption during download to avoid repeat acquisition",
+    "Meaningful concurrency, accounting, partial failure, pause and artifact tests pass; independent review before publication",
+    "The worker image contains all imports of the retry module; task packet references the actual open Paperclip follow-up"
+  ],
+  "allowed_paths": [
+    "google-v0/lib/smart-retry.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/worker-queue.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/media-tools.mjs",
+    "google-v0/tests/smart-retry.test.mjs",
+    "google-v0/tests/media-tools.test.mjs",
+    "google-v0/tests/google-operations.test.mjs",
+    "docs/smart-retry.md",
+    "google-v0/lib/source-hold.mjs",
+    "tasks/MEG-92.json",
+    "google-v0/Dockerfile.worker",
+    "google-v0/tests/worker-packaging.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Claim and finish invariants",
+      "sections": [
+        "run"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Accounting and recovery",
+      "sections": [
+        "reserve"
+      ],
+      "max_chars": 3500
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Artifact persistence and reuse",
+      "sections": [
+        "analysis"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "google-v0/lib/media-tools.mjs",
+      "reason": "Download and caption extraction",
+      "sections": [
+        "download"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "medium"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "Data recovery and infrastructure require independent human review of final head before merge or deployment."
+  }
+}

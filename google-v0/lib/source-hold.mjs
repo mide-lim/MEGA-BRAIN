@@ -4,7 +4,7 @@ import {mutateDocument} from './firestore.mjs';
 export function terminalSourceFailure(d){
  const x=d?.download;
  return d?.operation_step==='download_media'&&d.tool_code===1&&d.http_status===null&&x?.exit_code===1&&(
-  x.phase==='metadata'&&['unknown','unavailable','http_404','format_unavailable'].includes(x.cause)||
+  x.phase==='metadata'&&['unknown','empty_media_response','unavailable','http_404','format_unavailable'].includes(x.cause)||
   x.phase==='format_selection'&&x.cause==='format_unavailable'
  );
 }

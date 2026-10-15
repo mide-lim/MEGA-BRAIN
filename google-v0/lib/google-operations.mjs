@@ -35,14 +35,35 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   return {
     async sourceFailureMediaAbsent({video}){return video.media_verified!==true&&!video.video_key&&!video.transcript_key&&!video.analysis&&!await storage.metadata(`originals/instagram/${video.id}/video.mp4`);},
     async prepareUploadRecovery({video}){if(video.media_verified||video.video_key||await storage.metadata(`originals/instagram/${video.id}/video.mp4`))throw Error('Mídia existente impede repetir download.');},
+    async prepareSettledAnalysisRetry({video,originalExecutionId}){
+      if(video.analysis||video.analysis_key||video.candidate_analysis_key||await storage.metadata(`results/instagram/${video.id}/${originalExecutionId}/analysis.json`))throw Error('Resultado existente exige reconciliação sem inferência.');
+      for(const [key,generation] of [[video.video_key,video.video_generation],[video.transcript_key,video.transcript_generation]]){
+        const object=await storage.metadata(key);if(!object||object.generation!==generation||Number(object.size)<1)throw Error('Fonte preservada precisa ser conferida.');
+      }
+    },
+    async restoreAnalysisResult({video,executionId}){
+      const key=`results/instagram/${video.id}/${executionId}/analysis.json`,object=await storage.metadata(key);
+      if(!object||!/^\d+$/.test(object.generation??''))throw Error('Resposta persistida não encontrada.');
+      const saved=JSON.parse(await storage.read(key,{generation:object.generation}));
+      if(saved.preset_version!==preset.version||saved.model!==config.gemini_model||!saved.response)throw Error('Resposta salva diverge da revisão atual.');
+      let caption=video.source_caption?.text?{source_caption:video.source_caption,caption_status:'captured'}:{caption_status:'unavailable'};
+      if(!video.source_caption?.text){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
+      const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
+      const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
+      return {...result(video.id,'analysis',{...caption,...changes},budget('analysis')),artifact:{key,generation:object.generation}};
+    },
+    async inspectAnalysisArtifact({videoId,executionId}){
+      const key=`results/instagram/${videoId}/${executionId}/analysis.json`,object=await storage.metadata(key);
+      return object?{key,generation:object.generation}:null;
+    },
     async prepareAnalysis({video,executionId}){await at('reserve_result',()=>storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/analysis.json`));if(!video.source_caption?.text)await storage.reserveResult?.(`results/instagram/${video.id}/${executionId}/caption.json`);},
     async upload({video,executionId}){
       await admitted(executionId,'upload',video.id);const cost=budget('upload');
-      const bytes=await at('download_media',()=>tools.download(video)),media=await at('inspect_download',()=>inspect(bytes));
+      const downloaded=await at('download_media',()=>tools.download(video,{withMetadata:true})),bytes=Buffer.isBuffer(downloaded)?downloaded:downloaded.bytes,media=await at('inspect_download',()=>inspect(bytes));
       if(media.audio_status!=='present')throw Object.assign(new Error('Áudio ausente ou silencioso; transcrição não iniciada.'),{operation_step:'inspect_download'});
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
-      return result(video.id,'upload',{video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds},cost);
+      return result(video.id,'upload',{video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{})},cost);
     },
     async transcription({video,executionId}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();

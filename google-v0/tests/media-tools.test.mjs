@@ -50,3 +50,23 @@ test('persistence serializer drops forged arbitrary diagnostic fields',()=>{
  const d=safeDownloadDiagnostic({phase:'https://secret',cause:'secret',message:'Cookie: SECRET',stderr:'SECRET',elapsed_ms:Infinity,exit_code:999,yt_dlp_version:'2026.03.17 SECRET',ffmpeg_version:'5.1.9 SECRET'});
  assert.equal(d.phase,'unknown');assert.equal(d.cause,'unknown');assert.equal(d.elapsed_ms,null);assert.equal(d.exit_code,null);assert.doesNotMatch(JSON.stringify(d),/SECRET|Cookie|https/);
 });
+
+test('empty media response is a procedural metadata failure and does not prove deletion',async()=>{
+ const tools=mediaTools({downloadEnabled:true,run:async(tool,args)=>{if(args.length===1)throw Error('version');throw Object.assign(Error('secret'),{code:1,stderr:'ERROR: Instagram sent an empty media response',stdout:'[Instagram] Extracting URL'});}});
+ await assert.rejects(tools.download(video),e=>{assert.equal(e.download_diagnostic.cause,'empty_media_response');assert.equal(e.download_diagnostic.phase,'metadata');assert.doesNotMatch(e.message,/removido|privado|secret/);return true;});
+});
+test('download captures bounded caption from the same extraction and removes its raw metadata',async()=>{
+ let count=0,infoPath;
+ const tools=mediaTools({downloadEnabled:true,run:async(tool,args)=>{count++;assert.ok(args.includes('--write-info-json'));const path=args[args.indexOf('-o')+1];infoPath=path.replace(/\.mp4$/,'.info.json');await writeFile(path,Buffer.from('media'));await writeFile(infoPath,JSON.stringify({display_id:video.id,description:'Descrição preservada',signed_url:'SECRET'}));return {stdout:''};}});
+ const result=await tools.download(video,{withMetadata:true});assert.equal(count,1);assert.equal(result.bytes.toString(),'media');assert.equal(result.source_caption.text,'Descrição preservada');assert.doesNotMatch(JSON.stringify(result.source_caption),/SECRET|signed_url/);await assert.rejects(access(infoPath));
+});
+test('mismatched caption metadata cannot contaminate the video or cause another extraction',async()=>{
+ let count=0;const tools=mediaTools({downloadEnabled:true,run:async(tool,args)=>{count++;const path=args[args.indexOf('-o')+1];await writeFile(path,Buffer.from('media'));await writeFile(path.replace(/\.mp4$/,'.info.json'),JSON.stringify({display_id:'Other_123',description:'wrong caption'}));return {stdout:''};}});
+ const result=await tools.download(video,{withMetadata:true});assert.equal(result.source_caption,null);assert.equal(count,1);assert.equal(result.bytes.toString(),'media');
+});
+
+test('successful metadata probe records success instead of a spurious unknown failure',async()=>{
+ const tools=mediaTools({run:async(tool,args)=>{if(args.includes('--dump-single-json'))return {stdout:JSON.stringify({display_id:video.id})};if(tool==='yt-dlp')return {stdout:'2026.08.19'};return {stdout:'ffmpeg version 5.1.9'};}});
+ const result=await tools.probeMetadata(video);assert.equal(result.status,'metadata_available');assert.equal(result.diagnostic.cause,'none');assert.equal(result.diagnostic.exit_code,0);assert.doesNotMatch(result.diagnostic.message,/desconhecida|falha|não forneceu/);
+ assert.equal(safeDownloadDiagnostic({cause:'none',phase:'metadata',exit_code:1}).cause,'unknown');assert.equal(safeDownloadDiagnostic({cause:'none',phase:'transfer',exit_code:0}).cause,'unknown');
+});

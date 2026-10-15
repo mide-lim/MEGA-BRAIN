@@ -1,0 +1,33 @@
+# Retomada explícita dos Reels
+
+A retomada é uma ação do proprietário. Inspecionar um vídeo não apaga falhas, não libera reservas, não cria chamadas ao modelo e não altera a fila.
+
+## Decisão por etapa
+
+| Evidência atual | Ação |
+| --- | --- |
+| Análise aceita | Nenhuma nova execução |
+| Resposta original salva no Storage | Reavaliar e persistir a mesma resposta e geração, sem inferência |
+| Transcrição assíncrona com nome persistido | Consultar a operação existente |
+| Etapa bloqueada antes de reserva ou submissão | Preservar diagnóstico, adquirir novamente a etapa e despachar |
+| Download falhou sem mídia e seu custo preventivo já foi contabilizado | Uma tentativa filha, com autorização durável e cobertura própria |
+| Gemini rejeitou o esquema com HTTP 400 confirmado, sem resultado | Uma tentativa filha na mesma revisão corrigida, reutilizando mídia e STT |
+| Timeout, resultado desconhecido ou artefato sem confirmação | Reconciliação; ausência de resposta não autoriza repetir inferência |
+
+`SmartRetry.inspect` resolve a revisão de análise vigente; não confunde os IDs v0, v3 e v4. O chamador injeta `googleOperations.inspectAnalysisArtifact` como `artifactInspector` para procurar o resultado original antes de propor uma inferência. `request` exige identificador de solicitação e referência de autorização explícita. Esses valores vêm do serviço autenticado que receberá o futuro botão; não se deve expor esta classe a um cliente sem validar a ação do proprietário. Esta entrega não adiciona o botão nem uma rota pública.
+
+A autorização da tentativa filha tem validade de uma hora, digest do erro, vídeo, etapa, orçamento e referência da ação. O worker e o livro financeiro conferem novamente essas informações. A identidade da filha depende da tentativa original e permite somente uma recuperação. Novos cliques, entregas concorrentes e identificadores novos não multiplicam chamadas. Uma filha interrompida fica retida para diagnóstico.
+
+O livro original e os custos já contabilizados são preservados. A recuperação de download ou do esquema recebe uma reserva adicional dentro dos créditos e do teto existentes. Reconciliar uma resposta já contabilizada não cobra novamente. A reconciliação de dados salvos também funciona com fila e consumo pausados e mantém essa pausa.
+
+`WorkerFlow.reconcileAnalysis` lê a resposta original pelo número de geração, verifica revisão e modelo, reaplica as regras de qualidade e persiste o resultado ou candidato. Uma falha de persistência retém a resposta e pode ser retomada explicitamente. Candidatos inválidos não substituem uma análise publicada. Nenhum dado desconhecido é promovido a conhecimento válido.
+
+## Diagnóstico e aquisição
+
+O extrator passa a identificar resposta vazia de mídia como falha procedural, sem afirmar que o Reel foi removido ou está privado. Quando o download fornece uma descrição válida do mesmo Reel, ela é capturada na mesma extração e reaproveitada na análise. Os metadados brutos ficam somente na pasta temporária, removida ao final; URLs assinadas e saída bruta da ferramenta não são persistidas no diagnóstico.
+
+## Operação e publicação
+
+A fotografia e a operação de 14/10/2026 são registradas separadamente nos recibos do operador. Os vídeos já aceitos não entram na retomada. A autorização de retry não aumenta o teto financeiro. Não reenfileirar resultados incertos sem procurar o artefato original e conferir a etapa.
+
+Antes de publicar, executar os testes e a revisão independente exigida pela [política de revisão](REVIEW_POLICY.md). Merge e deploy exigem autorização específica. O botão futuro deve apresentar a etapa que será retomada e o motivo quando a ação exige reconciliação, usar o serviço autenticado e reutilizar a mesma solicitação enquanto ela estiver pendente.

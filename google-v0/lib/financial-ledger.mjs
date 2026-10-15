@@ -1,3 +1,4 @@
+import {settledRetryId,settledRetryAllowed,settledRetryAuthorizationPath} from './smart-retry.mjs';
 import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId,settledMetadataUpload} from './firestore-recovery.mjs';
 import {terminalSourceFailure} from './source-hold.mjs';
 import {mutateDocument} from './firestore.mjs';
@@ -20,7 +21,7 @@ function validate(state){
   if(state.batch){validateBatch(state.batch);batchUsage(state);}else if(Object.values(state.jobs).some(j=>j?.batch_id!==undefined))throw new Error('Execução de lote sem configuração.');
   let reserved=0;
   for(const [id,j]of Object.entries(state.jobs)){
-    if(j.recovery_of!==undefined){const parent=state.jobs[j.recovery_of];if(j.stage!=='upload'||id!==uploadRecoveryId(j.recovery_of)||!settledMetadataUpload(parent)||parent.video_id!==j.video_id||parent.maximum_cents!==j.maximum_cents||parent.batch_id!==j.batch_id)throw Error('Tentativa vinculada inválida.');}
+    if(j.recovery_of!==undefined){const parent=state.jobs[j.recovery_of];const settled=j.recovery_kind==='settled_retry_v1'&&id===settledRetryId(j.recovery_of)&&parent?.status==='completed'&&!parent.recovery_of&&parent.actual_cents===parent.maximum_cents&&((j.stage==='upload'&&parent.manual_reconciliation==='terminal_metadata_estimate_accounted_user_verdict_pending')||(j.stage==='analysis'&&parent.manual_reconciliation==='confirmed_schema400_full_estimate_accounted_analysis_pending'&&j.analysis_revision===parent.analysis_revision));if(!(settled||j.stage==='upload'&&id===uploadRecoveryId(j.recovery_of)&&settledMetadataUpload(parent))||parent?.stage!==j.stage||parent.video_id!==j.video_id||parent.maximum_cents!==j.maximum_cents||parent.batch_id!==j.batch_id)throw Error('Tentativa vinculada inválida.');}
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
@@ -67,14 +68,18 @@ export class FinancialLedger{
     return {changes:{ongoing_commitment_cents:plan.commitment_cents,ongoing_storage_planned_bytes:storageBytes,ongoing_costs_observed_at:new Date(this.clock()).toISOString(),ongoing_costs_valid_until:new Date(until).toISOString(),...(!plan.ready?{paused:true}:{})},result:plan};
     });
   }
-  async reserve({executionId,videoId,stage,maximumCents,analysisRevision,recoveryOf,recoveryId}){
+  async reserve({executionId,videoId,stage,maximumCents,analysisRevision,recoveryOf,recoveryId,settledRetry=false}){
     if(analysisRevision!==undefined&&(stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(executionId??'')||!idPattern.test(videoId??'')||!stages.has(stage)||!cents(maximumCents)||maximumCents===0)throw new Error('Reserva inválida.');
     return mutateDocument(this.store,this.path,async snapshot=>{
     if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
-    if(recoveryOf!==undefined){
+    if(settledRetry!==false&&settledRetry!==true||settledRetry&&recoveryOf===undefined)throw Error('Retomada explícita inválida.');
+    if(settledRetry){
+      const claim=(await this.store.get(`jobs/${recoveryOf}`))?.data,child=(await this.store.get(`jobs/${executionId}`))?.data,authorization=(await this.store.get(settledRetryAuthorizationPath(recoveryOf)))?.data,video=(await this.store.get(`videos/${videoId}`))?.data;
+      if(executionId!==settledRetryId(recoveryOf)||child?.status!=='claimed'||child.video_id!==videoId||child.stage!==stage||child.recovery_of!==recoveryOf||child.settled_retry_count!==1||child.recovery_authorization!==settledRetryAuthorizationPath(recoveryOf)||state.jobs[recoveryOf]?.batch_id!==state.batch?.id||stage==='analysis'&&analysisRevision!==state.jobs[recoveryOf]?.analysis_revision||!settledRetryAllowed({authorization,claim,financial:state.jobs[recoveryOf],video,originalId:recoveryOf,videoId,stage,maximumCents,recoveryId,now:this.clock()}))throw Error('Retomada exige autorização e histórico conferidos.');
+    }else if(recoveryOf!==undefined){
       const claim=(await this.store.get(`jobs/${recoveryOf}`))?.data,child=(await this.store.get(`jobs/${executionId}`))?.data,authorization=(await this.store.get(recoveryAuthorizationPath(recoveryOf)))?.data,video=(await this.store.get(`videos/${videoId}`))?.data;
       if(stage!=='upload'||executionId!==uploadRecoveryId(recoveryOf)||child?.recovery_of!==recoveryOf||child.firestore_recovery_count!==1||child.status!=='claimed'||child.video_id!==videoId||child.stage!==stage||child.firestore_recovery_authorization!==recoveryAuthorizationPath(recoveryOf)||state.jobs[recoveryOf]?.batch_id!==state.batch?.id||!metadataRecoveryAllowed({authorization,claim,financial:state.jobs[recoveryOf],video,originalId:recoveryOf,videoId,stage,maximumCents,recoveryId,now:this.clock()}))throw Error('Retomada financeira exige autorização e histórico conferidos.');
     }
@@ -89,6 +94,7 @@ export class FinancialLedger{
     const job={video_id:videoId,stage,maximum_cents:maximumCents,status:'reserved',created_at:new Date(this.clock()).toISOString()};
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;
     if(recoveryOf!==undefined)job.recovery_of=recoveryOf;
+    if(settledRetry)job.recovery_kind='settled_retry_v1';
     if(state.batch)job.batch_id=state.batch.id;
     const batch=state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
     return {changes:{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents,...(batch?{batch}:{})},result:{...decision,execution_id:executionId}};
@@ -153,6 +159,16 @@ export class FinancialLedger{
       if(claim?.video_id!==job.video_id||claim.stage!=='upload'||claim.status!=='uncertain'||!terminalSourceFailure(claim.failure_diagnostic)||claim.source_hold_proof?.media_absent!==true||claim.source_hold_proof.review_record!==`analyses/ig_error_${job.video_id}`||video?.status!=='needs_attention'||video.media_verified||video.video_key||video.transcript_key||video.analysis||review?.review_status!=='awaiting_user_verdict'||!review.events?.some(x=>x.event_id===`source_${executionId}`)||audit?.execution_id!==executionId||audit.original_object_absent!==true)throw Error('Prova, mídia ausente e veredito obrigatórios.');
       const updated={...job,status:'completed',actual_cents:job.maximum_cents,manual_reconciliation:'terminal_metadata_estimate_accounted_user_verdict_pending',updated_at:new Date(this.clock()).toISOString()};
       return {changes:{jobs:{...state.jobs,[executionId]:updated},spent_cents:state.spent_cents+job.maximum_cents,reserved_cents:state.reserved_cents-job.maximum_cents,remaining_credit_cents:Math.max(0,state.remaining_credit_cents-job.maximum_cents),batch:{...state.batch,active_video_ids:state.batch.active_video_ids.filter(id=>id!==job.video_id)}},result:updated};
+    });
+  }
+  async reconcileAnalysisResult(executionId,{actualCents}){
+    if(!executionPattern.test(executionId??'')||!cents(actualCents))throw Error('Reconciliação inválida.');
+    return mutateDocument(this.store,this.path,async snapshot=>{
+      const state=snapshot?.data;validate(state);const job=state.jobs[executionId],claim=(await this.store.get(`jobs/${executionId}`))?.data,video=(await this.store.get(`videos/${job?.video_id}`))?.data,artifact=claim?.result_artifact;
+      if(job?.stage!=='analysis'||!['started','uncertain','completed'].includes(job.status)||claim?.stage!=='analysis'||claim.video_id!==job.video_id||claim.status!=='reconciling_result'||!claim.reconciliation_authorization_ref||actualCents!==job.maximum_cents||artifact?.key!==`results/instagram/${job.video_id}/${executionId}/analysis.json`||!/^\d+$/.test(artifact.generation??'')||!((video?.analysis_key===artifact.key&&video.analysis_generation===artifact.generation)||(video?.candidate_analysis_key===artifact.key&&video.candidate_analysis_generation===artifact.generation)))throw Error('Resposta persistida e metadados da própria execução obrigatórios.');
+      if(job.status==='completed'){if(job.actual_cents!==actualCents)throw Error('Custo já conciliado diverge.');return {changes:null,result:job};}
+      const updated={...job,status:'completed',actual_cents:actualCents,manual_reconciliation:'persisted_analysis_result_reconciled_without_inference',updated_at:new Date(this.clock()).toISOString()};
+      return {changes:{jobs:{...state.jobs,[executionId]:updated},spent_cents:state.spent_cents+actualCents,reserved_cents:state.reserved_cents-job.maximum_cents,remaining_credit_cents:Math.max(0,state.remaining_credit_cents-actualCents),...(state.batch?.active_video_ids?{batch:{...state.batch,active_video_ids:state.batch.active_video_ids.filter(id=>id!==job.video_id)}}:{})},result:updated};
     });
   }
   async transition(executionId,action,{actualCents,pause=false}={}){

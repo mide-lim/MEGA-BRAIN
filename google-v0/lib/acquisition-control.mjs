@@ -14,12 +14,12 @@ function validate(data){
 // No lease expiry. Only positive evidence from the awaited worker lifecycle
 // may release an entry. A lost receipt is held, never guessed to have failed.
 export class AcquisitionControl{
- constructor({store,verifyExecutionStopped,clock=()=>Date.now()}){if(!store||typeof verifyExecutionStopped!=='function')throw Error('Verificador de encerramento obrigatório.');Object.assign(this,{store,verifyExecutionStopped,clock});}
+ constructor({store,verifyExecutionStopped,maximumParallelism=4,clock=()=>Date.now()}){if(!Number.isInteger(maximumParallelism)||maximumParallelism<1||maximumParallelism>4)throw Error('Limite de aquisição inválido.');if(!store||typeof verifyExecutionStopped!=='function')throw Error('Verificador de encerramento obrigatório.');Object.assign(this,{store,verifyExecutionStopped,maximumParallelism,clock});}
  async acquire(input){
   if(!job(input.executionId)||!attempt(input.attemptId)||!video(input.videoId))throw Error('Identidade de aquisição inválida.');
   return mutateDocument(this.store,path,async snapshot=>{
    const state=validate(snapshot.data),active=state.active;
-   if(!state.enabled||Object.keys(active).length>=state.parallelism||Object.values(active).some(x=>x.execution_id===input.executionId||x.video_id===input.videoId))return {result:false,changes:null};
+   if(!state.enabled||Object.keys(active).length>=Math.min(state.parallelism,this.maximumParallelism)||Object.values(active).some(x=>x.execution_id===input.executionId||x.video_id===input.videoId))return {result:false,changes:null};
    return {result:true,changes:{active:{...active,[keyFor(input)]:{execution_id:input.executionId,attempt_id:input.attemptId,video_id:input.videoId,acquired_at:new Date(this.clock()).toISOString()}}}};
   });
  }
@@ -51,6 +51,6 @@ export class AcquisitionControl{
    const unpaidBlock=claim?.data.status==='blocked'&&!claim.data.execution_attempt_id&&!Object.values(financial.jobs??{}).some(x=>x.video_id===id&&['reserved','started','uncertain','completed'].includes(x.status));
    if(!unpaidBlock&&!await this.ended(execution,id))busy.add(id);
   }
-  return Math.max(0,state.parallelism-busy.size);
+  return Math.max(0,Math.min(state.parallelism,this.maximumParallelism)-busy.size);
  }
 }

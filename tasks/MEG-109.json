@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "d979e34d61c0b32b4062ab12c45911839b47ae48",
+  "objective": "Human authorizes one small PR implementing MEG-109 private assisted entrypoint, real image inclusion, concurrency-one runtime and publication contract, tests and Paperclip updates. Reuse helper, OIDC, CAS, ledger and execution-stop verifier. No new tasks/resources/IAM, actual approvals, paid calls, processing, merge or deployment.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Private POST accepts only requestId, validates existing OIDC before any store access or work, feature disabled by default, immutable server-owned allowlist <=6 and persisted helper authorization.",
+    "Assisted mode disables normal processing/admission/diagnosis entrypoints and cannot coexist with enabled dispatch/admission; checks automation1/acquisition1 with inference paused; CAS applies max1 even under configuration drift.",
+    "Keep helper approval/quote/CAS/uncertain receipt/no replay, zero successors and closure proofs unchanged; no authorization issued by endpoint or this task.",
+    "Package helper and entrypoint in existing image; isolated-package test imports and executes the real synthetic assisted entrypoint without network.",
+    "Workflow expected worker/web runtime map1/1; guard/baseline/identity/paused checks unchanged; no runtime configuration applied, financial batch4/262 preserved.",
+    "Focused/full processing/ops/orchestration/links/packet checks; PR exact-head CI; independent review remains required before readiness/merge, no reviewer or new model delegated this turn."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/assisted-upload.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/worker-http.mjs",
+    "google-v0/lib/acquisition-control.mjs",
+    "google-v0/Dockerfile.worker",
+    "google-v0/config/worker-example.json",
+    "google-v0/tests/assisted-upload.test.mjs",
+    "google-v0/tests/acquisition-control.test.mjs",
+    "google-v0/tests/worker-packaging.test.mjs",
+    ".github/workflows/google-deploy.yml",
+    "ops/test_deploy_existing_services.py",
+    "docs/assisted-upload.md",
+    "tasks/MEG-109.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/assisted-upload.mjs",
+      "reason": "Preserve approval consumption/outcome receipt and reuse helper",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Wire same trusted store/flow/identity; disable normal entrypoints in assisted mode",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/acquisition-control.mjs",
+      "reason": "Retain global CAS and end-proof semantics while applying assisted ceiling1",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/assisted-upload.test.mjs",
+      "reason": "Existing real runtime and fake store fixtures",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "ops/test_deploy_existing_services.py",
+      "reason": "Existing guards remain exact and change no production configuration",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/Dockerfile.worker",
+      "reason": "Explicit file selection and existing entrypoint",
+      "sections": [
+        "Existing functions and offline fixtures required for this bounded integration"
+      ],
+      "max_chars": 1000
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/assisted-upload.test.mjs google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs google-v0/tests/worker-auth.test.mjs google-v0/tests/worker-packaging.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/test_orchestration.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent read-only review and human merge approval remain REQUIRED and PENDING. One reviewer execution reserved in packet, not launched by this worker. User authorizes implementation/tests/draft PR only; no bypass of independent gate, no merge or deploy."
+  }
+}

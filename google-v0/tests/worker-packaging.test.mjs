@@ -19,7 +19,7 @@ test('worker image file selection can load its processing and retry imports with
    }
   }
   assert.ok(copied>20);
-  const result=await run(process.execPath,['--input-type=module','-e',"await import('./lib/worker-runtime.mjs'); await import('./lib/smart-retry.mjs'); console.log('package-ready')"],{cwd:folder,timeout:10000});
+  const result=await run(process.execPath,['--input-type=module','-e',"await import('./lib/worker-runtime.mjs'); await import('./lib/smart-retry.mjs'); const {assistedUploadHandler}=await import('./lib/assisted-upload.mjs'); const handler=assistedUploadHandler({authorize:async()=>true,store:{get(){throw Error('disabled must not read');}}}); if((await handler(new Request('https://offline.run.app/tasks/assisted-upload',{method:'POST',body:'{}'}))).status!==409)throw Error('disabled entry missing'); console.log('package-ready')"],{cwd:folder,timeout:10000});
   assert.match(result.stdout,/package-ready/);
  }finally{await rm(folder,{recursive:true,force:true});}
 });

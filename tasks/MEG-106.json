@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "id": "MEG-106",
+  "paperclip_issue_id": "9d34c487-a05d-44af-80c9-a3da0f09fd61",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "0fd8d96e004d70c4be1ca1dbba71dee481492afa",
+  "objective": "Human-authorized R1/P2 correction in PR44 only: validate the final assisted outcome persistence receipt; offline regression tests and exact-head CI, then one fresh independent read-only reviewer. Update MEG-106/104/92. No live processing, Google reads/writes, new providers, successors, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Final persistence receipt must confirm a nonempty string updateTime and exact expected outcome/observed_at, with consumed authorization preserved, before returning the observed flow status.",
+    "Missing, incomplete or inconsistent final receipt, whether write applied or not, returns uncertain/assisted_result_unconfirmed without a new read/write retry or flow call; repeated request remains blocked.",
+    "Offline regressions use actual Firestore.patch over local fake API, exercise missing/invalid version/data, divergent outcome/observed_at and consumed state, and valid rich receipt; preserve one flow invocation and zero successor/provider execution.",
+    "Keep original authorization, CAS, financial/acquisition/end-proof and no-successor behavior unchanged; do not widen the helper to other stages or alter legacy handling.",
+    "Focused/full processing, ops/orchestration, links, packets and four-path scope checks pass; final-head CI and a fresh independent review are recorded before any human acceptance. No merge, deploy or live reprocessing."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/assisted-upload.mjs",
+    "google-v0/tests/assisted-upload.test.mjs",
+    "docs/assisted-upload.md",
+    "tasks/MEG-106.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "actual patch receipt encode/decode and CAS behavior used by regression fake API",
+      "sections": [
+        "encodeFields/decodeFields",
+        "patch unfragmented jobs path"
+      ],
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/tests/assisted-upload.test.mjs",
+      "reason": "existing local store and real-runtime preservation fixtures reused without live operations",
+      "sections": [
+        "fixture",
+        "receipt tests",
+        "actual runtime tests"
+      ],
+      "max_chars": 6000
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/assisted-upload.test.mjs google-v0/tests/worker-queue.test.mjs google-v0/tests/worker-flow.test.mjs google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/test_orchestration.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Human explicitly authorized one P2 fix with tests and another independent review. One fix execution and one fresh read-only reviewer, no automatic fix loop or extra agents; human merge/deploy approval remains separate."
+  }
+}

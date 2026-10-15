@@ -5,7 +5,7 @@ const publicVideo=data=>({id:data.id,source_url:data.source_url,status:data.stat
       duration_seconds:data.duration_seconds,has_audio:data.has_audio,audio_status:data.audio_status,
       media_verified:data.media_verified,transcript:data.transcript??'',transcript_status:data.transcript_status??null,analysis:data.analysis??null,
       source_caption:data.source_caption??null,knowledge_supplement:data.knowledge_supplement??null,analysis_key:data.analysis_key??null,analysis_generation:data.analysis_generation??null,
-      analysis_quality_status:data.analysis_quality_status??null,analysis_candidate:data.analysis_candidate??null,candidate_analysis_key:data.candidate_analysis_key??null,candidate_analysis_generation:data.candidate_analysis_generation??null,analysis_legacy:data.analysis_legacy??null,error:data.error??null,updated_at:data.updated_at});
+      analysis_quality_status:data.analysis_quality_status??null,analysis_candidate:data.analysis_candidate??null,candidate_analysis_key:data.candidate_analysis_key??null,candidate_analysis_generation:data.candidate_analysis_generation??null,analysis_legacy:data.analysis_legacy??null,error:typeof data.error==='string'&&data.error?'Processamento requer conferência; consulte o motivo e a ação segura.':null,updated_at:data.updated_at});
 export class LibraryRepository{
   constructor(store){this.store=store;}
   async page({cursor,pageSize=40}={}){

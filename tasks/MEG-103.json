@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "MEG-103",
+  "paperclip_issue_id": "8d924af9-b02d-4986-aa76-fc24490f67d9",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "ed758e8dcf1ade2eba3998c336ee524666ab7855",
+  "objective": "Owner-authorized PR43 R1/P2 correction only: include published analyses whose whole knowledge block is absent/falsy/invalid in the existing read-only review classification; preserve published report, active/candidate precedence and no-paid-reanalysis actions. Tests, same PR update, MEG-103/92 updates and one new independent review. No data repair, reprocessing, paid calls, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Whole knowledge null, false, empty string, missing/undefined and invalid scalar/array/object is classified for review when a published analysis exists, without dropping or mutating the published analysis.",
+    "Valid published knowledge remains accepted; pending/unpublished records do not become incomplete-publication cases. Active/reserved/candidate precedence and retry_available:false remain safe.",
+    "Actual-component browser fixture for four reported variants reconciles4 published/4 review items; filtering and each detail preserve title/summary and show safe check without new paid analysis.",
+    "Table-driven tests cover malformed whole knowledge and existing malformed members; existing inventory61 and projection/auth/read-only contracts continue passing.",
+    "Run focused/full offline suites, browser, ops/orchestration/links/packets/scope; publish same PR43, update MEG-103/92, then one new independent review of exact final head. No further automatic correction."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/processing-indicator.mjs",
+    "google-v0/lib/pipeline-progress.mjs",
+    "google-v0/lib/library-repository.mjs",
+    "google-v0/web-google/app/library.jsx",
+    "google-v0/web-google/app/reel-details.jsx",
+    "google-v0/web-google/app/processing-indicator.jsx",
+    "google-v0/web-google/app/globals.css",
+    "google-v0/tests/processing-indicator.test.mjs",
+    "google-v0/tests/pipeline-progress.test.mjs",
+    "google-v0/tests/library-repository.test.mjs",
+    "google-v0/qa/attention-fixtures.mjs",
+    "google-v0/qa/server.mjs",
+    "google-v0/qa/browser-check.mjs",
+    "docs/processing-indicator.md",
+    "tasks/MEG-103.json",
+    "google-v0/lib/knowledge.mjs",
+    "google-v0/tests/knowledge.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/processing-indicator.mjs",
+      "reason": "Classify missing whole block without changing stage/action contracts",
+      "sections": [
+        "processingIndicator"
+      ],
+      "max_chars": 4300
+    },
+    {
+      "path": "google-v0/tests/processing-indicator.test.mjs",
+      "reason": "Table and invariants for R1/P2",
+      "sections": [
+        "published knowledge cases"
+      ],
+      "max_chars": 2400
+    },
+    {
+      "path": "google-v0/qa/attention-fixtures.mjs",
+      "reason": "Extend offline fixture preserving original inventory",
+      "sections": [
+        "attentionFixtures"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/qa/browser-check.mjs",
+      "reason": "Actual-component counter/list/detail regression",
+      "sections": [
+        "attention checks"
+      ],
+      "max_chars": 2200
+    },
+    {
+      "path": "docs/processing-indicator.md",
+      "reason": "Describe only read-only P2 correction",
+      "sections": [
+        "validation"
+      ],
+      "max_chars": 600
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/processing-indicator.test.mjs google-v0/tests/pipeline-progress.test.mjs google-v0/tests/library-repository.test.mjs google-v0/tests/library-sync.test.mjs google-v0/tests/library-api.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "node google-v0/qa/browser-check.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/test_orchestration.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 0,
+    "reviewer_runs": 1,
+    "fix_runs": 1,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "changes_requested",
+    "reason": "Owner explicitly authorizes one correction of independently reproduced R1/P2 at8eab2b08 and one fresh read-only review afterwards. Original finding/evidence preserved outside source. No further automatic fixes, merge or deploy."
+  }
+}

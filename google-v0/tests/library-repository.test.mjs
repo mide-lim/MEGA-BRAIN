@@ -15,3 +15,10 @@ test('selected updates bound concurrent reads and use the same safe projection',
  assert.equal(max,8);assert.equal(selected.length,40);assert.deepEqual(selected.map(x=>x.id),ids);assert.equal(selected[0].analysis.title,'Curado');assert.ok(!('video_key'in selected[0]));assert.ok(!('provider_diagnostic'in selected[0]));
  const absent=new LibraryRepository({get:async()=>null});await assert.rejects(absent.selected(['Reel_1']),/não encontrado/);
 });
+
+test('public errors use a fixed message without another store read or altering the source',async()=>{
+ let reads=0;const data={id:'Reel_123',status:'needs_attention',error:'SECRET https://signed?token=private',analysis:{title:'Preservada'}};const before=structuredClone(data);
+ const repository=new LibraryRepository({get:async()=>{reads++;return {data};},list:async()=>{reads++;return {records:[{data}],nextPageToken:null};}});
+ const result=await repository.page();assert.equal(reads,1);assert.ok(!JSON.stringify(result).includes('SECRET'));assert.ok(!JSON.stringify(result).includes('token='));assert.equal(result.videos[0].analysis.title,'Preservada');
+ const selected=await repository.selected(['Reel_123']);assert.equal(reads,2);assert.equal(selected[0].error,result.videos[0].error);assert.deepEqual(data,before);
+});

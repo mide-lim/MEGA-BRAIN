@@ -4,6 +4,8 @@
   "uploads_enabled": false,
   "downloads_enabled": false,
   "dispatch_enabled": false,
+  "assisted_upload_enabled": false,
+  "admission_enabled": false,
   "pilot_video_ids": [],
   "worker_origin": null,
   "speech_location": "global",

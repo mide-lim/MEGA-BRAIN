@@ -50,3 +50,28 @@ export async function runAssistedUpload({store,flow,requestId:id,allowedVideoIds
   }catch{return uncertain('assisted_result_unconfirmed');}
   return outcome;
 }
+
+// Private entrypoint: the payload identifies an existing server approval only.
+// Neither this handler nor the helper creates approvals or enqueues work.
+export function assistedUploadHandler({store,flow,authorize,enabled=false,allowedVideoIds=[]}){
+  if(typeof authorize!=='function')throw Error('Autenticação do worker obrigatória.');
+  const ids=structuredClone(allowedVideoIds);
+  const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
+  return async request=>{
+    if(await authorize(request)!==true)return reply({error:'Acesso negado.'},401);
+    if(request.method!=='POST')return reply({error:'Método inválido.'},405);
+    if(enabled!==true)return reply(blocked('assisted_disabled'),409);
+    let input;
+    try{
+      const text=await request.text();if(Buffer.byteLength(text)>2048)throw Error();
+      input=JSON.parse(text);
+      if(!input||Array.isArray(input)||typeof input!=='object'||Object.keys(input).length!==1||!requestId(input.requestId))throw Error();
+    }catch{return reply({error:'Pedido assistido inválido.'},400);}
+    try{
+      const controls=(await store.get('settings/automation'))?.data;
+      const acquisition=(await store.get('settings/acquisition'))?.data;
+      if(controls?.enabled!==true||controls.parallelism!==1||controls.transcription_enabled!==false||controls.analysis_enabled!==false||acquisition?.schema_version!==1||acquisition.enabled!==true||acquisition.parallelism!==1)return reply(blocked('assisted_controls_invalid'));
+    }catch{return reply(blocked('assisted_controls_unavailable'));}
+    return reply(await runAssistedUpload({store,flow,requestId:input.requestId,allowedVideoIds:ids}));
+  };
+}

@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "MEG-106",
+  "paperclip_issue_id": "9d34c487-a05d-44af-80c9-a3da0f09fd61",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "a273f653939206140db64a394ef727b9b264f90e",
+  "objective": "Owner-authorized minimal assisted upload composition on existing WorkerFlow.run, with server-owned single-use scoped approval, no queue/admission/successors and no new STT/Gemini. Offline tests, draft PR and MEG-106/104/92 updates only. No live processing, Google reads/writes, legacy marker/proof changes, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Internal helper executes only upload/poll0 task from trusted persisted approval matching request, server allowlist, quote and expiry; caller cannot provide stage/task or HTTP flag.",
+    "CAS consumes approval before flow invocation; duplicate/concurrent deliveries and ambiguous writes/execution/receipt never repeat automatically.",
+    "Existing WorkerFlow, financial/reservation/eligibility/CAS/acquisition/end-proof controls remain intact, no queue/admission call or STT/Gemini invocation.",
+    "Offline tests cover success, unknown/waiting, errors/timeouts, expired/malformed/out-of-scope approval, concurrency and metadata receipt loss plus real WorkerFlow integration preserving legacy/published data.",
+    "Run focused/full processing, ops/orchestration/links/packet/scope checks; draft PR and evidence, independent review pending separate authorization."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/assisted-upload.mjs",
+    "google-v0/tests/assisted-upload.test.mjs",
+    "docs/assisted-upload.md",
+    "tasks/MEG-106.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "reuse factory returning flow without HTTP/queue",
+      "sections": [
+        "workerRuntime withHandler=false"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "task validation and boundary avoiding normal automatic successors",
+      "sections": [
+        "validateTask",
+        "workerHandler"
+      ],
+      "max_chars": 2600
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "existing flow.run guards and end-proof lifecycle reused",
+      "sections": [
+        "run preconditions",
+        "finally"
+      ],
+      "max_chars": 4200
+    },
+    {
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "existing versioned patch receipt and ambiguity semantics",
+      "sections": [
+        "patch"
+      ],
+      "max_chars": 1700
+    },
+    {
+      "path": "google-v0/tests/acquisition-control.test.mjs",
+      "reason": "synthetic actual-runtime/ledger/stop fixture precedent",
+      "sections": [
+        "fixture"
+      ],
+      "max_chars": 1400
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/assisted-upload.test.mjs google-v0/tests/worker-queue.test.mjs google-v0/tests/worker-flow.test.mjs google-v0/tests/acquisition-control.test.mjs google-v0/tests/execution-stops.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p \"test_*.py\"",
+    "python3 scripts/test_orchestration.py",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 0,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_human",
+    "status": "pending",
+    "reason": "User authorizes implementation/tests and draft PR only. No additional model/delegation; exact-head independent review and human acceptance required before merge/release, to be separately authorized."
+  }
+}

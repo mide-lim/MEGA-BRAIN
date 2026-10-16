@@ -1,4 +1,4 @@
-import {categoryDefinitions,categoryLabel} from './category-taxonomy.mjs';
+import {categoryDefinitions,resolveCategories,taxonomyVersion} from './category-taxonomy.mjs';
 const arr=v=>Array.isArray(v)?v:[];
 const str=v=>typeof v==='string'?v:null;
 export const reelIdPattern=/^[A-Za-z0-9_-]{5,32}$/;
@@ -38,7 +38,7 @@ export function projectReel(v){
  // Provider diagnostics remain private. Arbitrary text cannot safely be redacted
  // into a public UI message (JSON credentials and alternate auth schemes vary).
  const error=status==='failed'||status==='uncertain'?{code:/^[A-Z0-9_]{1,64}$/.test(v.error?.code??v.error_code??'')?(v.error?.code??v.error_code):(status==='uncertain'?'RECONCILIATION_REQUIRED':'CONFIRMED_FAILURE'),message:status==='uncertain'?'Resultado não confirmado; requer conciliação.':'Falha confirmada; confira a ação disponível.',destination:status==='uncertain'?'reconcile':str(v.error?.destination)??'retry',stage:stageName(v.error?.stage??v.stage),worker:str(v.error?.worker??v.worker),retryable:status==='failed'&&v.error?.retryable!==false,uncertain:status==='uncertain'}:null;
- return {id:v.id,sourceUrl:str(v.sourceUrl??v.source_url),title:str(v.title??a?.title),creator:str(v.creator),language:str(v.language),createdAt:str(v.createdAt??v.created_at),updatedAt:str(v.updatedAt??v.updated_at),status,stage:stageName(v.stage),categoryIds,tags:[...new Set([...arr(v.tags),...arr(v.published_tags)].filter(x=>typeof x==='string'))],media:{available:v.media_verified===true&&!!v.video_key&&!!v.video_generation},publication:{available,revision:available?str(v.publication?.revision??v.analysis_generation):null,qualityStatus:str(v.analysis_quality_status),summary:str(a?.summary)},error};
+ return {id:v.id,sourceUrl:str(v.sourceUrl??v.source_url),title:str(v.title??a?.title),creator:str(v.creator),language:str(v.language),createdAt:str(v.createdAt??v.created_at),updatedAt:str(v.updatedAt??v.updated_at),status,stage:stageName(v.stage),categoryIds,categoryOverride:typeof v.taxonomy_override?.manual==='boolean'?{manual:v.taxonomy_override.manual,revision:v.taxonomy_override.revision??null}:null,tags:[...new Set([...arr(v.tags),...arr(v.published_tags)].filter(x=>typeof x==='string'))],media:{available:v.media_verified===true&&!!v.video_key&&!!v.video_generation},publication:{available,revision:available?str(v.publication?.revision??v.analysis_generation):null,qualityStatus:str(v.analysis_quality_status),summary:str(a?.summary)},error};
 }
 export function reelDetail(v){
  const item=projectReel(v),caption=typeof v.source_caption==='string'?v.source_caption:v.source_caption?.text;
@@ -58,11 +58,57 @@ export function matchesReel(item,q={}){
 }
 export function eligibility(item){return item.status==='registered'?null:item.status==='completed'||item.publication.available?'already_completed':item.status==='failed'?'requires_retry':item.status==='uncertain'?'requires_reconciliation':'already_in_progress';}
 // Leaf projection keeps legacy published metadata searchable without fetching report, knowledge or transcript.
-export const REEL_LIST_FIELDS=['id','source_url','sourceUrl','title','creator','language','created_at','createdAt','updated_at','updatedAt','status','stage','categoryIds','category_ids','tags','published_tags','media_verified','video_key','video_generation','analysis_key','analysis_generation','analysis_quality_status','candidate_analysis_key','failure_confirmed','uncertain','worker','error_code','analysis.title','analysis.summary','analysis.categories','publication.available','publication.revision','reels_v2.status','reels_v2.stage','reels_v2.worker','reels_v2.updatedAt','reels_v2.error','reels_v2.candidate','error.code','error.message','error.destination','error.stage','error.worker','error.retryable','error.uncertain'];
+export const REEL_LIST_FIELDS=['id','source_url','sourceUrl','title','creator','language','created_at','createdAt','updated_at','updatedAt','status','stage','categoryIds','category_ids','taxonomy_override.manual','taxonomy_override.revision','tags','published_tags','media_verified','video_key','video_generation','analysis_key','analysis_generation','analysis_quality_status','candidate_analysis_key','failure_confirmed','uncertain','worker','error_code','analysis.title','analysis.summary','analysis.categories','publication.available','publication.revision','reels_v2.status','reels_v2.stage','reels_v2.worker','reels_v2.updatedAt','reels_v2.error','reels_v2.candidate','error.code','error.message','error.destination','error.stage','error.worker','error.retryable','error.uncertain'];
 
+// These stable roots are the previously approved categories-v2 contexts. A raw
+// label never creates a new root or a category named after an individual Reel.
+export const reelsCategoryGroups=Object.freeze([
+ ['group-alimentacao','Alimentação'],['group-tecnologia','Tecnologia'],
+ ['group-saude','Saúde e bem-estar'],['group-trabalho','Trabalho e negócios'],
+ ['group-casa','Casa e estilo'],['group-viagens','Viagens e lugares'],
+ ['group-outros','Outros temas']
+].map(([id,name])=>Object.freeze({id,name})));
+const officialById=new Map(categoryDefinitions.map(n=>[n.id,n]));
+const groupByName=new Map(reelsCategoryGroups.map(n=>[n.name,n.id]));
+const managedTaxonomy=state=>!!state&&(state.taxonomyVersion===taxonomyVersion||(state.revision??0)>0||arr(state.nodes).some(n=>n.manual===true||n.parentId!=null)||['assignments','rules','appliedCommands'].some(k=>arr(state[k]).length)||!!state.pendingOperationId);
 export function initialReelsTaxonomy(items=[]){
- const observed=[...new Set(items.filter(i=>i.publication?.available).flatMap(i=>i.categoryIds??[]))].sort();
- const definitions=new Map(categoryDefinitions.map(n=>[n.id,n]));
- const nodes=observed.map(id=>({id,name:definitions.get(id)?.name??categoryLabel(id)??id,parentId:null,manual:false,evidenceCount:null}));
- return {revision:0,nodes,assignments:[],rules:[],appliedCommands:[]};
+ const destinations=new Set(items.filter(i=>i.publication?.available).map(i=>resolveCategories(arr(i.categorySourceIds??i.categoryIds)).primaryId).filter(Boolean));
+ const activeGroups=new Set([...destinations].map(id=>officialById.get(id).group));
+ const nodes=reelsCategoryGroups.filter(n=>activeGroups.has(n.name)).map(n=>({...n,parentId:null,manual:false,evidenceCount:null}));
+ for(const definition of categoryDefinitions)if(destinations.has(definition.id))nodes.push({id:definition.id,name:definition.name,parentId:groupByName.get(definition.group),manual:false,evidenceCount:null});
+ return {taxonomyVersion,revision:0,nodes,assignments:[],rules:[],appliedCommands:[]};
+}
+// Pure navigation compatibility. The source analysis, references, stored labels,
+// assignments and revisions are never rewritten by a GET. Once manual actions
+// or recurrence rules exist, their exact nodes and IDs take precedence. That
+// configuration needs explicit copy validation rather than a silent reset.
+export function categoryNavigation(items=[],saved=null){
+ const managed=managedTaxonomy(saved),savedNodes=managed?arr(saved.nodes):[],savedIds=new Set(savedNodes.map(n=>n.id));
+ const manualAssignments=new Map();
+ for(const assignment of arr(saved?.assignments).filter(a=>a.manual===true)){
+  const previous=manualAssignments.get(assignment.reelId);
+  if(!previous||(assignment.revision??-1)>=(previous.revision??-1))manualAssignments.set(assignment.reelId,assignment);
+ }
+ const projected=items.map(item=>{
+  const source=[...new Set(arr(item.categorySourceIds??item.categoryIds).filter(v=>typeof v==='string'))];
+  if(!item.publication?.available)return {...item,categoryIds:[],categorySourceIds:source};
+  // An older retained assignment cannot undo a newer override already applied
+  // to this Reel. This mirrors the revision guard used by applyAssignments.
+  const candidate=manualAssignments.get(item.id),assignment=candidate&&(item.categoryOverride?.revision??-1)>(candidate.revision??-1)?null:candidate,manual=item.categoryOverride?.manual===true||!!assignment;
+  const explicit=assignment?arr(assignment.categoryIds):source;
+  const resolved=resolveCategories(source);
+  const retained=managed?explicit.filter(id=>savedIds.has(id)&&!officialById.has(id)):[];
+  // Official primary classification stays singular even when the source holds
+  // two valid subject IDs. Persisted custom/recurrence children remain attached
+  // to that primary; an unresolved extra label adds no fallback destination.
+  const primary=resolved.primaryId&&resolved.primaryId!=='a-organizar'?resolved.primaryId:null;
+  const categoryIds=manual?[...new Set(explicit)]:retained.length?[...new Set([...(primary?[primary]:[]),...retained])]:resolved.primaryId?[resolved.primaryId]:[];
+  return {...item,categoryIds,categorySourceIds:source,categoryResolution:{version:taxonomyVersion,mode:manual?'manual':retained.length?'preserved-configuration':'official-primary',primaryId:categoryIds[0]??null,topics:resolved.topics,unresolved:resolved.unresolved}};
+ });
+ const base=initialReelsTaxonomy(projected.filter(i=>i.categoryResolution?.mode==='official-primary'||i.categoryResolution?.mode==='preserved-configuration'&&i.categoryIds.some(id=>officialById.has(id))));
+ const nodes=managed?structuredClone(savedNodes):base.nodes;
+ if(managed)for(const node of base.nodes)if(!savedIds.has(node.id)){nodes.push(node);savedIds.add(node.id);}
+ const missingManualIds=[...new Set(projected.filter(i=>i.categoryResolution?.mode==='manual').flatMap(i=>i.categoryIds).filter(id=>!nodes.some(n=>n.id===id)))];
+ const compatibility={mode:managed?'preserved-configuration':'official-contexts',requiresCopyReconciliation:managed&&saved?.taxonomyVersion!==taxonomyVersion,missingManualIds};
+ return {items:projected,taxonomy:{...base,...(managed?structuredClone(saved):{}),revision:saved?.revision??0,taxonomyVersion:managed?saved.taxonomyVersion??null:taxonomyVersion,nodes,compatibility}};
 }

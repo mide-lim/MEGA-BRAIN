@@ -37,3 +37,31 @@ test('published keywords are light metadata independent from knowledge reads and
  const store=storeOf([{id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',tags:['manual'],published_tags:['sopa','cozinha'],analysis:{summary:'Publicação',knowledge:{keywords:[{term:'DO_NOT_SCAN_KNOWLEDGE',evidence:['secret quote']}]}}}]);
  const repository=new ReelsRepository({store});assert.deepEqual((await repository.list({tag:'cozinha'})).items[0].tags,['manual','sopa','cozinha']);assert.equal((await repository.list({tag:'DO_NOT_SCAN_KNOWLEDGE'})).items.length,0);assert.ok(store.calls.every(c=>c.select.includes('published_tags')&&!c.select.some(f=>f.startsWith('analysis.knowledge'))));
 });
+
+test('contextual tree, parent filters, library and detail share unique primary destinations without writing sources',async()=>{
+ const pub={status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted'},videos=[
+  {...pub,id:'Reel_001',analysis:{categories:['Receitas','Culinária','Nutrição','Tema não coberto'],references:[{name:'Livro preservado'}]}},
+  {...pub,id:'Reel_002',analysis:{categories:['Culinária japonesa','receitas']}},
+  {...pub,id:'Reel_003',analysis:{categories:['Gadgets','Hardware']}},
+  {...pub,id:'Reel_004',analysis:{categories:['Tema não coberto']}},
+  {...pub,id:'Reel_005',analysis_key:null,analysis:{categories:['Receitas']}}
+ ],store=storeOf(videos),before=JSON.stringify([...store.docs]),repository=new ReelsRepository({store});
+ const c=await repository.categories();assert.equal(c.total,4);
+ assert.equal(c.nodes.find(n=>n.id==='group-alimentacao').count,2);assert.equal(c.nodes.find(n=>n.id==='receitas').count,2);
+ assert.equal(c.nodes.find(n=>n.id==='group-outros').count,1);assert.equal(c.nodes.some(n=>n.id==='nutricao'),false);
+ const filtered=await repository.list({workspace:'library',category:'group-alimentacao'});assert.equal(filtered.total,2);assert.deepEqual(filtered.items.map(i=>i.categoryIds),[['receitas'],['receitas']]);
+ assert.equal((await repository.list({workspace:'library',category:'receitas'})).total,2);
+ assert.deepEqual((await repository.detail('Reel_001')).categoryIds,['receitas']);assert.equal((await repository.list({category:'group-tecnologia'})).total,1);
+ assert.equal(JSON.stringify([...store.docs]),before);assert.equal(store.docs.has('settings/reels_v2_taxonomy'),false);
+});
+test('saved flat taxonomy without actions projects contextual groups while stored revision and source labels remain intact',async()=>{
+ const video={id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{categories:['Receitas','Culinária']}},flat={revision:0,nodes:[{id:'Receitas',name:'Receitas',parentId:null,manual:false},{id:'Culinária',name:'Culinária',parentId:null,manual:false}],assignments:[],rules:[],appliedCommands:[]},store=storeOf([video],{'settings/reels_v2_taxonomy':flat}),before=structuredClone(flat),repository=new ReelsRepository({store});
+ const tree=await repository.categories();assert.equal(tree.total,1);assert.equal(tree.nodes.filter(n=>n.parentId===null).length,1);assert.equal(tree.nodes.find(n=>n.id==='group-alimentacao').count,1);
+ assert.equal((await repository.list({category:'receitas'})).total,1);assert.deepEqual(store.docs.get('settings/reels_v2_taxonomy'),before);
+});
+test('manual custom classification is included by projected reads and never replaced by raw official categories',async()=>{
+ const video={id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',categoryIds:['custom'],taxonomy_override:{manual:true,revision:3},analysis:{categories:['Receitas','Culinária']}},saved={revision:3,nodes:[{id:'my-root',name:'Meu grupo',parentId:null,manual:true},{id:'custom',name:'Meu recorte',parentId:'my-root',manual:true}],assignments:[],rules:[],appliedCommands:[]},store=storeOf([video],{'settings/reels_v2_taxonomy':saved}),repository=new ReelsRepository({store});
+ const tree=await repository.categories();assert.equal(tree.nodes.find(n=>n.id==='my-root').count,1);assert.equal(tree.compatibility.requiresCopyReconciliation,true);
+ assert.deepEqual((await repository.list({category:'my-root'})).items[0].categoryIds,['custom']);assert.deepEqual((await repository.detail('Reel_001')).categoryIds,['custom']);
+ assert.ok(store.calls.filter(c=>c.collection==='videos').every(c=>c.select.includes('taxonomy_override.manual')));assert.deepEqual(store.docs.get('videos/Reel_001'),video);
+});

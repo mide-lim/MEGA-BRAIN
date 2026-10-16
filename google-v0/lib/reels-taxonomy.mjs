@@ -1,4 +1,4 @@
-import {publicationAvailable,initialReelsTaxonomy,projectReel} from './reels-model.mjs';
+import {publicationAvailable,initialReelsTaxonomy,projectReel,categoryNavigation} from './reels-model.mjs';
 import {hash,nowISO,fail,key,identifier,ensure,cas} from './reels-runtime.mjs';
 import {evidenceWindow} from './reels-speech-evidence.mjs';
 const statePath='settings/reels_v2_taxonomy';
@@ -33,7 +33,7 @@ export function recipeRecurrence(raw,minConfidence=0.8){
 }
 export class ReelsTaxonomy {
  constructor({repository,clock=Date.now}){this.repository=repository;this.store=repository.store;this.clock=clock;}
- async state(){for(let attempt=0;attempt<8;attempt++){const saved=await this.store.get(statePath);if(!saved){await ensure(this.store,statePath,initialReelsTaxonomy(await this.published()));continue;}if(!saved.data.pendingOperationId)return saved;await this.finishManualOperation(saved.data.pendingOperationId);}throw fail('TAXONOMY_BUSY','Categorias em atualização; retome a operação preservada.',503);}
+ async state(){for(let attempt=0;attempt<8;attempt++){const saved=await this.store.get(statePath);if(!saved){await ensure(this.store,statePath,initialReelsTaxonomy(await this.published()));continue;}if(!saved.data.pendingOperationId)return {...saved,data:categoryNavigation(await this.published(),saved.data).taxonomy};await this.finishManualOperation(saved.data.pendingOperationId);}throw fail('TAXONOMY_BUSY','Categorias em atualização; retome a operação preservada.',503);}
  async published(){const items=[];let cursor;do{const page=await this.repository.list({limit:100,cursor,workspace:'all'});items.push(...page.items.filter(i=>i.publication?.available));cursor=page.nextCursor;}while(cursor);return items;}
  async mutate(input){
   if(input.action==='discover')return this.discover({...input,automatic:false});

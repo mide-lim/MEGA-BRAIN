@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {parseReelLinks} from './links.mjs';
-import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,initialReelsTaxonomy} from './reels-model.mjs';
+import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,categoryNavigation} from './reels-model.mjs';
 const invalid=message=>Object.assign(Error(message),{status:400,code:'INVALID_QUERY'});
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const executionOrder=(a,b)=>{const left=a.queuedAt??a.createdAt,right=b.queuedAt??b.createdAt;if(left!==right)return left===null?1:right===null?-1:left<right?-1:1;const rank={acquisition:0,transcription:1,analysis:2};return (a.attempt??0)-(b.attempt??0)||(rank[a.stage]??3)-(rank[b.stage]??3)||String(a.id??'').localeCompare(String(b.id??''));};
@@ -8,7 +8,7 @@ export class ReelsRepository{
  constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
- async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);return v?projectReel(v):null;}
+ async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);return v?categoryNavigation([projectReel(v)],(await this.store.get('settings/reels_v2_taxonomy'))?.data).items[0]:null;}
  observation(){return {observedAt:this.snapshot?.observedAt??null,cache:{ttlMs:this.cacheTtlMs,stale:this.snapshot?.stale??false}};}
  async executionHistory(id){
   if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');
@@ -19,7 +19,7 @@ export class ReelsRepository{
   }while(cursor);
   return {items:items.sort(executionOrder),cursor:lastCursor,observedAt:this.now()};
  }
- async detail(id){const v=await this.raw(id);if(!v)return null;const detail=reelDetail(v),history=await this.executionHistory(id),hasNew=history.items.length>0,legacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:legacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':legacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:legacy&&!hasNew?null:true}};}
+ async detail(id){const v=await this.raw(id);if(!v)return null;const detail=categoryNavigation([reelDetail(v)],(await this.store.get('settings/reels_v2_taxonomy'))?.data).items[0],history=await this.executionHistory(id),hasNew=history.items.length>0,legacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:legacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':legacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:legacy&&!hasNew?null:true}};}
  async scan(collection,select){
   if(typeof this.store.query!=='function')throw Error('Store requer consulta projetada; leitura integral não permitida.');
   const records=[];let cursor;const seen=new Set();
@@ -30,7 +30,7 @@ export class ReelsRepository{
   if(this.snapshot&&this.snapshot.expiresAt>this.clock())return this.snapshot.items;
   if(this.pending)return this.pending;
   const epoch=this.cacheEpoch;
-  this.pending=(async()=>{try{const records=await this.scan('videos',REEL_LIST_FIELDS),items=records.map(({data,path})=>projectReel({...data,id:data.id??path.split('/')[1]}));const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
+  this.pending=(async()=>{try{const records=await this.scan('videos',REEL_LIST_FIELDS),items=categoryNavigation(records.map(({data,path})=>projectReel({...data,id:data.id??path.split('/')[1]})),(await this.store.get('settings/reels_v2_taxonomy'))?.data).items;const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
   return this.pending;
  }
  validateQuery(q){
@@ -39,7 +39,7 @@ export class ReelsRepository{
  }
  async matching(query={}){
   const items=await this.items();if(!query.category)return items.filter(x=>matchesReel(x,query));
-  const taxonomy=(await this.store.get('settings/reels_v2_taxonomy'))?.data??initialReelsTaxonomy(items),ids=new Set([query.category]);let added=true;
+  const {taxonomy}=categoryNavigation(items,(await this.store.get('settings/reels_v2_taxonomy'))?.data),ids=new Set([query.category]);let added=true;
   while(added){added=false;for(const node of taxonomy.nodes??[])if(ids.has(node.parentId)&&!ids.has(node.id)){ids.add(node.id);added=true;}}
   const {category,...rest}=query;return items.filter(x=>matchesReel(x,rest)&&x.categoryIds.some(id=>ids.has(id)));
  }
@@ -69,10 +69,10 @@ export class ReelsRepository{
   const p=await this.store.query('reels_events',{filters:where,orderBy:[{field:'__name__',direction:'ASCENDING'}],limit,cursor:filters.cursor});return {items:p.records.map(({data,path})=>({...data,id:data.id??path.split('/')[1]})),nextCursor:p.lastCursor??p.nextCursor??filters.cursor??null,hasMore:!!p.nextCursor,observedAt:this.now()};
  }
  async categories(){
-  const items=(await this.items()).filter(x=>x.publication.available&&x.categoryIds.length),t=(await this.store.get('settings/reels_v2_taxonomy'))?.data??initialReelsTaxonomy(items),nodes=Array.isArray(t.nodes)?t.nodes:[],byId=new Map(nodes.map(n=>[n.id,n]));
+  const navigation=categoryNavigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
   const memberships=new Map(nodes.map(n=>[n.id,new Set()])),direct=new Map(nodes.map(n=>[n.id,new Set()]));
   for(const item of items)for(const cid of item.categoryIds){direct.get(cid)?.add(item.id);let id=cid;const seen=new Set();while(byId.has(id)&&!seen.has(id)){seen.add(id);memberships.get(id).add(item.id);id=byId.get(id).parentId;}}
-  return {nodes:nodes.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false})),total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,...this.observation()};
+  return {nodes:nodes.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false})),total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
  }
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}
 }

@@ -8,18 +8,20 @@ import {submitAnalysisWithRetry,maximumAnalysisAttempts} from './analysis-retry.
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
 
-// Only WorkerFlow may call these adapters after claiming and starting a
-// financial reservation. The injected gate independently verifies that claim.
-export function googleOperations({api,storage,tools,preset,config,gate,inspect=inspectMedia}){
+// Legacy callers retain the reservation gate. The v2 caller supplies a
+// server-owned execution authorization, independently of financial reporting.
+export function googleOperations({api,storage,tools,preset,config,gate,executionAuthorization=null,executionIds=null,preparedAudioKey=null,inspect=inspectMedia}){
   if(api.project!=='megabrain-v0-1017370021431'||storage.bucket!==`${api.project}-media`)throw new Error('Adaptadores fora do projeto v0.');
-  if(typeof gate!=='function')throw new Error('Verificação da reserva obrigatória.');
+  if(typeof gate!=='function'&&typeof executionAuthorization!=='function')throw new Error('Autorização de execução obrigatória.');
+  if(executionAuthorization!==null&&typeof executionAuthorization!=='function'||executionIds!==null&&typeof executionIds!=='function'||preparedAudioKey!==null&&typeof preparedAudioKey!=='function')throw Error('Contexto de execução inválido.');
   async function admitted(id,stage,videoId){
     if(config?.enabled!==true||config.uploads_enabled!==true)throw new Error('Operações Google desligadas.');
+    if(executionAuthorization){await executionAuthorization({executionId:id,stage,videoId});return;}
     const reservation=await gate({executionId:id,stage,videoId});
     if(reservation?.maximum_cents!==budget(stage))throw new Error('Estimativa diverge da reserva iniciada.');
   }
   const result=(id,stage,changes,cost)=>({video_id:id,stage,changes,actual_cents:cost});
-  const budget=stage=>{const n=config?.quotes?.[stage];if(!Number.isSafeInteger(n)||n<1)throw new Error('Estimativa obrigatória.');return n;};
+  const budget=stage=>{const n=config?.quotes?.[stage];if(executionAuthorization)return Number.isFinite(n)&&n>=0?n:null;if(!Number.isSafeInteger(n)||n<1)throw new Error('Estimativa obrigatória.');return n;};
   const at=async(step,action)=>{const started=performance.now();try{return await action();}catch(error){error.operation_step=step;error.elapsed_ms=Math.max(0,Math.round(performance.now()-started));throw error;}};
   const submitSTT=(url,options)=>at('submit_stt',()=>api.request(url,options));
   const persist=(key,data)=>storage.writeImmutable(key,Buffer.from(JSON.stringify(data)),{contentType:'application/json',uploadsEnabled:true});
@@ -30,7 +32,8 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
     return {caption_status:'unavailable'};
   }
 
-  const audioKeyFor=videoId=>`results/instagram/${videoId}/${stageExecutionId(videoId,'transcription')}/audio.flac`;
+  const transcriptionIdFor=videoId=>{const id=executionIds?executionIds(videoId,'transcription'):stageExecutionId(videoId,'transcription');if(!/^[A-Za-z0-9_-]{16,100}$/.test(id??''))throw Error('Identidade STT inválida.');return id;};
+  const audioKeyFor=videoId=>{const key=preparedAudioKey?.(videoId)??`results/instagram/${videoId}/${transcriptionIdFor(videoId)}/audio.flac`;if(typeof key!=='string'||!key.startsWith(`results/instagram/${videoId}/`)||!/^results\/instagram\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]{16,100}\/audio\.flac$/.test(key))throw Error('Referência de áudio fora do Reel.');return key;};
   function audioReference(video,key,object,audio){
     const reference={audio_key:key,audio_generation:object.generation,audio_bytes:audio.length,audio_sha256:sha256(audio),audio_source_key:video.video_key,audio_source_generation:video.video_generation};
     if(object.size!==audio.length||object.sha256!==reference.audio_sha256)throw Error('Áudio persistido não passou na verificação.');
@@ -115,7 +118,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       if(config.single_reel_pipeline_enabled===true){if(typeof storage.reserveResult!=='function')throw Error('Reserva do resultado STT indisponível.');await storage.reserveResult(`results/instagram/${video.id}/${executionId}/transcription.json`,1048576);}
       const key=`originals/instagram/${video.id}/video.mp4`;
       if(video.video_key!==key||!/^\d+$/.test(video.video_generation??'')||video.media_verified!==true||video.audio_status!=='present')throw new Error('Mídia verificada obrigatória.');
-      if(executionId!==stageExecutionId(video.id,'transcription'))throw Error('Execução STT fora do caminho imutável.');
+      if(executionId!==transcriptionIdFor(video.id))throw Error('Execução STT fora do caminho imutável.');
       const {audio,reference}=await transcriptionAudio(video,recordPreparedAudio),audioKey=reference.audio_key;
       // Chirp 3 supports synchronous Recognize for audio below one minute.
       // Select before submission; never fall back by repeating a paid request.
@@ -136,10 +139,11 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       if(!['megabrain-v0-1017370021431','711042421394'].some(owner=>operationName.startsWith(`projects/${owner}/locations/${config.speech_location}/operations/`))||!/^projects\/[a-z0-9-]+\/locations\/(?:global|us)\/operations\/[A-Za-z0-9_-]+$/.test(operationName))throw new Error('Operação STT fora do escopo.');
       const operation=await api.request(`${speechOrigin()}/v2/${operationName}`);
       if(operation.done!==true)return {video_id:videoId,stage:'transcription',pending:true};
-      if(operation.error)throw new Error('STT informou falha.');
-      const audioUri=`gs://${storage.bucket}/results/instagram/${videoId}/${executionId}/audio.flac`;
+      if(operation.error)throw Object.assign(new Error('STT informou falha.'),executionAuthorization?{definitive:true,code:'STT_TERMINAL_FAILURE'}:{});
+      const audioUri=`gs://${storage.bucket}/${audioKeyFor(videoId)}`;
       const file=operation.response?.results?.[audioUri];
-      if(!file||file.error)throw new Error('STT não retornou o arquivo esperado.');
+      if(file?.error)throw Object.assign(new Error('STT informou falha no arquivo.'),executionAuthorization?{definitive:true,code:'STT_TERMINAL_FAILURE'}:{});
+      if(!file)throw new Error('STT não retornou o arquivo esperado.');
       const transcript=file.inlineResult?.transcript??file.transcript;
       const text=(transcript?.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
       // Preserve raw results, including timing and uncertainty, even if no speech.
@@ -155,7 +159,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       if(typeof recordAnalysisAttempts==='function'&&await storage.metadata(`results/instagram/${video.id}/${executionId}/analysis.json`))throw Error('Resultado já existe; conferir sem repetir análise.');
       const caption=await captionFor(video,executionId);
       const analysisRecord={...video,...caption};
-      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model});
+      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model,taxonomySignalsEnabled:config.reels_taxonomy_signals_enabled===true});
       let attempt=analysisAttempts.length;const callDiagnostics=[];
       const submit=()=>at('submit_analysis',()=>{
         const remainingMs=Math.floor(deadline-performance.now());

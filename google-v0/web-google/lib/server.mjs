@@ -3,6 +3,8 @@ import {validateWebConfig}from '../../lib/web-config.mjs';import {openSession,se
 import {serviceIdentity}from '../../lib/service-identity.mjs';import {GoogleREST}from '../../lib/google-rest.mjs';
 import {Firestore}from '../../lib/firestore.mjs';import {LibraryRepository}from '../../lib/library-repository.mjs';import {libraryAPI}from '../../lib/library-api.mjs';
 import {boundedMedia}from '../../lib/bounded-media.mjs';
+import {ReelsRepository}from '../../lib/reels-repository.mjs';
+import {reelsAPI}from '../../lib/reels-api.mjs';
 export function settings(){
   const path=process.env.MEGABRAIN_V0_CONFIG;
   if(!path||!isAbsolute(path)||path.includes('/run/megabrain/')||path.includes('/opt/megabrain-pilot/'))throw new Error('Configuração própria da v0 ausente.');
@@ -25,3 +27,12 @@ export function mediaStreamRoute(){return async(request,id)=>{
   try{routes();return await mediaHandler.stream(request,id);}
   catch{return Response.json({error:'Não foi possível acessar o vídeo agora. Tente carregar novamente.'},{status:503,headers:{'Cache-Control':'no-store'}});}
 };}
+
+let reelsBackend;
+export function reelsRoutes(){
+ if(!reelsBackend){const s=settings(),tokenProvider=serviceIdentity({project:s.project_id}),api=new GoogleREST({project:s.project_id,buckets:[s.media_bucket],tokenProvider});
+  const repository=new ReelsRepository({store:new Firestore(api)});
+  // Validation release: no client input or environment flag can enable processing.
+  reelsBackend=reelsAPI({repository,authorize:authenticated,sameOrigin,processingEnabled:false});}
+ return reelsBackend;
+}

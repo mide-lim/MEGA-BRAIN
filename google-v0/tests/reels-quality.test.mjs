@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {knowledgeReadiness} from '../lib/reels-quality.mjs';
+const field=kind=>({kind,value:'Informação suportada',evidence:[{source:'transcript',excerpt:'Informação suportada',start_seconds:0,end_seconds:1}]});
+const analysis=(context,kinds,gaps=[])=>({knowledge:{context,fields:kinds.map(field),missing_information:gaps}});
+test('overview requires supported knowledge instead of empty annotations',()=>{for(const value of [null,{},analysis('general',[])])assert.equal(knowledgeReadiness(value).accepted,false);});
+test('recipe requires ingredients and procedure; arbitrary gaps do not waive required groups',()=>{assert.equal(knowledgeReadiness(analysis('recipe',['ingredient','procedure'])).accepted,true);assert.equal(knowledgeReadiness(analysis('recipe',['recipe_name'],['Preço não mencionado'])).accepted,false);assert.equal(knowledgeReadiness(analysis('recipe',['procedure'],['Ingredientes não informados no vídeo.'])).accepted,true);});
+test('travel requires a place or explicit place gap; technology requires useful content',()=>{assert.equal(knowledgeReadiness(analysis('travel',['place'])).accepted,true);assert.equal(knowledgeReadiness(analysis('travel',['activity'],['Preço não mencionado'])).accepted,false);assert.equal(knowledgeReadiness(analysis('technology',['tool'])).accepted,false);assert.equal(knowledgeReadiness(analysis('technology',['concept'])).accepted,true);});

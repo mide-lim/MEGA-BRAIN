@@ -21,11 +21,18 @@ function encodeIntentMap(value){
     return [id,{mapValue:{fields:encodeFields(intent)}}];
   }))}};
 }
+function encodeStagePlan(value){
+ if(!plain(value))throw Error('Plano de etapas inválido.');
+ return {mapValue:{fields:Object.fromEntries(Object.entries(value).map(([id,stage])=>{
+  if(!/^[A-Za-z0-9_-]{5,32}$/.test(id)||!['acquisition','transcription','analysis'].includes(stage))throw Error('Plano de etapas inválido.');
+  return [id,{stringValue:stage}];
+ }))}};
+}
 export function encodeFields(data){
   if(!plain(data))throw new Error('Documento deve ser um objeto simples.');
   return Object.fromEntries(Object.entries(data).map(([key,value])=>{
     if(!/^[A-Za-z][A-Za-z0-9_]{0,127}$/.test(key)||['__proto__','constructor','prototype'].includes(key))throw new Error('Campo fora do schema permitido.');
-    return [key,key==='intents'?encodeIntentMap(value):encodeValue(value)];
+    return [key,key==='intents'?encodeIntentMap(value):key==='stagePlan'?encodeStagePlan(value):encodeValue(value)];
   }));
 }
 export function decodeValue(value){
@@ -40,7 +47,7 @@ export function decodeValue(value){
   throw new Error('Tipo Firestore desconhecido.');
 }
 export const decodeFields=fields=>Object.fromEntries(Object.entries(fields).map(([key,value])=>[key,decodeValue(value)]));
-const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks','execution_stops']);
+const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks','execution_stops','reels_commands','reels_command_items','reels_executions','reels_events','reels_controls','reels_taxonomy','reels_finance','reels_index']);
 function documentPath(path){
   const [collection,id,...rest]=String(path).split('/');
   if(!collections.has(collection)||!id||rest.length||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw new Error('Documento fora do escopo permitido.');
@@ -73,6 +80,31 @@ export class Firestore {
       if(!path.startsWith(collection+'/'))throw new Error('Documento retornado fora da coleção.');
       return {path,data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};
     }),nextPageToken:data.nextPageToken??null};
+  }
+  // Projection is required for scans of legacy videos: never fetch transcript or report bodies.
+  async query(collection,{select,filters=[],orderBy=[{field:'__name__',direction:'ASCENDING'}],limit=100,cursor}={}){
+    if(!collections.has(collection)||!Number.isInteger(limit)||limit<1||limit>1000)throw Error('Consulta inválida.');
+    const field=value=>{if(typeof value!=='string'||!/^(__name__|[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*)$/.test(value))throw Error('Campo de consulta inválido.');return {fieldPath:value};};
+    const q={from:[{collectionId:collection}],limit,orderBy:orderBy.map(x=>{if(!['ASCENDING','DESCENDING'].includes(x.direction))throw Error('Ordenação inválida.');return {field:field(x.field),direction:x.direction};})};
+    if(select){if(!Array.isArray(select)||!select.length)throw Error('Projeção inválida.');q.select={fields:select.map(field)};}
+    const operators={eq:'EQUAL',lt:'LESS_THAN',lte:'LESS_THAN_OR_EQUAL',gt:'GREATER_THAN',gte:'GREATER_THAN_OR_EQUAL',contains:'ARRAY_CONTAINS'};
+    if(filters.length){const parts=filters.map(x=>{if(!operators[x.op])throw Error('Filtro inválido.');return {fieldFilter:{field:field(x.field),op:operators[x.op],value:encodeValue(x.value)}};});q.where=parts.length===1?parts[0]:{compositeFilter:{op:'AND',filters:parts}};}
+    const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
+    if(cursor){let c;try{c=JSON.parse(Buffer.from(cursor,'base64url').toString());}catch{throw Error('Cursor inválido.');}if(c.collection!==collection||JSON.stringify(c.orderBy)!==JSON.stringify(orderBy)||!Array.isArray(c.values)||c.values.length!==orderBy.length)throw Error('Cursor inválido.');q.startAt={values:c.values,before:false};}
+    const rows=await this.api.request(this.root+':runQuery',{method:'POST',json:{structuredQuery:q}});
+    if(!Array.isArray(rows))throw Error('Resposta de consulta inválida.');
+    const docs=rows.filter(x=>x.document).map(x=>x.document);
+    const records=docs.map(doc=>{if(!doc.name?.startsWith(prefix))throw Error('Documento fora do projeto.');const path=documentPath(doc.name.slice(prefix.length));if(!path.startsWith(collection+'/'))throw Error('Documento fora da coleção.');return {path,data:decodeFields(doc.fields??{}),updateTime:doc.updateTime};});
+    const last=docs.at(-1);let nextCursor=null,lastCursor=null;
+    if(last){const values=orderBy.map(x=>{if(x.field==='__name__')return {referenceValue:last.name};let v={mapValue:{fields:last.fields}};for(const key of x.field.split('.'))v=v?.mapValue?.fields?.[key];if(!v)throw Error('Campo de ordenação ausente.');return v;});lastCursor=Buffer.from(JSON.stringify({collection,orderBy,values})).toString('base64url');if(docs.length===limit)nextCursor=lastCursor;}
+    return {records,nextCursor,lastCursor};
+  }
+  async commit(writes){
+    if(!Array.isArray(writes)||!writes.length||writes.length>450)throw Error('Commit inválido.');
+    const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
+    const prepared=writes.map(w=>{if(!w.create&&!w.updateTime)throw Error('Commit requer precondição.');const fields=encodeFields(w.data);return {update:{name:prefix+documentPath(w.path),fields},...(w.create?{}:{updateMask:{fieldPaths:Object.keys(fields)}}),currentDocument:w.create?{exists:false}:{updateTime:w.updateTime}};});
+    const result=await this.metadataWrite(this.root+':commit',{method:'POST',json:{writes:prepared}});
+    if(result?.writeResults?.length!==writes.length||!result.writeResults.every(x=>x.updateTime))throw Error('Commit não confirmado; conferir sem repetir.');return result;
   }
   async create(path,data){
     const query=new URLSearchParams({'currentDocument.exists':'false'});

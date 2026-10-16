@@ -1,3 +1,3 @@
 import './globals.css';
-export const metadata={title:'MEGA-BRAIN · Google v0',description:'Biblioteca pessoal de conhecimento — ambiente Google independente'};
+export const metadata={title:'MEGABRAIN - Reels',description:'Seu acervo privado de Reels e conhecimento publicado',robots:{index:false,follow:false}};
 export default function Layout({children}){return <html lang="pt-BR"><body>{children}</body></html>;}

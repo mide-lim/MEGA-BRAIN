@@ -10,7 +10,7 @@ await mkdir(output,{recursive:true});
 const server=await startReelsFixtureServer(),checks=[],failures=[];
 let browser,page;
 const record=async(name,action)=>{await action();checks.push(name);};
-const responseFor=(page,path,predicate=()=>true)=>page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname===path&&predicate(url,response);});
+const responseFor=(page,path,predicate=()=>true)=>{const pending=page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname===path&&predicate(url,response);});pending.catch(()=>{});return pending;};
 const postFor=(page,path)=>responseFor(page,path,(_,response)=>response.request().method()==='POST');
 async function navigate(page,label){await page.getByRole('navigation').getByRole('button',{name:new RegExp(label)}).click();await page.getByRole('heading',{name:label,exact:true,level:1}).waitFor();}
 async function search(page,term){const response=responseFor(page,'/api/reels/items',url=>(url.searchParams.get('q')??'')===term);await page.getByLabel('Buscar no acervo').fill(term);await response;}

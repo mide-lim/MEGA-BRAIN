@@ -49,7 +49,7 @@ test('recipe units require literal independent evidence, not ingredients, steps 
   v=>{v.analysis.taxonomySignals.units[1].id='preparation_0';},
   v=>{v.analysis.taxonomySignals.units[1].title='Sopa completa';},
   v=>{v.analysis.taxonomySignals.units[1].evidence[0].excerpt='Texto ausente da fonte';},
-  v=>{v.analysis.taxonomySignals.units[1].evidence[0].start_seconds=10;},
+  v=>{v.analysis.taxonomySignals.units[1].evidence[0].start_seconds=3;},
   v=>{v.analysis.taxonomySignals.units[1].evidence[0].end_seconds=100;},
   v=>{v.analysis.taxonomySignals.units[1].evidence[0].excerpt=v.analysis.taxonomySignals.units[0].evidence[0].excerpt;},
   v=>{v.analysis.taxonomySignals.confidence='0.95';}
@@ -161,5 +161,12 @@ test('a transient unrelated taxonomy lock keeps the automatic outbox pending for
  const indexed=await store.get('reels_index/taxonomy_Locked_01');await store.patch('reels_index/taxonomy_Locked_01',{assignment},{updateTime:indexed.updateTime});
  await assert.rejects(()=>taxonomy.applyDiscoveredAssignments([assignment]),e=>e.code==='TAXONOMY_BUSY'&&e.status===503);
  assert.equal((await store.get('reels_index/taxonomy_Locked_01')).data.assignment.operationId,operationId);
+});
+test('state drains a second operation approved between clearing the first marker and rereading',async()=>{
+ const {store,taxonomy}=await discoverySetup([]),first=hash('manual-first'),second=hash('manual-second');
+ for(const id of [first,second])await store.create('reels_command_items/taxonomy_'+id,{id,kind:'taxonomy_manual',status:'pending',fingerprint:hash(id)});
+ const state=await store.get('settings/reels_v2_taxonomy');await store.patch('settings/reels_v2_taxonomy',{pendingOperationId:first},{updateTime:state.updateTime});
+ const patch=store.patch;let interleaved=false;store.patch=async(p,d,o)=>{const result=await patch(p,d,o);if(p==='settings/reels_v2_taxonomy'&&d.pendingOperationId===null&&!interleaved){interleaved=true;const current=await store.get(p);await patch(p,{revision:current.data.revision+1,pendingOperationId:second},{updateTime:current.updateTime});}return result;};
+ const stable=await taxonomy.state();assert.equal(stable.data.pendingOperationId,null);assert.equal((await store.get('reels_command_items/taxonomy_'+second)).data.status,'completed');
 });
 

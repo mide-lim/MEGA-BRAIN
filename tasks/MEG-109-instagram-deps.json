@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "90914c7dfcd9c2fcdd2747379b9ec21d82f2f4f0",
+  "objective": "Fix confirmed missing curl-cffi impersonation dependency required by official yt-dlp Instagram anonymous extractor. Keep current stable yt-dlp, install four exact upstream-compatible PyPI wheel dependencies with hashes and no source builds, and fail existing offline image smoke when actual Chrome fingerprint target is absent. Current user explicitly authorizes minimum functioning fix and native independent review. No cookies/browser/proxy/Instagram/provider requests, financial or Google changes, processing, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Existing yt-dlp2026.8.19 remains pinned; curl-cffi0.16.0,cffi2.1.1,certifi2026.7.22,pycparser3.0 exactcompatible CPython3.11 Linuxamd64 wheels from official PyPI API hashes, all transitive dependencies explicit under --no-deps/--require-hashes.",
+    "Real imported curl-cffi handler exposes at least one Chrome impersonation target in actual worker image; smoke executes with networknone/read-only512Mi/1CPU and no auth/proxy cookies or live media.",
+    "Negative baseline demonstrates old worker lacks transport; candidate one shared stageworker image<=2GiB passes existing synthetic worker/stage smokes, provenance and package closure. No additional source or financial/execution behavior changes.",
+    "Independent fresh-context reviewer and exactheadCI required. DraftPR only; no merge/deploy/processing authorization from this implementation."
+  ],
+  "allowed_paths": [
+    "google-v0/worker-requirements.txt",
+    "google-v0/Dockerfile.worker",
+    "google-v0/scripts/smoke-worker.mjs",
+    "tasks/MEG-109-instagram-deps.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/worker-requirements.txt",
+      "reason": "Locked runtime package closure missing optional required transport",
+      "sections": [
+        "all pins"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/Dockerfile.worker",
+      "reason": "Existing --no-deps hash install and image smoke integration",
+      "sections": [
+        "package installation; smoke COPY"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/scripts/smoke-worker.mjs",
+      "reason": "Existing networknone image smoke must detect missing real handler capability",
+      "sections": [
+        "fixed-tool version checks and synthetic media"
+      ],
+      "max_chars": 4500
+    }
+  ],
+  "validation_commands": [
+    "node --check google-v0/scripts/smoke-worker.mjs",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "python3 ops/prepare-release-context.py --output /workspace/meg109-instagram-deps-context",
+    "docker build --build-arg VCS_REF=\"$(git rev-parse HEAD)\" -t megabrain-worker:meg109-instagram-deps -f /workspace/meg109-instagram-deps-context/Dockerfile.worker /workspace/meg109-instagram-deps-context",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-instagram-deps scripts/smoke-worker.mjs",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-instagram-deps scripts/smoke-stage-workers.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Dependency changes affect actual downloader; native independent reviewer is authorized and will inspect final commit in fresh context. No merge or deployment by developer."
+  }
+}

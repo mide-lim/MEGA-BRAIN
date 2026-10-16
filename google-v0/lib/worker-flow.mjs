@@ -276,7 +276,7 @@ export class WorkerFlow {
     // Persist result before settling. A later failure holds the reservation and
     // requires reconciliation; it never re-runs inference to recover bookkeeping.
     if(reconcile)await this.ledger.reconcileAnalysisResult(id,{actualCents:result.actual_cents});
-    else await this.ledger.transition(id,'complete',{actualCents:result.actual_cents,...(reviewRequired&&(await this.store.get('settings/financial'))?.data?.batch?.video_ids.length===262?{pause:true}:{})});
+    else await this.ledger.transition(id,'complete',{actualCents:result.actual_cents,...(!this.assistedScope?.batch&&reviewRequired&&(await this.store.get('settings/financial'))?.data?.batch?.video_ids.length===262?{pause:true}:{})});
     const job=await this.store.get(path);await this.store.patch(path,{status:'completed',completed_at:new Date(this.clock()).toISOString()},{updateTime:job.updateTime});
     return {status:'completed',execution_id:id};
   }

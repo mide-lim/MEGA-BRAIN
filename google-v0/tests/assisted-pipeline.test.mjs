@@ -137,12 +137,12 @@ test('invocation scopes reject copies and cannot cross video/stage/execution/obj
  const flow=f.makeFlow(scope);await assert.rejects(flow.run({videoId:'Other_Reel',stage:'upload'}));await assert.rejects(flow.poll({videoId:f.videoId}));
  f.set(f.approvalPath,{maximum_cents:100});await f.deliver(f.sent[0]);assert.equal(f.calls.transcription,0);
 });
-test('runtime pipeline opt-in is stage-only, single-ID, capped and default off',()=>{
+test('runtime pipeline opt-in is stage-only, bounded-ID, capped and default off',()=>{
  const preset=JSON.parse(readFileSync(new URL('../config/analysis-preset.json',import.meta.url)));
  const routes=Object.fromEntries(stages.map(s=>[s,{queue:s==='upload'?'v0-acquisition':'v0-'+s,workerOrigin:'https://'+s+'-unit.run.app'}]));
  const base={project:'megabrain-v0-1017370021431',cost_accounting:'conservative_estimate_not_invoice',worker_stage:'upload',worker_origin:routes.upload.workerOrigin,stage_routes:routes,enabled:false,dispatch_enabled:false,admission_enabled:false,pilot_video_ids:['Fresh_pipeline'],batch_id:'pilot_30_oct12',analysis_revision:preset.version,quotes:{upload:10,transcription:20,analysis:30},single_reel_pipeline_enabled:true};
  assert.doesNotThrow(()=>workerRuntime(base,preset,{stage:'upload'}));
- for(const delta of [{quotes:{upload:101,transcription:20,analysis:30}},{pilot_video_ids:['One_reel','Other_reel']},{admission_enabled:true},{assisted_upload_enabled:true},{quotes:{upload:10,transcription:1000,analysis:1000}}])assert.throws(()=>workerRuntime({...base,...delta},preset,{stage:'upload'}));
+ for(const delta of [{quotes:{upload:101,transcription:20,analysis:30}},{pilot_video_ids:['One_reel','One_reel']},{admission_enabled:true},{assisted_upload_enabled:true},{quotes:{upload:10,transcription:1000,analysis:1000}}])assert.throws(()=>workerRuntime({...base,...delta},preset,{stage:'upload'}));
  assert.throws(()=>workerRuntime({...base,worker_stage:undefined,stage_routes:undefined},preset));
 });
 

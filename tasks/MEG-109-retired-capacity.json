@@ -9,7 +9,8 @@
   "acceptance_criteria": [
     "Hardcoded exact job/attempt/video/revision UID, trusted bounded Cloud Run and unit record correlation, all gates closed.",
     "Dry run makes zero writes. Atomic transaction creates immutable audit and removes only exact active key; money/claim/approval/ExecutionStops unchanged.",
-    "Reject drift, wrong proof, ambiguity, inconsistent/missing audit; fail closed on unknown commit and recover read-only with no replay. Tests offline, independent review, CI."
+    "Reject drift, wrong proof, ambiguity, inconsistent/missing audit; fail closed on unknown commit and recover read-only with no replay. Tests offline, independent review, CI.",
+    "Consume original path-bound plan durably before transaction; lost receipt or submitted marker never enables replay. Explicit inspect mode cannot start transaction/commit."
   ],
   "allowed_paths": [
     "ops/reconcile-retired-acquisition.py",
@@ -75,6 +76,6 @@
   "review": {
     "mode": "independent_agent_and_human",
     "status": "pending",
-    "reason": "Unit administrative authority and Firestore atomic write are high risk; independent read-only session and human before merge/application. Existing user authorized parallel review in MEG109 workstream; no infrastructure operations in this task."
+    "reason": "Independent reviewer requested P2 correction on initial head. Same authorized implementation session corrected local plan consumption/recovery; no extra model worker or scope. Final independent recheck and human review remain required before merge/application."
   }
 }

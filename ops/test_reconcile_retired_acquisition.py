@@ -58,6 +58,7 @@ class Fake:
             return {'transaction': 'synthetic-transaction'}
         assert url == m.FIRE + ':commit'; self.commits += 1
         assert body['transaction'] == 'synthetic-transaction' and len(body['writes']) == 2
+        if self.behavior == 'unknown_before': raise TimeoutError('No result observable')
         if self.behavior == 'conflict': self.docs[m.CLAIM]['version'] = 'concurrent-version'
         if self.docs != self.tx: raise RuntimeError('Transaction read conflict')
         next_docs = copy.deepcopy(self.docs)
@@ -81,9 +82,14 @@ class RetirementTests(unittest.TestCase):
     def setUp(self):
         clock = patch.object(m, 'datetime', Clock); clock.start(); self.addCleanup(clock.stop)
         self.api = Fake(); self.original = copy.deepcopy(self.api.docs)
-        self.plan = m.plan(m.documents(self.api), m.cloud(self.api))
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.prepare_plan('unit-plan.json')
         self.receipt = Path(self.tmp.name) / 'receipt.json'
+
+    def prepare_plan(self, name):
+        self.source = Path(self.tmp.name) / name
+        self.plan = m.plan(m.documents(self.api), m.cloud(self.api), self.source)
+        self.source.write_text(m.canonical(self.plan))
 
     def apply(self): return m.apply(self.api, self.plan, m.digest(self.plan), AUTH, self.receipt)
 
@@ -106,6 +112,7 @@ class RetirementTests(unittest.TestCase):
         for behavior in ['lost', 'short_receipt']:
             with self.subTest(behavior=behavior):
                 self.api = Fake(); self.api.behavior = behavior; self.receipt = Path(self.tmp.name) / behavior
+                self.prepare_plan(behavior + '-plan.json')
                 with self.assertRaises(m.Refused): self.apply()
                 self.assertEqual(self.apply()['status'], 'already_applied_verified')
                 self.assertEqual(self.api.commits, 1); self.assertEqual(self.api.begins, 1)
@@ -176,16 +183,47 @@ class RetirementTests(unittest.TestCase):
         with self.assertRaises(m.Refused): self.apply()
         self.assertEqual(self.api.commits, 1)
 
+    def test_unknown_result_cannot_replay_after_receipt_or_marker_loss(self):
+        self.api.behavior = 'unknown_before'
+        with self.assertRaises(m.Refused): self.apply()
+        self.assertIsNone(self.api.docs[m.AUDIT]); self.assertFalse(self.source.exists())
+        self.receipt.unlink()
+        with self.assertRaises(m.Refused): self.apply()
+        self.receipt = Path(self.tmp.name) / 'alternative-receipt.json'
+        with self.assertRaises(m.Refused): self.apply()
+        submitted = Path(str(self.source) + '.submitted')
+        # Even a restored original is fenced while the submitted marker survives.
+        self.source.write_text(submitted.read_text())
+        with self.assertRaises(m.Refused): self.apply()
+        self.source.unlink(); submitted.unlink()  # loss of marker still has no original capability
+        with self.assertRaises(m.Refused): self.apply()
+        with self.assertRaises(m.Refused): m.inspect(self.api, self.plan, m.digest(self.plan), AUTH)
+        self.assertEqual(self.api.commits, 1); self.assertEqual(self.api.begins, 1)
+
+    def test_inspection_with_submitted_plan_is_read_only_after_receipt_loss(self):
+        self.api.behavior = 'lost'
+        with self.assertRaises(m.Refused): self.apply()
+        self.receipt.unlink(); submitted = Path(str(self.source) + '.submitted')
+        p = json.loads(submitted.read_text())
+        self.assertEqual(m.inspect(self.api, p, m.digest(p), AUTH)['status'], 'already_applied_verified')
+        self.assertEqual(self.api.commits, 1); self.assertEqual(self.api.begins, 1)
+
+    def test_submitted_or_different_plan_path_cannot_apply(self):
+        alternate = Path(self.tmp.name) / 'copy.json'; alternate.write_text(m.canonical(self.plan))
+        with patch.object(m.sys, 'argv', ['tool', '--token-stdin', '--apply', '--plan', str(alternate), '--plan-sha256', m.digest(self.plan), '--authorization-ref', AUTH, '--receipt', str(self.receipt)]), patch.object(m.sys, 'stdin', io.StringIO('synthetic-token\n')), patch.object(m, 'Google', return_value=self.api):
+            with self.assertRaises(m.Refused): m.main()
+        self.assertEqual(self.api.begins, 0)
+
     def test_transport_rejects_all_unrelated_mutations(self):
         api = m.Google('synthetic-token')
         for method, url in [('POST', m.FIRE + ':commit'), ('PATCH', m.FIRE + '/settings/acquisition'), ('POST', m.RUN), ('GET', 'https://example.com')]:
             with self.subTest(url=url), self.assertRaises(m.Refused): api.request(method, url, {})
 
     def test_default_cli_creates_plan_without_transaction(self):
-        path = Path(self.tmp.name) / 'plan.json'
+        path = Path(self.tmp.name) / 'cli-plan.json'
         with patch.object(m.sys, 'argv', ['tool', '--token-stdin', '--plan', str(path)]), patch.object(m.sys, 'stdin', io.StringIO('synthetic-token\n')), patch.object(m, 'Google', return_value=self.api), patch('sys.stdout', new_callable=io.StringIO):
             m.main()
-        self.assertEqual(json.loads(path.read_text()), self.plan)
+        self.assertEqual(json.loads(path.read_text()), m.plan(m.documents(self.api), m.cloud(self.api), path))
         self.assertEqual(self.api.commits, 0); self.assertEqual(self.api.begins, 0)
 
 

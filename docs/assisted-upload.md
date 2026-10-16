@@ -169,13 +169,24 @@ deploy/reativação é proibida nessa janela; drift de etag/prova bloqueia avan�
 inclusive na conferência posterior. As APIs Cloud Run e Firestore não participam
 da mesma transação.
 
-Recibo perdido/incompleto não dispara replay ou restauração de snapshots. Ao
-reinvocar com o mesmo plano, autorização e caminho de recibo, o utilitário apenas
-confirma um resultado já auditado e idêntico; intenção existente sem resultado
-confirmado bloqueia nova transação. Auditoria divergente, slot ausente sem
-auditoria ou qualquer documento protegido alterado exigem conferência manual.
-A verificação posterior mantém gates fechados; nunca recria automaticamente a
-ocupação antiga nem devolve dinheiro.
+O plano vincula seu caminho original ao fingerprint. Antes de iniciar qualquer
+transação, a aplicação cria de modo exclusivo um hardlink <plano>.submitted,
+consome o arquivo original e sincroniza o diretório em disco. O plano original
+não fica reutilizável; uma falha local bloqueia antes do acesso de gravação.
+O recibo de resultado pode ser perdido sem reabrir a autorização de aplicação,
+e mudar o caminho do recibo ou usar uma cópia do plano não remove essa trava.
+
+A recuperação usa --inspect com o plano submetido, fingerprint e autorização
+originais. Esse modo só lê e nunca inicia transação/commit. Auditoria e estado
+idênticos confirmam uma aplicação anterior; auditoria ausente/divergente,
+documento protegido alterado ou resultado incerto mantêm o bloqueio. Não
+restaurar backups do plano para tentar aplicar de novo. Se o marker submetido
+também se perder, o arquivo original já consumido continua indisponível; perda
+do estado local exige conferência manual, sem reconstrução automática.
+
+A transação continua com somente dois writes remotos atômicos: auditoria e
+ocupação. Não há journal remoto adicional. A verificação posterior mantém gates
+fechados; nunca recria automaticamente a ocupação antiga nem devolve dinheiro.
 
 Após conciliação autorizada, o modo assistido atual poderá testar outro ID limpo,
 com aprovação nova e orçamento validado. Repetir o mesmo Reel continua bloqueado

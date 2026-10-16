@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import re
@@ -190,7 +191,7 @@ def validate(d):
     require(d[PROOF] is None, 'Unexpected internal stop evidence')
 
 
-def plan(d, evidence):
+def plan(d, evidence, plan_path):
     validate(d)
     correlation(d, evidence)
     require(d[AUDIT] is None, 'Audit already exists; inspect original plan')
@@ -198,7 +199,7 @@ def plan(d, evidence):
     require(set(active) == {SLOT} and active[SLOT].get('execution_id') == JOB and active[SLOT].get('attempt_id') == ATTEMPT and active[SLOT].get('video_id') == VIDEO, 'Exact held occupation missing or unexpected additional slots')
     require(timestamp(d[CLAIM]['data']['created_at']) <= timestamp(active[SLOT].get('acquired_at')) <= timestamp(d[APPROVAL]['data']['observed_at']), 'Slot outside original attempt')
     after = copy.deepcopy(d['settings/acquisition']['data']); after['active'] = {}
-    return {'schema_version': 1, 'kind': KIND, 'target': TARGET, 'documents': {p: signature(d[p]) for p in DOCS},
+    return {'schema_version': 1, 'kind': KIND, 'target': TARGET, 'plan_path': str(Path(plan_path).resolve()), 'documents': {p: signature(d[p]) for p in DOCS},
             'cloud_digest': digest(evidence), 'after_acquisition_digest': digest(after),
             'writes': [AUDIT, 'settings/acquisition:active'], 'retained_reserved_cents': 1950}
 
@@ -222,23 +223,55 @@ def verify_applied(d, evidence, p, authorization):
     require(all(signature(d[path]) == p['documents'][path] for path in DOCS if path not in [AUDIT, 'settings/acquisition']), 'Protected record changed')
 
 
-def apply(api, p, expected_hash, authorization, receipt):
+def reviewed_plan(p, expected_hash, authorization):
     require(p.get('target') == TARGET and p.get('kind') == KIND and digest(p) == expected_hash, 'Reviewed plan fingerprint required')
     require(isinstance(authorization, str) and authorization.startswith('MEG-109:') and 9 < len(authorization) <= 160 and all(c.isalnum() or c in ':_-.#/' for c in authorization), 'Explicit MEG-109 authorization required')
+    require(isinstance(p.get('plan_path'), str) and Path(p['plan_path']).is_absolute(), 'Bound original plan path required')
+
+
+def inspect(api, p, expected_hash, authorization):
+    reviewed_plan(p, expected_hash, authorization)
+    verify_applied(documents(api), cloud(api), p, authorization)
+    return {'status': 'already_applied_verified', 'plan_sha256': expected_hash, 'writes': 0}
+
+
+def consume_plan(p):
+    source = Path(p['plan_path']); submitted = source.with_name(source.name + '.submitted')
+    require(not source.is_symlink() and source.is_file(), 'Original plan consumed or unavailable; inspect only')
+    require(json.loads(source.read_text(encoding='utf-8')) == p, 'Original plan content changed')
+    # Exclusive hardlink prevents clobber; unlink consumes the apply capability.
+    # Crash between these steps leaves the marker, which also blocks application.
+    try:
+        os.link(source, submitted, follow_symlinks=False)
+        source.unlink()
+    except OSError:
+        raise Refused('Plan application fence exists or is unavailable; inspect only') from None
+    if os.name == 'posix':
+        fd = os.open(str(source.parent), os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+
+
+def apply(api, p, expected_hash, authorization, receipt):
+    reviewed_plan(p, expected_hash, authorization)
+    source = Path(p['plan_path']); submitted = source.with_name(source.name + '.submitted')
+    require(receipt.resolve() not in [source.resolve(), submitted.resolve()], 'Receipt must not overwrite original or submitted plan')
     evidence = cloud(api); d = documents(api)
     if d[AUDIT] is not None:
         verify_applied(d, evidence, p, authorization)
         return {'status': 'already_applied_verified', 'plan_sha256': expected_hash, 'writes': 0}
     require(not receipt.exists(), 'Existing intent without verified outcome; inspect only')
-    require(plan(d, evidence) == p, 'Dry-run reference changed; do not apply')
+    require(plan(d, evidence, source) == p, 'Dry-run reference changed; do not apply')
+    consume_plan(p)
     with receipt.open('x', encoding='utf-8') as out:
         json.dump({'status': 'intent_only_do_not_replay', 'plan_sha256': expected_hash, 'authorization_ref': authorization}, out)
+        out.flush(); os.fsync(out.fileno())
     try:
         api.writes_enabled = True
         transaction = api.request('POST', FIRE + ':beginTransaction', {'options': {'readWrite': {}}})['transaction']
         # All reads precede the two writes, including records never modified.
         d = documents(api, transaction); evidence = cloud(api)
-        require(plan(d, evidence) == p, 'Transaction or cloud reference changed; stop')
+        require(plan(d, evidence, source) == p, 'Transaction or cloud reference changed; stop')
         audit = audit_for(p, authorization, datetime.now(timezone.utc).isoformat())
         writes = [
             {'update': {'name': FIRE.split('/v1/', 1)[1] + '/' + AUDIT, 'fields': {k: encode(v) for k, v in audit.items()}}, 'currentDocument': {'exists': False}},
@@ -261,22 +294,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', type=Path, required=True, help='New plan output in dry-run; reviewed input with --apply')
     parser.add_argument('--token-stdin', action='store_true', required=True, help='Pipe an ephemeral token; never paste on an interactive terminal')
-    parser.add_argument('--apply', action='store_true')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--apply', action='store_true')
+    modes.add_argument('--inspect', action='store_true', help='Read-only recovery, including with <original-plan>.submitted')
     parser.add_argument('--plan-sha256')
     parser.add_argument('--authorization-ref')
     parser.add_argument('--receipt', type=Path)
     args = parser.parse_args()
-    if args.apply and not all([args.plan_sha256, args.authorization_ref, args.receipt]): parser.error('Apply requires fingerprint, authorization and exclusive receipt path')
-    if not args.apply and any([args.plan_sha256, args.authorization_ref, args.receipt]): parser.error('Apply-only arguments are forbidden in dry-run')
+    if (args.apply or args.inspect) and not all([args.plan_sha256, args.authorization_ref]): parser.error('Apply/inspect require fingerprint and authorization')
+    if args.apply and not args.receipt: parser.error('Apply requires exclusive receipt path')
+    if args.inspect and args.receipt: parser.error('Inspect never writes a receipt')
+    if not (args.apply or args.inspect) and any([args.plan_sha256, args.authorization_ref, args.receipt]): parser.error('Apply/inspect-only arguments are forbidden in dry-run')
     require(not sys.stdin.isatty(), 'Token must arrive through a pipe')
     api = Google(sys.stdin.readline().strip())
-    if args.apply:
-        require(args.receipt.resolve() != args.plan.resolve(), 'Receipt must not overwrite reviewed plan')
+    if args.apply or args.inspect:
         p = json.loads(args.plan.read_text(encoding='utf-8'))
-        result = apply(api, p, args.plan_sha256, args.authorization_ref, args.receipt)
+        if args.apply:
+            require(str(args.plan.resolve()) == p.get('plan_path'), 'Apply requires original bound path; submitted/copy is inspect-only')
+            result = apply(api, p, args.plan_sha256, args.authorization_ref, args.receipt)
+        else: result = inspect(api, p, args.plan_sha256, args.authorization_ref)
     else:
-        evidence = cloud(api); p = plan(documents(api), evidence)
-        with args.plan.open('x', encoding='utf-8') as out: out.write(canonical(p) + '\n')
+        evidence = cloud(api); p = plan(documents(api), evidence, args.plan)
+        with args.plan.open('x', encoding='utf-8') as out:
+            out.write(canonical(p) + '\n'); out.flush(); os.fsync(out.fileno())
         result = {'status': 'dry_run_only', 'plan_sha256': digest(p), 'writes': 0, 'proposed_write_targets': p['writes']}
     print(canonical(result))
 

@@ -29,6 +29,8 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
   if(config.single_reel_pipeline_enabled!==undefined&&typeof config.single_reel_pipeline_enabled!=='boolean')throw Error('Modo unitário de três etapas inválido.');
   const pipeline=config.single_reel_pipeline_enabled===true;
   if(pipeline&&(stage===null||assisted||config.assisted_single_upload_enabled===true||config.admission_enabled!==false||(!Array.isArray(config.pilot_video_ids)||config.pilot_video_ids.length<1||config.pilot_video_ids.length>50||new Set(config.pilot_video_ids).size!==config.pilot_video_ids.length||config.pilot_video_ids.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{5,32}$/.test(id)))||!config.batch_id||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(config.analysis_revision)||Object.keys(config.quotes??{}).sort().join(',')!=='analysis,transcription,upload'||Object.values(config.quotes).some(n=>!Number.isSafeInteger(n)||n<1)||config.quotes.upload>100||Object.values(config.quotes).reduce((a,b)=>a+b,0)>2000))throw Error('Configuração unitária de três etapas inválida.');
+  const recoveryIds=config.recovery_video_ids??[];
+  if(!Array.isArray(recoveryIds)||recoveryIds.length>100||new Set(recoveryIds).size!==recoveryIds.length||recoveryIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{5,32}$/.test(id)||config.pilot_video_ids?.includes(id))||recoveryIds.length&&!pipeline)throw Error('Lista de recuperação privada inválida.');
   if(config.assisted_single_upload_enabled!==undefined&&typeof config.assisted_single_upload_enabled!=='boolean')throw Error('Escopo unitário inválido.');
   const single=config.assisted_single_upload_enabled===true;
   if(single&&(!assisted||config.pilot_video_ids?.length!==1||!Number.isSafeInteger(config.quotes?.upload)||config.quotes.upload<1||config.quotes.upload>100))throw Error('Escopo unitário exige modo assistido, um vídeo e teto até100centavos.');
@@ -45,7 +47,7 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
     const storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input),reserveObject:input=>capacity.reserveResult(input)});
     const ledger=new FinancialLedger(store,{assistedScope});
     const operations=googleOperations({api,storage,tools,preset,config,gate:workerReservationGate(store,{assistedScope})});
-    return new WorkerFlow({assistedScope,acquisition,recordExecutionStopped:input=>stops.record(input),verifyExecutionStopped:input=>stops.verify(input),store,ledger,operations,quotes:config.quotes,eligibleVideos:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null,autoHoldTerminalSources:assistedScope?false:config.auto_hold_terminal_sources===true});
+    return new WorkerFlow({assistedScope,acquisition,recordExecutionStopped:input=>stops.record(input),verifyExecutionStopped:input=>stops.verify(input),store,ledger,operations,quotes:config.quotes,eligibleVideos:assistedScope?[assistedScope.videoId]:config.pilot_video_ids??[],analysisRevision:config.analysis_revision??null,batchId:config.batch_id??null,autoHoldTerminalSources:assistedScope?false:config.auto_hold_terminal_sources===true});
   };
   const originalFlow=makeFlow();
   const flow=stage===null?originalFlow:stageBoundFlow(originalFlow,stage,{enabled:config.enabled});
@@ -53,7 +55,7 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
   if(!withHandler)return flow;
   const authorize=workerAuthorization({audience:config.worker_origin});
   if(stage!==null){
-    const unitFlow=pipeline?async task=>{if(config.enabled!==true)throw Error('Worker unitário desligado.');return stageBoundFlow(await pipelineFlow({store,task,stage,allowedVideoIds:config.pilot_video_ids,quotes:config.quotes,analysisRevision:config.analysis_revision,makeFlow,verifyExecutionStopped:input=>stops.verify(input)}),stage);}:null;
+    const unitFlow=pipeline?async task=>{if(config.enabled!==true)throw Error('Worker unitário desligado.');return stageBoundFlow(await pipelineFlow({store,task,stage,allowedVideoIds:config.pilot_video_ids,recoveryVideoIds:recoveryIds,quotes:config.quotes,analysisRevision:config.analysis_revision,makeFlow,verifyExecutionStopped:input=>stops.verify(input)}),stage);}:null;
     const processing=workerHandler({flow,queue,authorize,stage,unitFlow,requireUnitRequest:pipeline});
     const admission=stage==='upload'?admissionHandler({authorize,admission:new WorkerAdmission({store,queue,acquisition,batchId:config.batch_id,quotes:config.quotes,enabled:config.enabled&&config.admission_enabled})}):null;
     return request=>{

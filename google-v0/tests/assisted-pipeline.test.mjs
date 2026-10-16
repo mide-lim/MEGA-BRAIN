@@ -168,3 +168,24 @@ test('concurrent poll deliveries acquire one CAS before querying the same STT op
 test('transcription cannot reuse foreign completed media or authority from a different approval',async()=>{
  const f=fixture();await f.deliver(f.first);const path='jobs/'+executionId(f.videoId,'upload');f.set(path,{assisted_scope_ref:'jobs/assisted_upload_another_request_2026'});await f.deliver(f.sent[0]);assert.equal(f.calls.transcription,0);
 });
+
+
+test('unit admission refuses an ID in the unchanged262 profile even without prior job or artifact',async()=>{
+ const f=fixture(),state=(await f.store.get('settings/financial')).data;
+ const batch={...state.batch,video_ids:[f.videoId,...state.batch.video_ids.slice(1)]};f.set('settings/financial',{batch});
+ const before=await f.store.get('settings/financial');
+ assert.equal((await f.deliver(f.first)).http,500);
+ assert.equal(f.calls.upload,0);assert.equal(f.sent.length,0);
+ assert.deepEqual(await f.store.get('settings/financial'),before);
+ assert.equal((await f.store.get(f.approvalPath)).data.status,'authorized');
+});
+
+
+for(const sync of [true,false])test('unit STT reserves durable result capacity before a paid submission; sync='+sync,async()=>{
+ const f=fixture({sync});await f.deliver(f.first);
+ const capacity=(await f.store.get('settings/capacity')).data;
+ f.set('settings/capacity',{limit_bytes:capacity.admitted_bytes});
+ assert.equal((await f.deliver(f.sent[0])).status,'uncertain');
+ assert.equal(f.calls.transcription,0);assert.equal(f.calls.polls,0);assert.equal(f.sent.length,1);
+ assert.equal((await f.store.get('settings/financial')).data.reserved_cents,1470);
+});

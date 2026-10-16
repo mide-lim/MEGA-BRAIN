@@ -103,6 +103,8 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
     },
     async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();
+      // Unit mode reserves room for the durable result before submitting STT.
+      if(config.single_reel_pipeline_enabled===true){if(typeof storage.reserveResult!=='function')throw Error('Reserva do resultado STT indisponível.');await storage.reserveResult(`results/instagram/${video.id}/${executionId}/transcription.json`,1048576);}
       const key=`originals/instagram/${video.id}/video.mp4`;
       if(video.video_key!==key||!/^\d+$/.test(video.video_generation??'')||video.media_verified!==true||video.audio_status!=='present')throw new Error('Mídia verificada obrigatória.');
       if(executionId!==stageExecutionId(video.id,'transcription'))throw Error('Execução STT fora do caminho imutável.');

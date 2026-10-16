@@ -15,7 +15,7 @@ export async function pipelineFlow({store,task,stage,allowedVideoIds,quotes,anal
  if(receipt.data.status==='authorized'){
   if(controls.enabled!==true||acquisition.enabled!==true||stage!=='upload'||task.poll!==0||receipt.data.consumed_at!==undefined)throw Error('Somente aquisição pode consumir autorização.');
   const video=(await store.get('videos/'+task.videoId))?.data;
-  if(!video||Object.values(financial?.jobs??{}).some(j=>j.video_id===task.videoId)||['media_verified','video_key','video_generation','audio_key','transcript_key','transcript','analysis','analysis_key','candidate_analysis_key'].some(k=>!!video[k]))throw Error('Reel unitário deve ser novo.');
+  if(!video||financial?.batch?.video_ids?.includes(task.videoId)||Object.values(financial?.jobs??{}).some(j=>j.video_id===task.videoId)||['media_verified','video_key','video_generation','audio_key','transcript_key','transcript','analysis','analysis_key','candidate_analysis_key'].some(k=>!!video[k]))throw Error('Reel unitário deve ser novo.');
   for(const s of ['upload','transcription','analysis'])if(await store.get('jobs/'+pipelineExecution(task.videoId,s,analysisRevision)))throw Error('Claim anterior impede nova aquisição.');
   // Unknown CAS outcome is never retried or inferred from a later GET.
   const consumedAt=new Date(now).toISOString();

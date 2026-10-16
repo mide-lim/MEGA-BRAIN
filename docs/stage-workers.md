@@ -94,7 +94,9 @@ sem batch_id. Frescor, cobertura, reservas, teto global e capacidade continuam
 obrigatórios. Cada etapa só pode gravar seus caminhos imutáveis; aquisição também
 pode preparar o FLAC canônico da transcrição.
 
-O mesmo nome de operação STT é persistido e consultado; pausa de novas submissões
+A capacidade para transcription.json é reservada antes da submissão STT, inclusive
+no modo síncrono. Falta de espaço bloqueia antes de pagar. O mesmo nome de operação
+STT é persistido e consultado; pausa de novas submissões
 permite coleta já admitida, enquanto os hard stops continuam bloqueando. Expiração
 da aprovação impede iniciar outra etapa, mas permite coletar uma operação waiting
 já própria. Gemini faz uma única tentativa nesse modo, inclusive em429; o caminho

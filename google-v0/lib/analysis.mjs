@@ -1,5 +1,6 @@
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
+import {taxonomySignalsSchema,taxonomySignalsInstruction} from './reels-analysis-contract.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
@@ -29,7 +30,7 @@ export function validateProviderResponseSchema(schema){
   for(const child of Object.values(schema.properties??{}))validateProviderResponseSchema(child);
 }
 
-export function buildAnalysisRequest({record,bucket,preset,model}) {
+export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignalsEnabled=false}) {
   if (!ID.test(record?.id ?? '')) throw new Error('Identificador inválido.');
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket ?? '')) throw new Error('Bucket inválido.');
   if (!Number.isFinite(record.duration_seconds) || record.duration_seconds <= 0) throw new Error('Duração verificada ausente.');
@@ -39,15 +40,18 @@ export function buildAnalysisRequest({record,bucket,preset,model}) {
   if (transcript.length>100000) throw new Error('Transcrição excede o escopo do piloto.');
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
-  validateProviderResponseSchema(reportSchema);
-  return {
+  const schema=taxonomySignalsEnabled?{...reportSchema,properties:{...reportSchema.properties,taxonomySignals:taxonomySignalsSchema}}:reportSchema;
+  validateProviderResponseSchema(schema);
+  const request={
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),...(taxonomySignalsEnabled?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
-    generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:reportSchema}
+    generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
+  if(taxonomySignalsEnabled)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
+  return request;
 }
 
 const normalize=text=>text.normalize('NFC').replace(/\s+/g,' ').replace(/([\p{Script=Han}\d])\s+(?=[\p{Script=Han}\d])/gu,'$1').trim();

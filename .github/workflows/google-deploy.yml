@@ -16,6 +16,12 @@ on:
         default: review
         type: choice
         options: [review, deploy]
+      services:
+        description: 'Services to publish and update (web preserves the worker)'
+        required: true
+        default: all
+        type: choice
+        options: [all, web]
 permissions:
   contents: read
 concurrency:
@@ -130,10 +136,11 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           REVIEWED_BASELINE: ${{ inputs.reviewed_baseline }}
           DEPLOY_MODE: ${{ inputs.mode }}
+          DEPLOY_SERVICES: ${{ inputs.services }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/megabrain-public-result"
-          python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
+          python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
       - name: Record the sanitized outcome
         working-directory: .
         run: |
@@ -141,5 +148,5 @@ jobs:
           import json, os, pathlib
           outcome = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'megabrain-public-result/result.json').read_text())
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
-              output.write('Commit: ' + outcome['commit'] + '\n\nResult: ' + outcome['status'] + '\n')
+              output.write('Commit: ' + outcome['commit'] + '\n\nServices: ' + outcome['services'] + '\n\nResult: ' + outcome['status'] + '\n')
           PY

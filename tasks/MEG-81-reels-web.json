@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "id": "MEG-81",
+  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "b96356878bdcef86adc961f0d008d2022c130e02",
+  "objective": "Implementar nova versão integrada MEGABRAIN - Reels conforme plano canônico v2.0, sem processar Reels ou apagar dados reais; comandos reais desabilitados no servidor durante validação.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Todas as áreas integradas com contratos persistentes, autenticação e sem dados DEMO no build.",
+    "Consultas leves para mais de3mil itens; conhecimento publicado e legenda separados; categorias somente acervo final.",
+    "Comandos idempotentes, orçamento informativo sem gates financeiros, execução nova testada por adaptadores simulados.",
+    "Migração apenas ensaio com preservação integral de origens e prova de restauração/reversão.",
+    "Revisão independente e testes da versão exata; nenhum processamento/provedor/exclusão real.",
+    "Pacote de publicação permite atualizar somente web, preservando worker/filas/configuração; implementação testada sem executar publicação."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-81-reels-web.json",
+    "google-v0/lib/",
+    "google-v0/tests/",
+    "google-v0/web-google/",
+    "google-v0/scripts/",
+    "google-v0/docs/",
+    "google-v0/Dockerfile.web-google",
+    "google-v0/Dockerfile.worker",
+    "google-v0/qa/",
+    ".github/workflows/frontend-qa.yml",
+    "ops/deploy-existing-services.py",
+    "ops/test_deploy_existing_services.py",
+    ".github/workflows/google-deploy.yml"
+  ],
+  "context": [
+    {
+      "path": "google-v0/docs/reels-web-v2.md",
+      "reason": "Contrato comum e limites humanos atuais",
+      "sections": [
+        "API",
+        "persistência",
+        "integridade",
+        "migração"
+      ],
+      "max_chars": 4500
+    },
+    {
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "Persistência existente CAS",
+      "sections": [
+        "Firestore class"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/lib/library-repository.mjs",
+      "reason": "Mapeamento legado validado",
+      "sections": [
+        "publicVideo",
+        "registerLinks"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Execução e reconciliação existentes",
+      "sections": [
+        "claims",
+        "artifact persistence",
+        "provider operation"
+      ],
+      "max_chars": 2200
+    },
+    {
+      "path": "google-v0/web-google/lib/server.mjs",
+      "reason": "Autenticação e composição",
+      "sections": [
+        "authenticated",
+        "routes"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/reels-*.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher legado; esta entrega usa coordenação nativa explicitamente autorizada, com pacotes internos delimitados e sem scheduler."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e protocolo v2; prevalecem sobre proibições antigas de subagentes/limites de launcher.",
+    "processing": false,
+    "real_deletion": false,
+    "roles": [
+      "Orquestrador",
+      "Desenvolvedor",
+      "Revisor"
+    ],
+    "ownership": {
+      "dados": "reels-model/repository/migration e Firestore query",
+      "servicos": "reels-service/api/pipeline/taxonomy e composição server/rotas",
+      "interface": "componentes web, page/layout/globals.css"
+    },
+    "source_plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "ci_authorization": "Usuário autorizou GitHub Actions nesta implementação; testes sem credenciais/providers, não disparar deploy manual.",
+    "publication_preparation": "Extensão compatível web-only no publicador existente; preparar pacote concreto antes de aprovação final, sem merge/deploy/Google nesta implementação."
+  }
+}

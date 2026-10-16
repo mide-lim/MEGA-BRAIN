@@ -20,12 +20,25 @@ jobs:
         working-directory: google-v0/qa
       - run: npx playwright install --with-deps chromium
         working-directory: google-v0/qa
+      - name: Reels client contracts
+        run: node google-v0/qa/reels-client-check.mjs
       - run: node google-v0/qa/browser-check.mjs
         env:
           MEGABRAIN_QA_OUTPUT: ${{ runner.temp }}/megabrain-frontend-qa
+      - name: Reels Workspace and real API browser QA
+        if: success() || failure()
+        run: node google-v0/qa/reels-browser-check.mjs
+        env:
+          MEGABRAIN_REELS_QA_OUTPUT: ${{ runner.temp }}/megabrain-reels-qa
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: frontend-browser-qa
           path: ${{ runner.temp }}/megabrain-frontend-qa
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reels-workspace-browser-qa
+          path: ${{ runner.temp }}/megabrain-reels-qa
           retention-days: 7

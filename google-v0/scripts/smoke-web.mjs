@@ -17,10 +17,11 @@ try{
  }
  assert.ok(response,'Servidor não iniciou.');assert.equal(response.status,200);const html=await response.text();assert.ok(html.includes('Entrar com Google'));
  const css=html.match(/href="([^"]+\.css[^"]*)"/);assert.ok(css,'CSS ausente');assert.equal((await fetch(base+css[1])).status,200);
- for(const route of ['/api/library','/api/controls','/api/financial','/api/video/AbCdE123']){
+ for(const route of ['/api/library','/api/controls','/api/financial','/api/video/AbCdE123','/api/reels/summary','/api/reels/items','/api/reels/categories','/api/reels/queues','/api/reels/events','/api/reels/finance']){
   const r=await fetch(base+route);assert.equal(r.status,401);assert.equal(r.headers.get('set-cookie'),null);
  }
  assert.equal((await fetch(base+'/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"links":"https://instagram.com/p/AbCdE123/"}'})).status,401);
+ assert.equal((await fetch(base+'/api/reels/commands',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"type":"start","processingEnabled":true}'})).status,401);
  assert.equal((await fetch(base+'/auth/login',{redirect:'manual'})).status,503);
  assert.equal((await fetch(base+'/auth/callback?state=invalid&code=invalid',{redirect:'manual'})).status,403);
  console.log(JSON.stringify({home:200,css:200,private_routes:401,unconfigured_login:503,invalid_callback:403,google_requests:0,credentials_loaded:false}));

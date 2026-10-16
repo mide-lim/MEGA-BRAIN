@@ -51,14 +51,14 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     // Stop proof has its own immutable receipt. Updating the execution here
     // would invalidate the claim version held by saveAndApply after download.
     const result=await adapter.upload({...input,video,recordAcquisitionExtraction:()=>async()=>{await ensure(store,'execution_stops/'+job.id,{id:job.id,reelId:job.reelId,stage:job.stage,owner:job.owner,executorStoppedAt:new Date().toISOString()});}});
-    return {changes:result.changes,estimatedCents:result.actual_cents??null};
+    return {changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};
    },
-   async transcribe(input){const {adapter,video}=await scoped(input);const result=await adapter.transcription({...input,video});return result.operation_name?{pending:true,operationName:result.operation_name,changes:result.changes??{}}:{changes:result.changes,estimatedCents:result.actual_cents??null};},
-   async pollTranscription(input){const {adapter}=await scoped(input);const result=await adapter.pollTranscription(input);return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null};},
+   async transcribe(input){const {adapter,video}=await scoped(input);const result=await adapter.transcription({...input,video});return result.operation_name?{pending:true,operationName:result.operation_name,changes:result.changes??{}}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
+   async pollTranscription(input){const {adapter}=await scoped(input);const result=await adapter.pollTranscription(input);return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
    async analyze(input){const {adapter,video}=await scoped(input);const result=await adapter.analysis({...input,video});const quality=knowledgeReadiness(result.changes?.analysis);
     const valid=result.changes?.analysis_quality_status==='accepted'&&quality.accepted;
     const changes={...result.changes};if(!valid&&changes.analysis){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';}
-    return {changes,valid,quality,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null};
+    return {changes,valid,quality,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
    }
   };
   const taxonomy=new ReelsTaxonomy({repository});

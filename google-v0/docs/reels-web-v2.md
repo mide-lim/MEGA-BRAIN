@@ -39,4 +39,8 @@ O contrato opcional v2 `analysis.taxonomySignals` descreve preparações complet
 
 Novas publicações alimentam um índice compacto incremental; a avaliação manual do legado é explícita e limitada a500 publicações por chamada, com cursor de continuação. Comprovantes e recibos não devem crescer sem limite no documento raiz. GET de categorias apenas lê a última cobertura datada.
 
+O detalhe consulta execuções pela identidade do Reel e projeta apenas etapa, worker, tentativa, estado, horários e diagnóstico público permitido. `executionsHistory` informa fonte e observação; histórico ausente não é reconstruído como fato. A atualização da tela aberta acompanha a revisão periódica. Palavras-chave aprovadas da publicação ficam em `published_tags`, separado das tags originais, para filtro leve sem carregar evidências na listagem.
+
+Recibos financeiros v2 propagam a medição já gravada junto à resposta. `days[].estimatedByCurrency` preserva a moeda da estimativa (incluindo BRL); `measuredUsd` valoriza uso por preços versionados, no dia BRT de registro do resultado. A fatura continua separada; cobertura informa versão, data e lacunas. Nenhum desses valores concede ou bloqueia execução.
+
 Builds, suites e jornadas de navegador desta versão rodam exclusivamente em GitHub Actions, sem credenciais de provedores. A VPS recebe somente operações leves de contexto/transporte/versionamento. Workers novos ficam desabilitados e a web fixa processamento emfalse; testes com adaptadores em memória não comprovam operação real. Nenhuma exclusão ou corte de escritor é executado pelo ensaio de migração.

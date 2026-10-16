@@ -1,15 +1,25 @@
 import {createHash} from 'node:crypto';
 import {parseReelLinks} from './links.mjs';
-import {projectReel,reelDetail,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,initialReelsTaxonomy} from './reels-model.mjs';
+import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,initialReelsTaxonomy} from './reels-model.mjs';
 const invalid=message=>Object.assign(Error(message),{status:400,code:'INVALID_QUERY'});
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+const executionOrder=(a,b)=>{const left=a.queuedAt??a.createdAt,right=b.queuedAt??b.createdAt;if(left!==right)return left===null?1:right===null?-1:left<right?-1:1;const rank={acquisition:0,transcription:1,analysis:2};return (a.attempt??0)-(b.attempt??0)||(rank[a.stage]??3)-(rank[b.stage]??3)||String(a.id??'').localeCompare(String(b.id??''));};
 export class ReelsRepository{
  constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
  async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);return v?projectReel(v):null;}
  observation(){return {observedAt:this.snapshot?.observedAt??null,cache:{ttlMs:this.cacheTtlMs,stale:this.snapshot?.stale??false}};}
- async detail(id){const v=await this.raw(id);return v?reelDetail(v):null;}
+ async executionHistory(id){
+  if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');
+  const items=[],seen=new Set();let cursor,lastCursor=null;
+  do{const page=await this.store.query('reels_executions',{select:REEL_EXECUTION_FIELDS,filters:[{field:'reelId',op:'eq',value:id}],orderBy:[{field:'__name__',direction:'ASCENDING'}],limit:100,cursor});
+   for(const record of page.records){if(record.data.reelId!==id)throw Error('Execução fora do Reel solicitado.');items.push(projectExecution({...record.data,id:record.data.id??record.path.split('/').at(-1)}));}
+   lastCursor=page.lastCursor??page.nextCursor??lastCursor;cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Trajetória não avançou.');if(cursor)seen.add(cursor);
+  }while(cursor);
+  return {items:items.sort(executionOrder),cursor:lastCursor,observedAt:this.now()};
+ }
+ async detail(id){const v=await this.raw(id);if(!v)return null;const detail=reelDetail(v),history=await this.executionHistory(id),hasNew=history.items.length>0,legacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:legacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':legacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:legacy&&!hasNew?null:true}};}
  async scan(collection,select){
   if(typeof this.store.query!=='function')throw Error('Store requer consulta projetada; leitura integral não permitida.');
   const records=[];let cursor;const seen=new Set();

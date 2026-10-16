@@ -75,3 +75,23 @@ test('orphan media requires reconciliation before contacting the source again',a
  const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'acquisition',authorize:()=>true,dependencies:{api:{project},store,repository,storage:{metadata:async()=>({generation:'1'})},tools:{},dispatcher:{},operationsFactory:()=>({upload:async()=>assert.fail('existing source cannot be downloaded again')})}});
  const response=await handler(request({executionId:id}));assert.equal((await response.json()).status,'uncertain');assert.equal((await store.get('videos/Reel_001')).data.reels_v2.error.code,'MEDIA_REFERENCE_REQUIRES_RECONCILIATION');
 });
+
+for(const stage of ['acquisition','transcription','analysis'])test(`runtime preserves ${stage} finance in the durable receipt without provider replay`,async()=>{
+ const store=memory(),id=executionId('finance-operation','Reel_001',stage),finance={estimatedUsd:null,measuredUsd:0.016,estimate:{amount:1,currency:'BRL',source:'configured_quote'},measurement:{schema_version:1,status:'measured',currency:'USD',list_price_micro_usd:16000,rate_version:'fixture-rate',billing_confirmed:false,source:'fake-provider-usage'}};
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered'});await store.create('reels_executions/'+id,{id,operationId:'finance-operation',reelId:'Reel_001',stage,status:'queued'});
+ const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};let calls=0;
+ const fake=async()=>{calls++;return {changes:{},finance,actual_cents:100};};
+ const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage,authorize:()=>true,dependencies:{api:{project},store,repository,storage:{metadata:async()=>null},tools:{},dispatcher:{enqueue:async()=>({status:'sent'})},operationsFactory:()=>({upload:fake,transcription:fake,analysis:fake})}});
+ assert.equal((await handler(request({executionId:id}))).status,200);assert.deepEqual((await store.get('reels_executions/'+id)).data.rawResult.finance,finance);
+ assert.equal((await handler(request({executionId:id}))).status,200);assert.equal(calls,1);
+});
+
+test('runtime keeps batch STT collection usage in the saved result and reads the operation once',async()=>{
+ const store=memory(),id=executionId('finance-operation','Reel_001','transcription'),finance={measuredUsd:0.016,estimatedUsd:null,measurement:{currency:'USD',status:'measured'}};let polls=0;
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered'});await store.create('reels_executions/'+id,{id,operationId:'finance-operation',reelId:'Reel_001',stage:'transcription',status:'waiting',owner:'saved-owner',operationName:'saved-operation'});
+ await store.create('reels_controls/transcription',{id:'transcription',paused:false,desiredConcurrency:1,active:[id]});
+ const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
+ const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'transcription',authorize:()=>true,dependencies:{api:{project},store,repository,storage:{},tools:{},dispatcher:{enqueue:async()=>({status:'sent'})},operationsFactory:()=>({pollTranscription:async()=>{polls++;return {changes:{transcript:'Fonte preservada'},finance};}})}});
+ assert.equal((await handler(request({executionId:id,poll:true}))).status,200);assert.deepEqual((await store.get('reels_executions/'+id)).data.rawResult.finance,finance);
+ assert.equal((await handler(request({executionId:id,poll:true}))).status,200);assert.equal(polls,1);
+});

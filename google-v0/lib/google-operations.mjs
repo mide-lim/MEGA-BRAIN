@@ -21,7 +21,10 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
     const reservation=await gate({executionId:id,stage,videoId});
     if(reservation?.maximum_cents!==budget(stage))throw new Error('Estimativa diverge da reserva iniciada.');
   }
-  const result=(id,stage,changes,cost)=>({video_id:id,stage,changes,actual_cents:cost});
+  // Quotes belong to the legacy BRL ledger. Provider usage is independently
+  // valued at versioned USD list prices; neither is a confirmed invoice.
+  const finance=(cost,measurement)=>({estimatedUsd:null,measuredUsd:measurement?.status==='measured'&&measurement.currency==='USD'&&Number.isSafeInteger(measurement.list_price_micro_usd)&&measurement.list_price_micro_usd>=0?measurement.list_price_micro_usd/1e6:null,estimate:Number.isFinite(cost)&&cost>=0?{amount:cost/100,currency:'BRL',source:'configured_quote'}:null,measurement:measurement??null});
+  const result=(id,stage,changes,cost,measurement)=>({video_id:id,stage,changes,actual_cents:cost,...(executionAuthorization?{finance:finance(cost,measurement)}:{})});
   const budget=stage=>{const n=config?.quotes?.[stage];if(executionAuthorization)return Number.isFinite(n)&&n>=0?n:null;if(!Number.isSafeInteger(n)||n<1)throw new Error('Estimativa obrigatória.');return n;};
   const at=async(step,action)=>{const started=performance.now();try{return await action();}catch(error){error.operation_step=step;error.elapsed_ms=Math.max(0,Math.round(performance.now()-started));throw error;}};
   const submitSTT=(url,options)=>at('submit_stt',()=>api.request(url,options));
@@ -97,7 +100,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       if(!video.source_caption?.text){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
       const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
-      return {...result(video.id,'analysis',{...caption,...changes},budget('analysis')),artifact:{key,generation:object.generation}};
+      return {...result(video.id,'analysis',{...caption,...changes},budget('analysis'),saved.usage_cost),artifact:{key,generation:object.generation}};
     },
     async inspectAnalysisArtifact({videoId,executionId}){
       const key=`results/instagram/${videoId}/${executionId}/analysis.json`,object=await storage.metadata(key);
@@ -127,8 +130,9 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
         const response=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:recognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},content:audio.toString('base64')},timeoutMs:120000});
         const text=(response.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
         const key=`results/instagram/${video.id}/${executionId}/transcription.json`;
-        const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'})});
-        return result(video.id,'transcription',{...reference,transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(response)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
+        const usage=measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'});
+        const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:usage});
+        return result(video.id,'transcription',{...reference,transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(response)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
       }
       const operation=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:batchRecognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},files:[{uri:`gs://${storage.bucket}/${audioKey}`}],recognitionOutputConfig:{inlineResponseConfig:{}}},timeoutMs:120000});
       if(!operation?.name)throw new Error('STT não confirmou identificador.');
@@ -149,8 +153,9 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const text=(transcript?.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
       // Preserve raw results, including timing and uncertainty, even if no speech.
       const key=`results/instagram/${videoId}/${executionId}/transcription.json`;
-      const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response,usage_cost:measureSpeechUsage(operation.response,{model:config.speech_model,location:config.speech_location,mode:'batch',audioUri})});
-      return result(videoId,'transcription',{transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(transcript)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
+      const usage=measureSpeechUsage(operation.response,{model:config.speech_model,location:config.speech_location,mode:'batch',audioUri});
+      const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response,usage_cost:usage});
+      return result(videoId,'transcription',{transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(transcript)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
     },
     async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
       const timeoutMs=analysisTimeoutMs(config?.analysis_timeout_ms),deadline=performance.now()+timeoutMs;
@@ -170,10 +175,11 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts,maximumAttempts:config.single_reel_pipeline_enabled===true?1:maximumAnalysisAttempts}):await submit();
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
-      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:measureGeminiUsage(response,{model:config.gemini_model,location:'global'})}));
+      const usage=measureGeminiUsage(response,{model:config.gemini_model,location:'global'});
+      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage}));
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
-      return result(video.id,'analysis',{...caption,...changes},cost);
+      return result(video.id,'analysis',{...caption,...changes},cost,usage);
     }
   };
 }

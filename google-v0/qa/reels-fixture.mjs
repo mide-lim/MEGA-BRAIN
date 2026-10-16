@@ -12,6 +12,16 @@ export function reelsFixture(now=new Date()) {
   {id:'QaRunning',title:'Transcrição em curso',status:'running',stage:'transcription',created_at:at},
   {id:'QaWaiting',title:'Análise aguardando externo',status:'waiting',stage:'analysis',created_at:at}
  ];
+ // A legacy recipe has published knowledge but no structural recurrence proof.
+ // Technology is outside the first recipe-specific segmentation contract.
+ const food=videos.find(v=>v.id==='QaPub_food');food.transcript='Use 300 g de frango. Doure na frigideira por 8 minutos. Rende 2 porções.';
+ food.analysis.knowledge={context:'recipe',keywords:[{term:'Frango'}],missing_information:[],fields:[
+  {kind:'ingredient',name:'Ingrediente principal',value:'300 g de frango'},
+  {kind:'procedure',name:'Modo de preparo',value:'Doure na frigideira por 8 minutos.'},
+  {kind:'preparation_time',name:'Tempo informado',value:'8 minutos'},
+  {kind:'serving_count',name:'Rendimento informado',value:'2 porções'}
+ ].map(field=>({...field,evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}))};
+ videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
  const documents=Object.fromEntries(videos.map(v=>['videos/'+v.id,v]));
  documents['settings/reels_v2_taxonomy']={revision:1,nodes:[{id:'cat_tech',parentId:null,name:'Tecnologia',manual:false,evidenceCount:1},{id:'cat_models',parentId:'cat_tech',name:'Modelos',manual:false,evidenceCount:1},{id:'cat_food',parentId:null,name:'Receitas',manual:true,evidenceCount:1}],assignments:[],rules:[],appliedCommands:[]};
  documents['settings/reels_v2_finance']={budget:{amount:25,currency:'BRL'},days:[{day,billed:{amount:0.15,currency:'USD'}}],coverage:{estimates:null,measured:null,billing:{source:'qa-only',observedAt:at}},appliedCommands:[]};

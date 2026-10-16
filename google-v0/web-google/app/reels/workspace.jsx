@@ -17,5 +17,5 @@ export default function Workspace(){const [workspace,setWorkspace]=useState('all
  {workspace==='finance'&&<Finance revision={revision} onRefresh={refresh}/>}
  {workspace==='activity'&&<Activity onOpen={setDetail}/>}
  {['all','queues','attention'].includes(workspace)&&<OperationReceipt revision={revision}/>}
- <footer><span>MEGABRAIN - Reels · acervo privado</span><span>Leituras datadas · horários de São Paulo</span></footer></main></div>{register&&<Register onClose={()=>setRegister(false)} onDone={refresh}/>} {detail&&<Detail key={detail} id={detail} onClose={()=>setDetail(null)} onRefresh={refresh}/>}</>;
+ <footer><span>MEGABRAIN - Reels · acervo privado</span><span>Leituras datadas · horários de São Paulo</span></footer></main></div>{register&&<Register onClose={()=>setRegister(false)} onDone={refresh}/>} {detail&&<Detail key={detail} id={detail} revision={revision} onClose={()=>setDetail(null)} onRefresh={refresh}/>}</>;
 }

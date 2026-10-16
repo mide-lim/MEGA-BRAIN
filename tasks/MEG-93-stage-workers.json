@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "id": "MEG-93",
+  "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "a6371d058b290bdd93cb9f4ae6ebd01f6523a6ca",
+  "objective": "Implement three isolated stage workers/queues using existing WorkerFlow/adapters and artifacts, in one separate PR. User explicitly authorizes maximum parallel workers; parent integrates with three bounded stage workers MEG96/97/98. No Google operations, deploy, acquisition/analysis, data migration or reserve release.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Immutable role rejects wrong stages before storage/provider calls. Three explicit queue destinations and OIDC audiences, scoped config closed by default; preserve legacy runtime.",
+    "Persisted stage result precedes deterministic handoff; transcription polling stays in its own queue and never resubmits an existing provider operation. Completed work/analysis artifacts are reused; uncertain work stays held.",
+    "Offline full pipeline, duplicate/failure/cross-stage checks; same worker image reused with distinct entrypoint role. No resources applied. Independent final review and CI."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/worker-queue.mjs",
+    "google-v0/lib/stage-contract.mjs",
+    "google-v0/lib/stage-upload.mjs",
+    "google-v0/lib/stage-transcription.mjs",
+    "google-v0/lib/stage-analysis.mjs",
+    "google-v0/scripts/serve-stage-worker.mjs",
+    "google-v0/scripts/smoke-stage-workers.mjs",
+    "google-v0/config/stage-workers.example.json",
+    "google-v0/Dockerfile.worker",
+    "google-v0/tests/stage-contract.test.mjs",
+    "google-v0/tests/stage-upload.test.mjs",
+    "google-v0/tests/stage-queue.test.mjs",
+    "google-v0/tests/stage-transcription.test.mjs",
+    "google-v0/tests/stage-analysis.test.mjs",
+    "google-v0/tests/stage-pipeline.test.mjs",
+    "google-v0/tests/stage-layout.test.mjs",
+    ".github/workflows/google-v0.yml",
+    "docs/stage-workers.md",
+    "tasks/MEG-93-stage-workers.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Reuse server composition and finance/media guards",
+      "sections": [
+        "factory and handlers"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "Deterministic outbox, routes and polling",
+      "sections": [
+        "constructor, enqueue and handler"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Paid operation ownership and reuse",
+      "sections": [
+        "run, poll, finish"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "google-v0/lib/acquisition-control.mjs",
+      "reason": "Keep independent acquisition cap",
+      "sections": [
+        "acquire/release"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/Dockerfile.worker",
+      "reason": "One image reused in three services",
+      "sections": [
+        "COPY and entrypoint"
+      ],
+      "max_chars": 1000
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p test_*.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "git diff --check"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Explicit user overrides AGENTS generic one-worker/no-delegation restrictions for3 stage agents plus parent integration. Code-only; final independent read-only reviewer and human review before merge/deploy. No paid model API."
+  }
+}

@@ -42,6 +42,8 @@ jobs:
           docker build --build-arg VCS_REF="$commit" -t megabrain-worker:ci -f "$context/Dockerfile.worker" "$context"
       - name: Check worker image with synthetic media and no network
         run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-worker.mjs
+      - name: Check three stage entrypoints in the same worker image without network
+        run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-stage-workers.mjs
       - name: Extract the built web image for anonymous-route checks
         run: |
           set -eu

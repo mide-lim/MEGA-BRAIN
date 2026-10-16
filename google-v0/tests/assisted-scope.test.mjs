@@ -12,7 +12,7 @@ import {AcquisitionControl} from '../lib/acquisition-control.mjs';
 import {ExecutionStops} from '../lib/execution-stops.mjs';
 import {workerRuntime} from '../lib/worker-runtime.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
-function fixture({download=async()=>{},clock=()=>Date.now()}={}){
+function fixture({download=async(_video,{onExecutionStopped})=>onExecutionStopped(),clock=()=>Date.now()}={}){
  const now=clock(),docs=new Map(),scoped=[],objects=[];let version=0,calls=0;
  const seed=(p,data)=>docs.set(p,{data:structuredClone(data),updateTime:String(++version)});
  const store={async get(p){return structuredClone(docs.get(p)??null);},async create(p,data){if(docs.has(p))return {created:false};seed(p,data);return {created:true};},async patch(p,c,{updateTime}){if(docs.get(p)?.updateTime!==updateTime)throw Object.assign(Error('CAS'),{status:412});seed(p,{...docs.get(p).data,...c});return this.get(p);}};
@@ -29,7 +29,7 @@ function fixture({download=async()=>{},clock=()=>Date.now()}={}){
   const bytes=Buffer.from('synthetic media'),bucket='megabrain-v0-1017370021431-media';
   const api={buckets:new Set([bucket]),async request(url){assert.ok(url.includes('ifGenerationMatch=0'));objects.push(scope.videoId);return {generation:'1'};}};
   const storage=new Storage(api,bucket,{admitObject:x=>capacity.admit(x)});storage.metadata=async()=>null;storage.read=async()=>bytes;
-  const operations={async prepareUploadRecovery(){},async upload({video,executionId,recordAcquisitionExtraction}){await gate({videoId:video.id,executionId,stage:'upload'});calls++;const ended=recordAcquisitionExtraction();await download(video);ended();const key=`originals/instagram/${video.id}/video.mp4`;const object=await storage.writeImmutable(key,bytes,{uploadsEnabled:true});return {video_id:video.id,stage:'upload',actual_cents:10,changes:{media_verified:true,audio_status:'present',video_key:key,video_generation:object.generation,video_bytes:bytes.length}};}};
+  const operations={async prepareUploadRecovery(){},async upload({video,executionId,recordAcquisitionExtraction}){await gate({videoId:video.id,executionId,stage:'upload'});calls++;const ended=recordAcquisitionExtraction();await download(video,{onExecutionStopped:ended});const key=`originals/instagram/${video.id}/video.mp4`;const object=await storage.writeImmutable(key,bytes,{uploadsEnabled:true});return {video_id:video.id,stage:'upload',actual_cents:10,changes:{media_verified:true,audio_status:'present',video_key:key,video_generation:object.generation,video_bytes:bytes.length}};}};
   const flow=new WorkerFlow({store,ledger,operations,acquisition,assistedScope:scope,quotes:{upload:10},eligibleVideos:[scope.videoId],batchId:batch.id,clock,recordExecutionStopped:x=>stops.record(x),verifyExecutionStopped:x=>stops.verify(x)});scoped.push({scope,flow,capacity,ledger,gate});return flow;
  };
  const approve=(id='Fresh_Reel',request='unit_request_20261015')=>{seed(`videos/${id}`,{status:'pending'});const path='jobs/assisted_upload_'+request;seed(path,{schema_version:1,kind:'assisted_upload',status:'authorized',request_id:request,authorization_ref:'MEG-109:synthetic-authorization',authorized_at:new Date(clock()-1000).toISOString(),expires_at:new Date(clock()+60000).toISOString(),maximum_cents:10,task:{videoId:id,stage:'upload',poll:0}});return {store,requestId:request,flow:{quotes:{upload:10}},allowedVideoIds:[id],createScopedFlow,clock};};
@@ -64,7 +64,7 @@ test('existing claim or any financial history cannot be disguised as a fresh acq
  for(const claim of [true,false]){const f=fixture(),id=executionId('Fresh_Reel','upload');if(claim)f.seed('jobs/'+id,{video_id:'Fresh_Reel',stage:'upload',status:'retry_ready'});else f.seed('settings/financial',{...f.original,jobs:{...f.original.jobs,previous:{video_id:'Fresh_Reel',stage:'upload',maximum_cents:10,status:'completed',actual_cents:10}}});await f.run();assert.equal(f.stats().calls,0);}
 });
 test('two independent approvals share one atomic acquisition slot and immutable invocation scopes',async()=>{
- const entered=deferred(),finish=deferred(),f=fixture({download:async()=>{entered.resolve();await finish.promise;}});const second=f.approve('Other_Reel','other_request_20261015');
+ const entered=deferred(),finish=deferred(),f=fixture({download:async(_video,{onExecutionStopped})=>{entered.resolve();await finish.promise;onExecutionStopped();}});const second=f.approve('Other_Reel','other_request_20261015');
  const first=f.run();await entered.promise;const blocked=await runAssistedUpload(second);assert.equal(blocked.reason,'acquisition_capacity');assert.equal(f.stats().calls,1);assert.notEqual(f.scoped[0].scope,f.scoped[1].scope);assert.ok(Object.isFrozen(f.scoped[0].scope));
  finish.resolve();assert.equal((await first).status,'completed');assert.deepEqual((await f.store.get('settings/financial')).data.batch,f.original.batch);
 });
@@ -75,7 +75,7 @@ test('lost final receipt does not invoke a second upload',async()=>{
  const f=fixture(),patch=f.store.patch;f.store.patch=async(p,c,o)=>{if(c.outcome)throw Error('lost receipt');return patch.call(f.store,p,c,o);};assert.equal((await f.run()).reason,'assisted_result_unconfirmed');await f.run();assert.equal(f.stats().calls,1);
 });
 test('already admitted work can complete after approval expiry; it cannot be reminted or replayed',async()=>{
- let now=Date.now();const f=fixture({clock:()=>now,download:async()=>{now+=120000;}});assert.equal((await f.run()).status,'completed');await f.run();assert.equal(f.stats().calls,1);
+ let now=Date.now();const f=fixture({clock:()=>now,download:async(_video,{onExecutionStopped})=>{now+=120000;onExecutionStopped();}});assert.equal((await f.run()).status,'completed');await f.run();assert.equal(f.stats().calls,1);
 });
 test('scoped dependencies reject other stage, video, execution, object, pending result and copied scope',async()=>{
  const f=fixture();await f.run();const {scope,flow,capacity,gate}=f.scoped[0];
@@ -99,4 +99,18 @@ test('unknown approval receipt never constructs a scoped flow or invokes an uplo
 });
 test('same consumed request racing has one invocation and scope',async()=>{
  const f=fixture(),results=await Promise.all([f.run(),f.run()]);assert.equal(results.filter(r=>r.status==='completed').length,1);assert.equal(f.scoped.length,1);assert.equal(f.stats().calls,1);
+});
+
+
+test('proven future download error releases only its slot; real ledger keeps new and historical uncertainty',async()=>{
+ const f=fixture({download:async(_video,{onExecutionStopped})=>{onExecutionStopped();throw Object.assign(Error('normal synthetic exit'),{code:1});}});
+ const result=await f.run();assert.equal(result.status,'uncertain');
+ const state=(await f.store.get('settings/financial')).data;
+ assert.equal(state.reserved_cents,1860);assert.equal(state.jobs[result.execution_id].status,'uncertain');
+ assert.equal(state.jobs[result.execution_id].maximum_cents,10);
+ for(const [id,job] of Object.entries(f.original.jobs))assert.deepEqual(state.jobs[id],job);
+ assert.deepEqual(state.batch,f.original.batch);
+ assert.deepEqual((await f.store.get('settings/acquisition')).data.active,{});
+ assert.equal([...f.docs.keys()].filter(path=>path.startsWith('execution_stops/')).length,1);
+ await f.run();assert.equal(f.stats().calls,1);
 });

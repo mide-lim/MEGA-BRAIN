@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {executeDownloadProcess,downloadProcessEnded} from './download-executor.mjs';
 import {mkdtemp,readFile,writeFile,stat,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname,basename} from 'node:path';
@@ -72,10 +73,10 @@ function classifyDownload(error,phase){
  return {cause,phase,...(detail_code?{detail_code}:{})};
 }
 export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false,clock=()=>Date.now()}={}){
- async function versions(){
+ async function versions(executeRun=run){
   const result={};
   for(const [tool,args,field,pattern] of [['yt-dlp',['--version'],'yt_dlp_version',/^(\d{4}\.\d{2}\.\d{2})\s*$/],['ffmpeg',['-version'],'ffmpeg_version',/^ffmpeg version (\d+\.\d+(?:\.\d+)?)/]]){
-   try{const {stdout}=await run(tool,args,{timeout:2000,maxBuffer:16384});result[field]=String(stdout).match(pattern)?.[1]??null;}catch{result[field]=null;}
+   try{const {stdout}=await executeRun(tool,args,{timeout:2000,maxBuffer:16384});result[field]=String(stdout).match(pattern)?.[1]??null;}catch{result[field]=null;}
   }
   return result;
  }
@@ -106,8 +107,17 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
       if(typeof text!=='string'||!text.trim()||text.length>50000)throw Error('Legenda não disponível.');
       return {text,capture_id:createHash('sha256').update(text).digest('hex'),captured_at:new Date().toISOString(),source_url:links[0].url,scope:'Post description supplied by Instagram extractor',method:'yt-dlp-metadata'};
     },
-    async download(video,{withMetadata=false}={}){
-      const started=clock();let phase='source_validation',phaseSource='boundary';
+    async download(video,{withMetadata=false,onExecutionStopped}={}){
+      const started=clock();let phase='source_validation',phaseSource='boundary',allEnded=true;
+      const downloadRun=run===execute?executeDownloadProcess:run;
+      // Only executor-owned object identity counts. Numeric exits, JSON fields,
+      // successful mocks and directory removal cannot manufacture stop proof.
+      const scopedRun=async(file,args,options)=>{
+        const receiptScope={};
+        const observe=value=>{if(!downloadProcessEnded(value,receiptScope))allEnded=false;};
+        try{const result=await downloadRun(file,args,{...options,receiptScope});observe(result);return result;}
+        catch(error){observe(error);throw error;}
+      };
       try{
         if(!downloadEnabled)throw new Error('Downloads desligados.');
         const links=parseReelLinks(video.source_url);
@@ -115,7 +125,7 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
         return await temporary(async folder=>{
           const file=join(folder,'video.mp4');phase='unknown';
           // One download command, with the existing caps and zero retries.
-          try{await run('yt-dlp',['--ignore-config','--no-playlist','--no-progress','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','20','--max-filesize',String(maxBytes),'-f','bestvideo+bestaudio/best[acodec!=none]',...(withMetadata?['--write-info-json']:[]),'--merge-output-format','mp4','--remux-video','mp4','-o',file,'--',links[0].url],{timeout:180000,maxBuffer:262144});}
+          try{await scopedRun('yt-dlp',['--ignore-config','--no-playlist','--no-progress','--no-warnings','--retries','0','--fragment-retries','0','--extractor-retries','0','--socket-timeout','20','--max-filesize',String(maxBytes),'-f','bestvideo+bestaudio/best[acodec!=none]',...(withMetadata?['--write-info-json']:[]),'--merge-output-format','mp4','--remux-video','mp4','-o',file,'--',links[0].url],{timeout:180000,maxBuffer:262144});}
           catch(error){
             // Last observed tool milestone; absent output remains unknown.
             const output=String(error.stdout??'').slice(-262144);
@@ -145,9 +155,13 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
         });
       }catch(error){
         const classified=classifyDownload(error,phase);
-        const diagnostic=safeDownloadDiagnostic({...classified,phase_source:classified.phase!==phase?'tool_output':phaseSource,elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:error.code,...(phase==='source_validation'?{}:await versions())});
+        const diagnostic=safeDownloadDiagnostic({...classified,phase_source:classified.phase!==phase?'tool_output':phaseSource,elapsed_ms:Math.max(0,Math.round(clock()-started)),exit_code:error.code,...(phase==='source_validation'?{}:await versions(scopedRun))});
         // Replace the exception too, so downstream logging cannot leak raw tool output.
         throw Object.assign(new Error(diagnostic.message),{code:diagnostic.exit_code,operation_step:'download_media',download_diagnostic:diagnostic});
+      }finally{
+        // temporary() has awaited cleanup and diagnostic version queries have
+        // settled. Before any command is invoked, the empty scope is also safe.
+        if(allEnded&&typeof onExecutionStopped==='function')await onExecutionStopped();
       }
     },
     async extractAudio(bytes){

@@ -1,4 +1,4 @@
-import {assertAssistedScope,verifyAssistedScope,assertAssistedJob} from './assisted-scope.mjs';
+import {assertAssistedScope,verifyAssistedScope,assertAssistedJob,assertPipelineHistory} from './assisted-scope.mjs';
 import {settledRetryId,settledRetryAllowed,settledRetryAuthorizationPath} from './smart-retry.mjs';
 import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId,settledMetadataUpload} from './firestore-recovery.mjs';
 import {terminalSourceFailure} from './source-hold.mjs';
@@ -23,7 +23,7 @@ function validate(state){
   let reserved=0;
   for(const [id,j]of Object.entries(state.jobs)){
     if(j.recovery_of!==undefined){const parent=state.jobs[j.recovery_of];const settled=j.recovery_kind==='settled_retry_v1'&&id===settledRetryId(j.recovery_of)&&parent?.status==='completed'&&!parent.recovery_of&&parent.actual_cents===parent.maximum_cents&&((j.stage==='upload'&&parent.manual_reconciliation==='terminal_metadata_estimate_accounted_user_verdict_pending')||(j.stage==='analysis'&&parent.manual_reconciliation==='confirmed_schema400_full_estimate_accounted_analysis_pending'&&j.analysis_revision===parent.analysis_revision));if(!(settled||j.stage==='upload'&&id===uploadRecoveryId(j.recovery_of)&&settledMetadataUpload(parent))||parent?.stage!==j.stage||parent.video_id!==j.video_id||parent.maximum_cents!==j.maximum_cents||parent.batch_id!==j.batch_id)throw Error('Tentativa vinculada inválida.');}
-    if(j.assisted_scope_ref!==undefined&&(j.stage!=='upload'||j.batch_id!==undefined||j.recovery_of!==undefined||!/^jobs\/assisted_upload_[A-Za-z0-9_-]{16,64}$/.test(j.assisted_scope_ref)||j.maximum_cents<1||j.maximum_cents>100))throw Error('Reserva unitária inválida.');
+    if(j.assisted_scope_ref!==undefined&&(j.batch_id!==undefined||j.recovery_of!==undefined||!/^jobs\/assisted_upload_[A-Za-z0-9_-]{16,64}$/.test(j.assisted_scope_ref)||j.maximum_cents<1||(j.assisted_scope_kind==='pipeline_v1'?(!['upload','transcription','analysis'].includes(j.stage)||!Number.isSafeInteger(j.assisted_scope_total_cents)||j.assisted_scope_total_cents<1||j.assisted_scope_total_cents>2000||j.maximum_cents>j.assisted_scope_total_cents||j.stage==='upload'&&j.maximum_cents>100):(j.assisted_scope_kind!==undefined||j.stage!=='upload'||j.maximum_cents>100))))throw Error('Reserva unitária inválida.');
     if(j.analysis_revision!==undefined&&(j.stage!=='analysis'||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(j.analysis_revision)))throw new Error('Revisão de análise inválida.');
     if(!executionPattern.test(id)||!j||!idPattern.test(j.video_id??'')||!stages.has(j.stage)||!cents(j.maximum_cents)||!['reserved','started','uncertain','completed','cancelled'].includes(j.status))throw new Error('Reserva inválida.');
     if(['reserved','started','uncertain'].includes(j.status))reserved+=j.maximum_cents;
@@ -76,7 +76,7 @@ export class FinancialLedger{
     return mutateDocument(this.store,this.path,async snapshot=>{
     if(!snapshot)throw new Error('Controle financeiro não inicializado.');
     const state=snapshot.data;validate(state);
-    if(this.assistedScope){assertAssistedScope(this.assistedScope,{executionId,videoId,stage,maximumCents});await verifyAssistedScope(this.store,this.assistedScope);if(recoveryOf!==undefined||settledRetry||analysisRevision!==undefined||Object.values(state.jobs).some(j=>j.video_id===videoId))throw Error('Aquisição unitária exige vídeo sem histórico.');}
+    if(this.assistedScope){assertAssistedScope(this.assistedScope,{executionId,videoId,stage,maximumCents});await verifyAssistedScope(this.store,this.assistedScope);if(recoveryOf!==undefined||settledRetry)throw Error('Recuperação fora do escopo unitário.');if(this.assistedScope.pipeline){if(stage==='analysis'?analysisRevision!==this.assistedScope.analysisRevision:analysisRevision!==undefined)throw Error('Revisão unitária divergente.');assertPipelineHistory(this.assistedScope,state);}else if(analysisRevision!==undefined||Object.values(state.jobs).some(j=>j.video_id===videoId))throw Error('Aquisição unitária exige vídeo sem histórico.');}
     if(state.jobs[executionId])throw new Error('Execução já registrada; não iniciar novamente.');
     if(settledRetry!==false&&settledRetry!==true||settledRetry&&recoveryOf===undefined)throw Error('Retomada explícita inválida.');
     if(settledRetry){
@@ -98,7 +98,7 @@ export class FinancialLedger{
     if(analysisRevision!==undefined)job.analysis_revision=analysisRevision;
     if(recoveryOf!==undefined)job.recovery_of=recoveryOf;
     if(settledRetry)job.recovery_kind='settled_retry_v1';
-    if(this.assistedScope)job.assisted_scope_ref=this.assistedScope.reference;else if(state.batch)job.batch_id=state.batch.id;
+    if(this.assistedScope){job.assisted_scope_ref=this.assistedScope.reference;if(this.assistedScope.pipeline){job.assisted_scope_kind='pipeline_v1';job.assisted_scope_total_cents=this.assistedScope.totalMaximumCents;}}else if(state.batch)job.batch_id=state.batch.id;
     const batch=!this.assistedScope&&state.batch?.video_ids.length===262?{...state.batch,active_video_ids:[...new Set([...state.batch.active_video_ids,videoId])]}:null;
     return {changes:{jobs:{...state.jobs,[executionId]:job},reserved_cents:state.reserved_cents+maximumCents,...(batch?{batch}:{})},result:{...decision,execution_id:executionId}};
     });

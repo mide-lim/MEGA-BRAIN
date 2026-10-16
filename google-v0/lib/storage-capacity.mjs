@@ -1,4 +1,4 @@
-import {assertAssistedScope,verifyAssistedScope,assertAssistedJob} from './assisted-scope.mjs';
+import {assertAssistedScope,verifyAssistedScope,assertAssistedJob,assertAssistedObject} from './assisted-scope.mjs';
 import {mutateDocument} from './firestore.mjs';
 import {objectLimit,checkBatchObject} from './batch-budget.mjs';
 import {createHash} from 'node:crypto';
@@ -7,7 +7,7 @@ export function newCapacity(){return {schema_version:1,enabled:false,limit_bytes
 export class StorageCapacity{
  constructor(store,{assistedScope=null}={}){if(assistedScope)assertAssistedScope(assistedScope);this.store=store;this.assistedScope=assistedScope;}
  async reserveResult({bucket:target,key,maximumBytes=262144}){
-  if(this.assistedScope)throw Error('Resultados fora do escopo unitário.');
+  if(this.assistedScope){if(!this.assistedScope.pipeline)throw Error('Resultados fora do escopo unitário.');assertAssistedObject(this.assistedScope,key);await verifyAssistedScope(this.store,this.assistedScope);}
   if(target!==bucket||typeof key!=='string'||!key.startsWith('results/')||!Number.isSafeInteger(maximumBytes)||maximumBytes<1||maximumBytes>1048576)throw Error('Reserva de resultado fora do escopo.');
   return mutateDocument(this.store,'settings/capacity',async snapshot=>{
   const state=snapshot?.data,financial=(await this.store.get('settings/financial'))?.data;
@@ -15,14 +15,14 @@ export class StorageCapacity{
   if(state?.enabled!==true||!Number.isSafeInteger(state.limit_bytes)||!Number.isSafeInteger(state.admitted_bytes)||!Number.isSafeInteger(cap)||cap<100||cap>objectLimit(financial)||state.limit_bytes>financial?.ongoing_storage_planned_bytes||!state.claims)throw Error('Capacidade não liberada.');
   const id='object_'+createHash('sha256').update(target+'/'+key).digest('hex');
   if(state.claims[id])return {result:{duplicate:true}};
-  checkBatchObject(financial,key);
+  if(this.assistedScope){const scope=this.assistedScope,job=financial?.jobs?.[scope.executionId];if(job){assertAssistedJob(scope,scope.executionId,job);if(!['reserved','started'].includes(job.status))throw Error('Etapa unitária não iniciada.');}else{const claim=(await this.store.get('jobs/'+scope.executionId))?.data;if(claim?.status!=='claimed'||claim.video_id!==scope.videoId||claim.stage!==scope.stage||claim.assisted_scope_ref!==scope.reference)throw Error('Claim unitário obrigatório antes de reservar resultado.');}}else checkBatchObject(financial,key);
   const entries=Object.values(state.claims),reservedBytes=Math.ceil(maximumBytes*1.05)+1024;
   if(entries.reduce((n,c)=>n+c.reserved_bytes,0)!==state.admitted_bytes||entries.length>=cap||state.admitted_bytes+reservedBytes>state.limit_bytes)throw Error('Capacidade insuficiente antes da chamada paga.');
   return {changes:{admitted_bytes:state.admitted_bytes+reservedBytes,claims:{...state.claims,[id]:{pending:true,maximum_bytes:maximumBytes,reserved_bytes:reservedBytes}}},result:{reserved_bytes:reservedBytes}};
   });
  }
  async admit({bucket:target,key,bytes,digest}){
-  if(this.assistedScope){assertAssistedScope(this.assistedScope);if(key!==`originals/instagram/${this.assistedScope.videoId}/video.mp4`)throw Error('Objeto fora do escopo unitário.');await verifyAssistedScope(this.store,this.assistedScope);}
+  if(this.assistedScope){assertAssistedScope(this.assistedScope);assertAssistedObject(this.assistedScope,key);await verifyAssistedScope(this.store,this.assistedScope);}
   if(target!==bucket||typeof key!=='string'||!key.startsWith('originals/')&&!key.startsWith('results/')||!Number.isSafeInteger(bytes)||bytes<1||bytes>100000000||!/^[a-f0-9]{64}$/.test(digest??''))throw new Error('Objeto fora do escopo de capacidade.');
   return mutateDocument(this.store,'settings/capacity',async snapshot=>{
   const state=snapshot?.data;

@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "7941b4ad6c84798d95e61c06112bf5fd4713b784",
+  "objective": "One PR extends existing invocation-owned unit authorization to upload, transcription/poll and analysis on the three existing stage workers/queues. Reuse ledger/claims/objects/end proofs, immutable per-stage quotes and total cap, one fresh ID outside existing262 batch. Offline implementation/tests/draft PR and same MEG109 update only. No Google calls/config, paid processing, new Paperclip tasks, reconciliation, reserve releases, merge or deploy. User authorization is the current explicit request.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Default-off server opt-in, one allowlisted fresh ID, consumed private approval with bound stage quotes/total/revision/expiry; no client scope/recovery authority; old upload-only path unchanged.",
+    "One CAS claim per paid stage, persistence before successor, existing STT operation polled without resubmission, no automatic analysis retry in unit pipeline; exact-stage object admission and global finance freshness/capacity enforced.",
+    "Existing262 batch/ledger/reserves immutable; scopes bound per invocation across three queues, no global singleton mutation or new coordinator. Acquisition max1 and positive end proof before STT.",
+    "Offline integration success/sync+async poll, duplicate/race, expiry/pause/cost/ownership/forgery/object/unknown receipt/error tests; focused and full existing suites, packet/link/orchestration validations.",
+    "Independent read-only reviewer in fresh session required before ready; user human approval required before merge/deploy. No new task or operation is authorized by PR."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/assisted-scope.mjs",
+    "google-v0/lib/assisted-pipeline.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/worker-queue.mjs",
+    "google-v0/lib/stage-contract.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/storage-capacity.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/analysis-retry.mjs",
+    "google-v0/tests/assisted-pipeline.test.mjs",
+    "google-v0/tests/analysis-retry.test.mjs",
+    "google-v0/Dockerfile.worker",
+    "docs/stage-workers.md",
+    "tasks/MEG-109-three-stages.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/assisted-scope.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-queue.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/stage-contract.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/storage-capacity.mjs",
+      "reason": "Concrete dependency of extending existing unit scope through queue/finance/storage/runtime; prior reads bounded to these contracts.",
+      "sections": [
+        "unit authorization and stage handoff"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/assisted-pipeline.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/test_orchestration.py",
+    "python3 -m unittest discover -s ops -p \"test_*.py\""
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Risk policy explicitly requires independent read-only review on final commit; one reviewer is authorized by this packet for that purpose. No parallel implementation agents, paid model API, merge or deployment."
+  }
+}

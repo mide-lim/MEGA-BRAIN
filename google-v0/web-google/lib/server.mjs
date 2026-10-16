@@ -16,7 +16,7 @@ export function routes(){
   if(!backend){const s=settings(),tokenProvider=serviceIdentity({project:s.project_id}),api=new GoogleREST({project:s.project_id,buckets:[s.media_bucket],tokenProvider});
     const store=new Firestore(api),repository=new LibraryRepository(store);
     backend=libraryAPI({repository,ledgerStore:store,authorize:authenticated,sameOrigin,linkImportEnabled:s.link_import_enabled===true});
-    mediaHandler=boundedMedia({repository,store,api,authorize:authenticated,enabled:s.media_access_enabled===true});}
+    mediaHandler=boundedMedia({repository,api,authorize:authenticated});}
   return backend;
 }
 export function mediaRoute(){routes();return mediaHandler.metadata;}

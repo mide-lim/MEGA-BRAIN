@@ -1,65 +1,69 @@
 import test from 'node:test';import assert from 'node:assert/strict';
+import {readFileSync}from 'node:fs';
 import {boundedMedia,mediaRange}from '../lib/bounded-media.mjs';
 import {categoryList,categoryMatches}from '../lib/category-display.mjs';
+const id='C2S6yZjgJyr',now=Date.now();
+const request=(range,method='GET')=>new Request('https://app/api/media/'+id,{method,headers:range?{Range:range}:{}});
+function fixture({video={},authorized=true,response,storageError}={}){
+ const calls=[],lookups=[];
+ const repository={video:async key=>{lookups.push(key);return {media_verified:true,video_key:`originals/instagram/${id}/video.mp4`,video_generation:'123',video_bytes:100,...video};}};
+ const api={project:'megabrain-v0-1017370021431',request:async(url,options)=>{calls.push({url,options});if(storageError)throw storageError;return response?.()??new Response(Buffer.alloc(100),{status:206,headers:{'Content-Range':'bytes 0-99/100'}});}};
+ // Any accidental policy/finance access fails, including reads; playback cannot reserve.
+ const store={get:async()=>assert.fail('Playback must not inspect processing/financial controls'),patch:async()=>assert.fail('Playback must not mutate controls or reserves')};
+ const handler=boundedMedia({repository,store,api,authorize:async()=>authorized,clock:()=>now});
+ return {handler,calls,lookups,repository,store,api};
+}
 test('range reads are capped and invalid/multiple ranges rejected',()=>{
  assert.deepEqual(mediaRange('bytes=0-',5000000),{start:0,end:2097151,bytes:2097152});
  assert.deepEqual(mediaRange('bytes=-10',100),{start:90,end:99,bytes:10});
- for(const value of ['bytes=100-200','bytes=0-1,3-4','bytes=5-1','bytes=-0'])assert.throws(()=>mediaRange(value,100));
+ for(const value of ['bytes=100-200','bytes=0-1,3-4','bytes=5-1','bytes=-0','items=0-2','bytes=9007199254740992-'])assert.throws(()=>mediaRange(value,100));
+ for(const size of [0,100000001,1.5,NaN])assert.throws(()=>mediaRange(null,size));
 });
-const id='C2S6yZjgJyr',now=Date.now();
-function fixture(overrides={}){
- let reads=0;const data={schema_version:1,enabled:true,allowed_ids:[id],expires_at:new Date(now+10000).toISOString(),maximum_bytes:100,used_bytes:0,requests:0,financial_execution_id:'media_pilot_delivery',...overrides};
- const store={get:async path=>({updateTime:'v1',data:path==='settings/media_delivery'?data:{reserved_cents:420,coverage_verified:true,credit_expires_at:new Date(now+1000000000).toISOString(),ongoing_costs_valid_until:new Date(now+10000).toISOString(),jobs:{media_pilot_delivery:{stage:'media_access',status:'started',maximum_cents:420}}}}),patch:async(path,changes)=>Object.assign(data,changes)};
- const repository={video:async()=>({media_verified:true,video_key:`originals/instagram/${id}/video.mp4`,video_generation:'123',video_bytes:100})};
- const api={project:'megabrain-v0-1017370021431',request:async()=>{reads++;assert.equal(data.used_bytes,100);return new Response(Buffer.alloc(100),{status:206,headers:{'Content-Range':'bytes 0-99/100'}});}};
- return {handler:boundedMedia({repository,store,api,authorize:async()=>true,enabled:true,clock:()=>now}),data,reads:()=>reads,store,repository,api};
-}
-test('authenticated bounded playback debits before reading and blocks exhausted allowance',async()=>{
- const f=fixture(),r=await f.handler.stream(new Request('https://app/api/media/'+id),id);assert.equal(r.status,206);assert.equal((await r.arrayBuffer()).byteLength,100);assert.equal(f.reads(),1);
- assert.equal((await f.handler.stream(new Request('https://app/api/media/'+id),id)).status,503);assert.equal(f.reads(),1);
+test('owner can repeatedly play the persisted generation without pilot/financial state',async()=>{
+ const f=fixture();for(let i=0;i<3;i++){const r=await f.handler.stream(request(),id);assert.equal(r.status,206);assert.equal((await r.arrayBuffer()).byteLength,100);}
+ assert.equal(f.calls.length,3);for(const call of f.calls){const u=new URL(call.url);assert.equal(u.hostname,'storage.googleapis.com');assert.equal(u.searchParams.get('generation'),'123');assert.equal(u.searchParams.get('alt'),'media');assert.equal(decodeURIComponent(u.pathname.split('/o/')[1]),`originals/instagram/${id}/video.mp4`);assert.equal(call.options.headers.Range,'bytes=0-99');}
 });
-test('anonymous, expired, unfunded and foreign video requests never read storage',async()=>{
- for(const o of [{enabled:false},{expires_at:new Date(now).toISOString()},{allowed_ids:[]},{requests:200}]){const f=fixture(o);assert.equal((await f.handler.stream(new Request('https://app'),id)).status,503);assert.equal(f.reads(),0);}
- const f=fixture();const h=boundedMedia({...f,authorize:async()=>false,enabled:true});assert.equal((await h.stream(new Request('https://app'),id)).status,401);assert.equal(f.reads(),0);
+test('expired credit, paused processing, closed or exhausted old delivery policy never gate archive playback',async()=>{
+ for(const oldState of [{paused:true},{credit_expires_at:'2000-01-01',ongoing_costs_valid_until:'2000-01-01'},{enabled:false,allowed_ids:[],expires_at:'2000-01-01',requests:2000,maximum_requests:2000,used_bytes:1073741824,maximum_bytes:1073741824},{jobs:{legacy:{status:'uncertain'}}}]){
+ const f=fixture();f.store.get=async()=>assert.fail('Old state must be irrelevant: '+JSON.stringify(oldState));
+ assert.equal((await f.handler.metadata(request(),id)).status,200);assert.equal((await f.handler.stream(request(),id)).status,206);
+ }
 });
-test('metadata/HEAD do not consume transfer and metadata exposes no Google bearer URL',async()=>{
- const f=fixture();const r=await f.handler.metadata(new Request('https://app'),id);assert.equal((await r.json()).url,'/api/media/'+id);
- assert.equal((await f.handler.stream(new Request('https://app',{method:'HEAD'}),id)).status,206);assert.equal(f.data.requests,0);assert.equal(f.reads(),0);
+test('anonymous metadata and stream never inspect repository or storage',async()=>{
+ const f=fixture({authorized:false});assert.equal((await f.handler.metadata(request(),id)).status,401);assert.equal((await f.handler.stream(request(),id)).status,401);assert.equal(f.calls.length,0);assert.equal(f.lookups.length,0);
+});
+test('authorization is checked again on every stream request after metadata',async()=>{
+ let authorized=true;const f=fixture(),h=boundedMedia({...f,authorize:async()=>authorized});assert.equal((await h.metadata(request(),id)).status,200);authorized=false;assert.equal((await h.stream(request(),id)).status,401);assert.equal(f.calls.length,0);
+});
+test('metadata/HEAD expose only an authenticated route and never read media',async()=>{
+ const f=fixture(),r=await f.handler.metadata(request(),id),body=await r.json();assert.equal(body.url,'/api/media/'+id);assert.equal(Date.parse(body.expires_at),now+300000);assert.equal(r.headers.get('cache-control'),'no-store');
+ const h=await f.handler.stream(request(undefined,'HEAD'),id);assert.equal(h.status,206);assert.equal(h.headers.get('content-length'),'100');assert.equal(h.body,null);assert.equal(f.calls.length,0);
+});
+test('invalid and traversal IDs fail before repository access',async()=>{
+ for(const key of ['../settings/financial','abc','x'.repeat(33),'abcde%2f..',null,{}]){const f=fixture();assert.equal((await f.handler.metadata(request(),key)).status,404);assert.equal((await f.handler.stream(request(),key)).status,404);assert.equal(f.lookups.length,0);assert.equal(f.calls.length,0);}
+});
+test('missing, foreign, unverified and oversized media never reach storage',async()=>{
+ for(const video of [{media_verified:false},{media_verified:'false'},{video_generation:123},{video_key:'originals/instagram/foreign/video.mp4'},{video_key:'../video.mp4'},{video_generation:'1&alt=media'},{video_generation:''},{video_bytes:0},{video_bytes:100000001},{video_bytes:100.5}]){const f=fixture({video});assert.equal((await f.handler.stream(request(),id)).status,404);assert.equal(f.calls.length,0);}
+ const f=fixture();f.repository.video=async()=>null;assert.equal((await f.handler.metadata(request(),id)).status,404);
+});
+test('invalid ranges and methods do not read storage',async()=>{
+ const f=fixture();const r=await f.handler.stream(request('bytes=100-'),id);assert.equal(r.status,416);assert.equal(r.headers.get('content-range'),'bytes */100');assert.equal((await f.handler.stream(request(undefined,'POST'),id)).status,405);assert.equal(f.calls.length,0);
+});
+test('2MiB request cap is enforced at Google boundary',async()=>{
+ const size=5000000,bytes=2097152;const f=fixture({video:{video_bytes:size},response:()=>new Response(Buffer.alloc(bytes),{status:206,headers:{'Content-Range':`bytes 0-${bytes-1}/${size}`}})});
+ const r=await f.handler.stream(request('bytes=0-'),id);assert.equal(r.status,206);assert.equal((await r.arrayBuffer()).byteLength,bytes);assert.equal(f.calls[0].options.headers.Range,`bytes=0-${bytes-1}`);
+});
+test('provider full bodies, wrong generation-size ranges and invalid lengths are never forwarded',async()=>{
+ for(const [status,contentRange,length,bodyBytes] of [[200,'bytes 0-99/100',100,100],[206,'bytes 0-99/101',100,100],[206,'bytes 0-99/100',101,101],[206,'bytes 0-99/100',null,101],[206,'bytes 0-99/100',null,99]]){
+ const f=fixture({response:()=>new Response(Buffer.alloc(bodyBytes),{status,headers:{'Content-Range':contentRange,...(length===null?{}:{'Content-Length':String(length)})}})});const r=await f.handler.stream(request(),id);assert.equal(r.status,503);assert.ok((await r.json()).error.includes('carregar novamente'));
+ }
+});
+test('missing file and storage access failure have distinct safe errors without paid retry',async()=>{
+ for(const [status,expected] of [[404,404],[403,503],[429,503]]){const f=fixture({storageError:Object.assign(Error('private diagnostic'),{status})});const r=await f.handler.stream(request(),id);assert.equal(r.status,expected);const text=await r.text();assert.ok(!text.includes('private diagnostic'));assert.ok(!text.includes('reserva'));assert.equal(f.calls.length,1);}
+});
+test('production wiring cannot reinstate the obsolete pilot flag and UI offers manual reload',()=>{
+ const server=readFileSync(new URL('../web-google/lib/server.mjs',import.meta.url),'utf8'),preview=readFileSync(new URL('../web-google/app/video-preview.jsx',import.meta.url),'utf8');assert.ok(server.includes('boundedMedia({repository,api,authorize:authenticated})'));assert.ok(!server.includes('media_access_enabled'));assert.ok(preview.includes('Tentar carregar vídeo novamente'));assert.ok(!preview.includes('Confira a autorização'));
 });
 test('category display merges case, accents and curated language aliases without altering reports',()=>{
- const videos=[{analysis:{categories:['culinária','Receitas']}},{analysis:{categories:['Culinária','receitas','Productivity','Tools']}}];const copy=JSON.stringify(videos);
- assert.deepEqual(categoryList(videos),['Ferramentas','Produtividade','Receitas e preparo']);assert.equal(categoryMatches(videos[0],'Culinária'),true);assert.equal(JSON.stringify(videos),copy);
-});
-
-test('an explicitly funded expansion preserves prior usage and permits more than 200 requests',async()=>{
- const f=fixture({maximum_bytes:1073741824,maximum_requests:2000,used_bytes:382698648,requests:200});
- const get=f.store.get;f.store.get=async p=>{const s=await get(p);if(p==='settings/financial'){s.data.reserved_cents=1100;s.data.jobs.media_pilot_delivery.maximum_cents=1100;s.data.paused=true;}return s;};
- f.api.request=async()=>{assert.equal(f.data.used_bytes,382698748);assert.equal(f.data.requests,201);return new Response(Buffer.alloc(100),{status:206,headers:{'Content-Range':'bytes 0-99/100'}});};
- assert.equal((await f.handler.stream(new Request('https://app'),id)).status,206);
- assert.equal(f.data.used_bytes,382698748);assert.equal(f.data.requests,201);
-});
-test('larger transfer allowance requires its full proportional financial reservation',async()=>{
- for(const funding of [{maximum:420,reserved:420},{maximum:1075,reserved:1075},{maximum:1100,reserved:1099},{maximum:1101,reserved:1101},{maximum:1100.5,reserved:1101}]){
- const f=fixture({maximum_bytes:1073741824,maximum_requests:2000}),get=f.store.get;
- f.store.get=async p=>{const s=await get(p);if(p==='settings/financial'){s.data.reserved_cents=funding.reserved;s.data.jobs.media_pilot_delivery.maximum_cents=funding.maximum;}return s;};
- assert.equal((await f.handler.stream(new Request('https://app'),id)).status,503);assert.equal(f.reads(),0);assert.equal(f.data.requests,0);
- }
- const f=fixture({maximum_bytes:1073741824,maximum_requests:2000}),get=f.store.get;
- f.store.get=async p=>{const s=await get(p);if(p==='settings/financial'){s.data.reserved_cents=1076;s.data.jobs.media_pilot_delivery.maximum_cents=1076;}return s;};
- assert.equal((await f.handler.metadata(new Request('https://app'),id)).status,200);
-});
-test('invalid or exhausted limits and missing permission stay blocked before storage',async()=>{
- for(const p of [{maximum_requests:2001},{maximum_requests:0},{maximum_requests:1.5},{maximum_bytes:1073741825},{maximum_requests:2000,requests:2000},{maximum_requests:2000,used_bytes:100},{allowed_ids:[]}]){
- const f=fixture(p);assert.equal((await f.handler.stream(new Request('https://app'),id)).status,503);assert.equal(f.reads(),0);
- }
- for(const [p,expected] of [[{allowed_ids:[]},'Este vídeo ainda não foi liberado para reprodução.'],[{requests:200},'Franquia de requisições de reprodução esgotada.'],[{used_bytes:101},'Franquia de transferência de vídeo esgotada.']]){
- const f=fixture(p);assert.equal((await (await f.handler.metadata(new Request('https://app'),id)).json()).error,expected);
- }
-});
-test('concurrent requests cannot spend the same last bytes or request slot',async()=>{
- const f=fixture({maximum_requests:2000,requests:1999});let version=1;
- const get=f.store.get;f.store.get=async p=>{const s=await get(p);return {data:structuredClone(s.data),updateTime:String(version)};};
- f.store.patch=async(_p,changes,{updateTime})=>{if(updateTime!==String(version))throw Error('conflict');Object.assign(f.data,changes);version++;};
- const results=await Promise.all([f.handler.stream(new Request('https://app'),id),f.handler.stream(new Request('https://app'),id)]);
- assert.deepEqual(results.map(r=>r.status).sort(),[206,503]);assert.equal(f.reads(),1);assert.equal(f.data.requests,2000);assert.equal(f.data.used_bytes,100);
+ const videos=[{analysis:{categories:['culinária','Receitas']}},{analysis:{categories:['Culinária','receitas','Productivity','Tools']}}];const copy=JSON.stringify(videos);assert.deepEqual(categoryList(videos),['Ferramentas','Produtividade','Receitas e preparo']);assert.equal(categoryMatches(videos[0],'Culinária'),true);assert.equal(JSON.stringify(videos),copy);
 });

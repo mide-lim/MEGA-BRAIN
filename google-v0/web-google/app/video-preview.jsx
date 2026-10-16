@@ -18,9 +18,9 @@ export default function VideoPreview({id,controls=false,ready=true,revision=null
  function enter(){if(controls)return;hovering.current=true;if(!ready)return;if(source&&!error)video.current?.play().catch(()=>{});else if(!error)prepare();}
  function leave(){if(controls)return;hovering.current=false;if(video.current){video.current.pause();try{video.current.currentTime=0;}catch{}}}
  return <div className={'video-preview'+(controls?' full':'')} onMouseEnter={enter} onMouseLeave={leave}>
-  {source?<video ref={video} src={source} controls={controls} muted={!controls} playsInline preload="none" onLoadedData={()=>{if(hovering.current&&!controls)video.current?.play().catch(()=>{});}} onError={()=>setError('Não foi possível reproduzir. Confira a autorização antes de tentar novamente.')}/>:<span className="poster">▶</span>}
+  {source?<video ref={video} src={source} controls={controls} muted={!controls} playsInline preload="none" onLoadedData={()=>{if(hovering.current&&!controls)video.current?.play().catch(()=>{});}} onError={()=>{cache.delete(id);setSource(null);setError('Não foi possível acessar o vídeo agora. Tente carregar novamente.');}}/>:<span className="poster">▶</span>}
   {controls&&ready&&!source&&!error&&<button className="secondary" onClick={prepare}>Carregar vídeo privado</button>}
   {!ready&&<small className="media-waiting">Reprodução disponível após a análise.</small>}
-  {error&&<small className="media-error">{error}</small>}
+  {error&&<><small className="media-error">{error}</small>{ready&&<button className="secondary" onClick={prepare}>Tentar carregar vídeo novamente</button>}</>}
  </div>;
 }

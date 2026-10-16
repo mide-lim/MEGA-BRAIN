@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "ec7842f77ce00e9b2bb1feb7fbd46b632cdc517a",
+  "objective": "Fix recurring inability to play persisted private video when processing/pilot financial controls expire or remain closed. Authenticated owner playback is separate from paid processing; no provider inference, Google mutations, reservations, merge or deploy by developer.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Authenticated private playback reads exact verified canonical media key/generation only; every metadata/range request checks existing owner session. Invalid IDs fail before repository access. No public bucket or credential-bearing URL.",
+    "Processing pauses, old financial uncertainty, expired credit/ongoing quote, pilot allowlist/TTL/request/byte exhaustion cannot disable reading persisted media. Playback never reads or patches financial/media_delivery controls.",
+    "Every provider read remains bounded to2MiB, size100MB, exact206 Content-Range and exactbytecount, no fullbody/range abuse. Missing file versus temporary storage access errors have useful UI text and manual reload path.",
+    "Focused and full offline tests pass; committed web image built and anonymous route smoke validates no credentials/network. Independent reviewer before parent integration."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/bounded-media.mjs",
+    "google-v0/tests/bounded-media.test.mjs",
+    "google-v0/web-google/lib/server.mjs",
+    "google-v0/web-google/app/video-preview.jsx",
+    "tasks/MEG-109-playback.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/bounded-media.mjs",
+      "reason": "Remove obsolete execution finance gating from persisted authenticated bounded playback",
+      "sections": [
+        "policy, metadata, stream"
+      ],
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/web-google/lib/server.mjs",
+      "reason": "Wire authenticated durable playback independently of pilot media flag",
+      "sections": [
+        "routes"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/web-google/app/video-preview.jsx",
+      "reason": "Helpful missing/access messages and manual retry",
+      "sections": [
+        "prepare, rendering"
+      ],
+      "max_chars": 2500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/bounded-media.test.mjs",
+    "node --test --test-concurrency=1 google-v0/tests/*.test.mjs",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "python3 ops/prepare-release-context.py --output /workspace/meg109-playback-context",
+    "docker build --build-arg VCS_REF=\"$(git rev-parse HEAD)\" -t megabrain-web:meg109-playback -f /workspace/meg109-playback-context/Dockerfile.web-google /workspace/meg109-playback-context"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Private recovery authority/history exclusions require fresh independent reviewer; owner authorizes native parallel work and recovery. Parent handles Google/publishing/processing only after review."
+  }
+}

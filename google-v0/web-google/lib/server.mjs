@@ -16,8 +16,12 @@ export function routes(){
   if(!backend){const s=settings(),tokenProvider=serviceIdentity({project:s.project_id}),api=new GoogleREST({project:s.project_id,buckets:[s.media_bucket],tokenProvider});
     const store=new Firestore(api),repository=new LibraryRepository(store);
     backend=libraryAPI({repository,ledgerStore:store,authorize:authenticated,sameOrigin,linkImportEnabled:s.link_import_enabled===true});
-    mediaHandler=boundedMedia({repository,store,api,authorize:authenticated,enabled:s.media_access_enabled===true});}
+    mediaHandler=boundedMedia({repository,api,authorize:authenticated});}
   return backend;
 }
 export function mediaRoute(){routes();return mediaHandler.metadata;}
-export function mediaStreamRoute(){routes();return mediaHandler.stream;}
+export function mediaStreamRoute(){return async(request,id)=>{
+  if(!await authenticated())return Response.json({error:'Não autorizado'},{status:401,headers:{'Cache-Control':'no-store'}});
+  try{routes();return await mediaHandler.stream(request,id);}
+  catch{return Response.json({error:'Não foi possível acessar o vídeo agora. Tente carregar novamente.'},{status:503,headers:{'Cache-Control':'no-store'}});}
+};}

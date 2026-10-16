@@ -20,4 +20,8 @@ export function routes(){
   return backend;
 }
 export function mediaRoute(){routes();return mediaHandler.metadata;}
-export function mediaStreamRoute(){routes();return mediaHandler.stream;}
+export function mediaStreamRoute(){return async(request,id)=>{
+  if(!await authenticated())return Response.json({error:'Não autorizado'},{status:401,headers:{'Cache-Control':'no-store'}});
+  try{routes();return await mediaHandler.stream(request,id);}
+  catch{return Response.json({error:'Não foi possível acessar o vídeo agora. Tente carregar novamente.'},{status:503,headers:{'Cache-Control':'no-store'}});}
+};}

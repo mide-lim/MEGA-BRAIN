@@ -17,7 +17,8 @@
     "google-v0/tests/bounded-media.test.mjs",
     "google-v0/web-google/lib/server.mjs",
     "google-v0/web-google/app/video-preview.jsx",
-    "tasks/MEG-109-playback.json"
+    "tasks/MEG-109-playback.json",
+    "google-v0/web-google/app/api/media/[id]/route.js"
   ],
   "context": [
     {
@@ -43,6 +44,14 @@
         "prepare, rendering"
       ],
       "max_chars": 2500
+    },
+    {
+      "path": "google-v0/web-google/app/api/media/[id]/route.js",
+      "reason": "Actual image smoke found stream route initializes backend before authentication; protect unavailable-config path",
+      "sections": [
+        "GET HEAD"
+      ],
+      "max_chars": 1000
     }
   ],
   "validation_commands": [

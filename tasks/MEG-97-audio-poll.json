@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "id": "MEG-97",
+  "paperclip_issue_id": "1db172b8-e32e-4642-baa3-81b80158028f",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "18387a607ae7dd564379734a4a20f5461e29ef2c",
+  "objective": "Close MEG96/97 audio preparation/reuse and pause-new-STT/continue-known-operation collection in one small code PR, reusing current flow and controls. Explicit human authorizes parallel agents and tests. No Google processing, configuration, conciliation, reserve release, merge or deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Stage acquisition prepares immutable FLAC from local MP4 with persisted reference, generation and source linkage before handoff. Transcription reuses verified audio without rereading/reconverting MP4; safe bounded compatibility for legacy missing references. No paid replay or artifact overwrite.",
+    "Pausing new STT submissions with existing controls leaves known-operation collection available within existing hard stops/ownership/budget. Incomplete/paused work is not resubmitted; preserve legacy behavior except explicit safe control distinction.",
+    "Targeted failure, duplicate, lineage, synchronous/asynchronous and real-flow integration tests. Full suite, image smoke, independent final review and CI; one PR, existing Paperclip tasks only."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/audio-artifact.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/stage-contract.mjs",
+    "google-v0/lib/worker-reservation-gate.mjs",
+    "google-v0/lib/controls.mjs",
+    "google-v0/tests/audio-artifact.test.mjs",
+    "google-v0/tests/audio-reuse.test.mjs",
+    "google-v0/tests/transcription-pause.test.mjs",
+    "google-v0/tests/stage-transcription.test.mjs",
+    "google-v0/tests/stage-pipeline.test.mjs",
+    "google-v0/tests/google-operations.test.mjs",
+    "google-v0/tests/worker-flow.test.mjs",
+    "google-v0/tests/stage-contract.test.mjs",
+    "google-v0/Dockerfile.worker",
+    "google-v0/config/stage-workers.example.json",
+    "docs/stage-workers.md",
+    "tasks/MEG-97-audio-poll.json",
+    "google-v0/lib/worker-recovery.mjs",
+    "google-v0/tests/acquisition-control.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Audio upload, STT submit/poll and existing adapter gates",
+      "sections": [
+        "upload/transcription/pollTranscription"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Preserve claims, durable operation and finance; allow audio fields",
+      "sections": [
+        "run/poll/finish"
+      ],
+      "max_chars": 3500
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Stage factories and hard service stops",
+      "sections": [
+        "factory"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-reservation-gate.mjs",
+      "reason": "Ownership and financial guard remain required",
+      "sections": [
+        "gate"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/storage.mjs",
+      "reason": "Immutable generation/checksum verified artifacts",
+      "sections": [
+        "read/writeImmutable"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-recovery.mjs",
+      "reason": "Existing explicit safe resume must distinguish queued new submission from collection of persisted operation",
+      "sections": [
+        "resume control check"
+      ],
+      "max_chars": 500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 -m unittest discover -s ops -p test_*.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "git diff --check"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Human explicitly authorizes two parallel bounded implementers plus parent integration and fresh independent reviewer, overriding generic AGENTS single-worker prohibition. Corrections needed for requested implementation are within human scope; packet amendment before any post-review fix run. No paid model API; no merge/deploy authorization."
+  }
+}

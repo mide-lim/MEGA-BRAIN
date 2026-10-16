@@ -16,3 +16,8 @@ test('daily production counts terminal analysis per Reel, not intermediate stage
  const day=(await finance.read()).days[0];assert.equal(day.admitted,1);assert.equal(day.completed,1);assert.equal(day.published,1);assert.equal(day.estimatedUsd,null);
  await assert.rejects(()=>finance.read({from:'2026-02-30',to:'2026-03-01'}),e=>e.code==='INVALID_RANGE');
 });
+
+test('finance scans projected job metadata and never reads complete provider reports',async()=>{
+ const store=memory(),query=store.query,calls=[];store.list=()=>assert.fail('full collection scan forbidden');store.query=async(c,q)=>{calls.push(q);return query(c,q);};
+ const finance=new ReelsFinance({repository:new ReelsRepository({store,clock}),clock});await finance.read();assert.equal(calls.length,1);assert.ok(calls[0].select.includes('rawResult.finance'));assert.equal(calls[0].select.includes('rawResult'),false);assert.equal(calls[0].select.includes('rawResult.changes'),false);
+});

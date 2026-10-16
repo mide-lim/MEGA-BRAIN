@@ -7,6 +7,7 @@ import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry,maximumAnalysisAttempts} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
+import {speechWordEvidence} from './reels-speech-evidence.mjs';
 
 // Legacy callers retain the reservation gate. The v2 caller supplies a
 // server-owned execution authorization, independently of financial reporting.
@@ -127,7 +128,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
         const text=(response.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
         const key=`results/instagram/${video.id}/${executionId}/transcription.json`;
         const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'})});
-        return result(video.id,'transcription',{...reference,transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
+        return result(video.id,'transcription',{...reference,transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(response)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
       }
       const operation=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:batchRecognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},files:[{uri:`gs://${storage.bucket}/${audioKey}`}],recognitionOutputConfig:{inlineResponseConfig:{}}},timeoutMs:120000});
       if(!operation?.name)throw new Error('STT não confirmou identificador.');
@@ -149,7 +150,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       // Preserve raw results, including timing and uncertainty, even if no speech.
       const key=`results/instagram/${videoId}/${executionId}/transcription.json`;
       const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response,usage_cost:measureSpeechUsage(operation.response,{model:config.speech_model,location:config.speech_location,mode:'batch',audioUri})});
-      return result(videoId,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
+      return result(videoId,'transcription',{transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(transcript)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
     },
     async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
       const timeoutMs=analysisTimeoutMs(config?.analysis_timeout_ms),deadline=performance.now()+timeoutMs;

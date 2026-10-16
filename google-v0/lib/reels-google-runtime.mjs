@@ -47,6 +47,7 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
      const object=await storage.metadata(video.video_key);if(!object||object.generation!==video.video_generation||Number(object.size)!==video.video_bytes)throw Object.assign(Error('Mídia preservada diverge da referência.'),{definitive:true});
      return {changes:{video_key:video.video_key,video_generation:video.video_generation,video_bytes:video.video_bytes,media_verified:true,audio_status:video.audio_status,duration_seconds:video.duration_seconds},reused:true};
     }
+    if(await storage.metadata(`originals/instagram/${job.reelId}/video.mp4`))throw Object.assign(Error('Objeto existente sem referência verificada; conciliar antes de adquirir.'),{requiresReconciliation:true,code:'MEDIA_REFERENCE_REQUIRES_RECONCILIATION'});
     // Stop proof has its own immutable receipt. Updating the execution here
     // would invalidate the claim version held by saveAndApply after download.
     const result=await adapter.upload({...input,video,recordAcquisitionExtraction:()=>async()=>{await ensure(store,'execution_stops/'+job.id,{id:job.id,reelId:job.reelId,stage:job.stage,owner:job.owner,executorStoppedAt:new Date().toISOString()});}});

@@ -11,8 +11,9 @@ test('broad reclassification requires exact preview and revision; replay repairs
 test('server segment uses versioned evidence and unique Reel support, preserves manual override',async()=>{const proof={categoryId:'science',source:'transcript:segment-1',confidence:0.9},videos=[pub('Reel_001',{analysis:{evidence:{categories:[proof,proof]}}}),pub('Reel_002',{analysis:{evidence:{categories:[proof]}}}),pub('Reel_003',{analysis:{evidence:{categories:[proof]}},taxonomy_override:{manual:true,revision:1}})],store=memory(videos),repository=new ReelsRepository({store,clock}),taxonomy=new ReelsTaxonomy({repository,clock});await store.create('settings/reels_v2_taxonomy',{revision:1,nodes:[{id:'science',name:'Ciência',parentId:null}],assignments:[],rules:[],appliedCommands:[]});const input={idempotencyKey:'segment-12345',action:'segment',revision:1,id:'science',minSupport:2,minRatio:0.8};const preview=await taxonomy.mutate({...input,preview:true});assert.deepEqual(preview.preview.ids,['Reel_001','Reel_002']);await taxonomy.mutate({...input,previewToken:preview.previewToken,confirmed:true});assert.equal((await store.get('videos/Reel_003')).data.categoryIds,undefined);const state=(await store.get('settings/reels_v2_taxonomy')).data;assert.equal(state.rules.length,1);assert.equal(state.rules[0].version,1);assert.equal(state.nodes[0].evidenceCount,2);});
 
 function supportedRecipe(id,count=1,extra={}){
- const units=Array.from({length:count},(_,i)=>({id:'preparation_'+i,kind:'recipe',title:['Sopa completa','Arroz completo','Bolo completo'][i],evidence:[{source:'transcript',start_seconds:i*20,end_seconds:i*20+15,excerpt:['Prepare a sopa do início ao fim.','Prepare também o arroz completo.','Faça separadamente o bolo completo.'][i]}]}));
- return pub(id,{categoryIds:['recipes'],duration_seconds:90,transcript:units.flatMap(u=>u.evidence.map(e=>e.excerpt)).join(' '),analysis:{summary:'Fonte preservada',taxonomySignals:{version:1,parentCategoryId:'recipes',complete:true,confidence:0.95,units}},...extra});
+ const units=Array.from({length:count},(_,i)=>({id:'preparation_'+i,kind:'recipe',title:['Sopa completa','Arroz completo','Bolo completo'][i],evidence:[{source:'transcript',start_seconds:i*20,end_seconds:i*20+['Prepare a sopa do início ao fim.','Prepare também o arroz completo.','Faça separadamente o bolo completo.'][i].split(' ').length,excerpt:['Prepare a sopa do início ao fim.','Prepare também o arroz completo.','Faça separadamente o bolo completo.'][i]}]}));
+ const transcript_words=units.flatMap(u=>u.evidence.flatMap(e=>e.excerpt.split(' ').map((word,i)=>({word,start_seconds:e.start_seconds+i,end_seconds:e.start_seconds+i+1}))));
+ return pub(id,{categoryIds:['recipes'],duration_seconds:90,transcript:units.flatMap(u=>u.evidence.map(e=>e.excerpt)).join(' '),transcript_words,analysis:{summary:'Fonte preservada',taxonomySignals:{version:1,parentCategoryId:'recipes',complete:true,confidence:0.95,units}},...extra});
 }
 async function discoverySetup(videos,{indexed=true}={}){
  const store=memory(videos),repository=new ReelsRepository({store,clock}),taxonomy=new ReelsTaxonomy({repository,clock});
@@ -113,5 +114,52 @@ test('lost assignment acknowledgement resumes the durable index outbox without a
  repository.raw=async()=>{throw Error('unexpected raw scan');};assert.equal((await taxonomy.discover(input)).duplicate,true);
  const child=(await store.get('settings/reels_v2_taxonomy')).data.nodes.find(n=>n.parentId==='recipes');
  assert.ok((await store.get('videos/Recover_2')).data.categoryIds.includes(child.id));
+});
+test('manual reclassification updates the index before another publication counts its support',async()=>{
+ const {store,taxonomy}=await discoverySetup(Array.from({length:3},(_,i)=>supportedRecipe('Sync_'+i)));
+ await taxonomy.mutate({action:'reclassify',idempotencyKey:'sync-manual-index',revision:0,reelIds:['Sync_0'],categoryIds:['other']});
+ const indexed=(await store.get('reels_index/taxonomy_Sync_0')).data;assert.equal(indexed.manual,true);assert.deepEqual(indexed.categoryIds,['other']);
+ const result=await taxonomy.discover({automatic:true,sourceReelId:'Sync_1',sourceExecutionId:hash('sync-after-manual')});
+ assert.equal(result.coverage.manual,1);assert.equal(result.coverage.supported,2);assert.deepEqual(result.proposals,[]);
+});
+test('recipe temporal evidence must match contiguous provider words at the claimed time',()=>{
+ const missing=supportedRecipe('Time_001');delete missing.transcript_words;assert.equal(recipeRecurrence(missing).reason,'TEMPORAL_PROOF_UNAVAILABLE');
+ const shifted=supportedRecipe('Time_002',2);shifted.analysis.taxonomySignals.units[1].evidence[0].start_seconds=50;shifted.analysis.taxonomySignals.units[1].evidence[0].end_seconds=60;assert.equal(recipeRecurrence(shifted).reason,'TEMPORAL_PROOF_INVALID');
+ const reordered=supportedRecipe('Time_003');reordered.transcript_words[1].word='palavra diferente';assert.equal(recipeRecurrence(reordered).reason,'TEMPORAL_PROOF_INVALID');
+});
+test('a complement replaces its previous automatic format rather than keeping exclusive siblings',async()=>{
+ const videos=[...Array.from({length:3},(_,i)=>supportedRecipe('OldList_'+i,2)),...Array.from({length:3},(_,i)=>supportedRecipe('OldSingle_'+i))],{store,taxonomy}=await discoverySetup(videos);
+ await taxonomy.discover({automatic:true,sourceReelId:'OldList_0',sourceExecutionId:hash('formats-before')});
+ const state=(await store.get('settings/reels_v2_taxonomy')).data,list=state.rules.find(r=>r.value==='recipe_collection').categoryId,single=state.rules.find(r=>r.value==='single_recipe').categoryId;
+ const previous=await store.get('videos/OldList_0');await store.patch('videos/OldList_0',supportedRecipe('OldList_0',1,{categoryIds:previous.data.categoryIds,taxonomy_override:previous.data.taxonomy_override,analysis_generation:'2'}),{updateTime:previous.updateTime});
+ await taxonomy.discover({automatic:true,sourceReelId:'OldList_0',sourceExecutionId:hash('formats-after')});
+ const categories=(await store.get('videos/OldList_0')).data.categoryIds;assert.ok(categories.includes(single));assert.ok(!categories.includes(list));
+ const refreshed=(await store.get('settings/reels_v2_taxonomy')).data;assert.equal(refreshed.rules.find(r=>r.value==='recipe_collection').support.length,2);assert.equal(refreshed.nodes.find(n=>n.id===list).evidenceCount,2);
+});
+test('manual bulk classification stores bounded outbox documents instead of a multi-megabyte root array',async()=>{
+ const videos=Array.from({length:3005},(_,i)=>pub('Bulk_'+String(i).padStart(5,'0'))),{store,taxonomy}=await discoverySetup(videos,{indexed:false});
+ const snapshot=await store.get('settings/reels_v2_taxonomy'),categories=Array.from({length:10},(_,i)=>({id:'category_'+i+'x'.repeat(90),name:'Categoria '+i,parentId:null}));
+ await store.patch('settings/reels_v2_taxonomy',{nodes:categories},{updateTime:snapshot.updateTime});
+ const patch=store.patch;store.patch=async(p,d,o)=>{if(p==='settings/reels_v2_taxonomy')assert.ok(Buffer.byteLength(JSON.stringify(d))<1048576);return patch(p,d,o);};
+ const input={action:'reclassify',idempotencyKey:'bulk-classification-3005',revision:0,reelIds:videos.map(v=>v.id),categoryIds:categories.map(n=>n.id)},preview=await taxonomy.mutate({...input,preview:true});
+ await taxonomy.mutate({...input,confirmed:true,previewToken:preview.previewToken});
+ const state=(await store.get('settings/reels_v2_taxonomy')).data;assert.deepEqual(state.assignments,[]);assert.deepEqual(state.appliedCommands,[]);assert.equal([...store.docs.values()].filter(r=>r.data.kind==='taxonomy_manual_assignment').length,3005);
+ assert.deepEqual((await store.get('videos/Bulk_03004')).data.categoryIds,categories.map(n=>n.id));
+});
+test('merge during discovery recovers pending targets and cannot publish a removed category',async()=>{
+ const {store,taxonomy}=await discoverySetup(Array.from({length:3},(_,i)=>supportedRecipe('MergeRace_'+i)));
+ const patch=store.patch;let merged=false;store.patch=async(p,d,o)=>{const saved=await patch(p,d,o);if(p==='settings/reels_v2_taxonomy'&&d.discovery&&!merged){merged=true;const child=d.nodes.find(n=>n.parentId==='recipes');
+  const input={action:'merge',idempotencyKey:'merge-concurrent-child',revision:d.revision,id:child.id,targetId:'other'},preview=await taxonomy.mutate({...input,preview:true});await taxonomy.mutate({...input,confirmed:true,previewToken:preview.previewToken});}return saved;};
+ await taxonomy.discover({automatic:true,sourceReelId:'MergeRace_0',sourceExecutionId:hash('merge-concurrent-publication')});
+ const state=(await store.get('settings/reels_v2_taxonomy')).data,ids=new Set(state.nodes.map(n=>n.id));
+ for(let i=0;i<3;i++){const video=(await store.get('videos/MergeRace_'+i)).data;assert.ok(video.categoryIds.every(id=>ids.has(id)));assert.ok(video.categoryIds.includes('other'));assert.equal(video.taxonomy_override.manual,true);}
+});
+test('a transient unrelated taxonomy lock keeps the automatic outbox pending for retry',async()=>{
+ const {store,taxonomy}=await discoverySetup([supportedRecipe('Locked_01')]),operationId=hash('pending-assignment');
+ const snapshot=await store.get('settings/reels_v2_taxonomy');await store.patch('settings/reels_v2_taxonomy',{pendingOperationId:'another-operation'},{updateTime:snapshot.updateTime});
+ const assignment={operationId,reelId:'Locked_01',categoryIds:['recipes'],manual:false,revision:1,analysisKey:'saved',analysisGeneration:'1'};
+ const indexed=await store.get('reels_index/taxonomy_Locked_01');await store.patch('reels_index/taxonomy_Locked_01',{assignment},{updateTime:indexed.updateTime});
+ await assert.rejects(()=>taxonomy.applyDiscoveredAssignments([assignment]),e=>e.code==='TAXONOMY_BUSY'&&e.status===503);
+ assert.equal((await store.get('reels_index/taxonomy_Locked_01')).data.assignment.operationId,operationId);
 });
 

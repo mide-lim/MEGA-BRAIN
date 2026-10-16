@@ -40,6 +40,20 @@ test('post-publication recurrence callback resumes saved result without another 
  assert.equal((await x.pipeline.run({executionId:x.id})).status,'applying');assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal(calls,1);assert.equal(checks,2);
 });
 
+test('valid complement replaces automatic category baseline while preserving explicit manual choices',async()=>{
+ for(const manual of [false,true]){
+  const x=await setup('analysis',{analyze:async()=>({valid:true,changes:{analysis:{summary:'New subject',categories:['technology']},analysis_key:'new',analysis_generation:'2',analysis_quality_status:'accepted'}})});
+  const v=await x.store.get('videos/Reel_001');await x.store.patch('videos/Reel_001',{...pub(),categoryIds:['food','auto_recipe_list'],taxonomy_override:{manual,revision:1}},{updateTime:v.updateTime});
+  await x.pipeline.run({executionId:x.id});assert.deepEqual((await x.store.get('videos/Reel_001')).data.categoryIds,manual?['food','auto_recipe_list']:['technology']);
+ }
+});
+
+test('replay after post-publication category assignment does not erase the already derived child',async()=>{
+ let derived=false;const x=await setup('analysis',{analyze:async()=>({valid:true,changes:{analysis:{categories:['food']},analysis_key:'new',analysis_generation:'2',analysis_quality_status:'accepted'}})},{onPublished:async()=>{if(derived)return;derived=true;const v=await x.store.get('videos/Reel_001');await x.store.patch('videos/Reel_001',{categoryIds:['food','auto_recipe_single']},{updateTime:v.updateTime});}});
+ const emit=x.pipeline.emit.bind(x.pipeline);let lost=true;x.pipeline.emit=async(...args)=>{if(args[1]==='stage_completed'&&lost){lost=false;throw Error('event unavailable after discovery');}return emit(...args);};
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'applying');assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.deepEqual((await x.store.get('videos/Reel_001')).data.categoryIds,['food','auto_recipe_single']);
+});
+
 
 test('transient collection creates a fresh poll outbox while retaining the paid operation',async()=>{
  let submits=0,polls=0;const x=await setup('transcription',{transcribe:async()=>{submits++;return {pending:true,operationName:'speech/preserved'};},pollTranscription:async()=>{polls++;if(polls===1)throw Error('network');return {changes:{transcript:'recovered'}};}});

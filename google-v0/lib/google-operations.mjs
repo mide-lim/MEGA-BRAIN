@@ -1,4 +1,7 @@
 import {measureGeminiUsage,measureSpeechUsage} from './usage-costs.mjs';
+import {sha256} from './storage.mjs';
+import {executionId as stageExecutionId} from './worker-flow.mjs';
+import {preparedAudioFields,validatePreparedAudio} from './audio-artifact.mjs';
 import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
@@ -24,6 +27,40 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
     // Caption/metadata belong to acquisition. Legacy absence is explicit; an
     // analysis must not start a fresh Instagram extraction outside that limit.
     return {caption_status:'unavailable'};
+  }
+
+  const audioKeyFor=videoId=>`results/instagram/${videoId}/${stageExecutionId(videoId,'transcription')}/audio.flac`;
+  function audioReference(video,key,object,audio){
+    const reference={audio_key:key,audio_generation:object.generation,audio_bytes:audio.length,audio_sha256:sha256(audio),audio_source_key:video.video_key,audio_source_generation:video.video_generation};
+    if(object.size!==audio.length||object.sha256!==reference.audio_sha256)throw Error('Áudio persistido não passou na verificação.');
+    validatePreparedAudio({...video,...reference},key);
+    return reference;
+  }
+  async function prepareAudio(video,bytes){
+    const key=audioKeyFor(video.id);
+    // An orphan cannot establish lineage; never overwrite or infer its source.
+    if(await storage.metadata(key))throw Error('Áudio existente sem referência exige conferência.');
+    const audio=await at('extract_audio',()=>tools.extractAudio(bytes));
+    const object=await at('persist_audio',()=>storage.writeImmutable(key,audio,{contentType:'audio/flac',uploadsEnabled:true}));
+    return {audio,reference:audioReference(video,key,object,audio)};
+  }
+  async function transcriptionAudio(video,recordPreparedAudio){
+    const key=audioKeyFor(video.id);
+    if(validatePreparedAudio(video,key)){
+      const source=await at('read_media',()=>storage.metadata(video.video_key));
+      if(!source||source.generation!==video.video_generation)throw Error('Geração da mídia de origem diverge do áudio preparado.');
+      const object=await at('read_media',()=>storage.metadata(key));
+      if(!object||object.generation!==video.audio_generation||Number(object.size)!==video.audio_bytes||object.metadata?.sha256!==video.audio_sha256)throw Error('Objeto de áudio diverge da referência preservada.');
+      const audio=await at('read_media',()=>storage.read(key,{generation:video.audio_generation}));
+      if(audio.length!==video.audio_bytes||sha256(audio)!==video.audio_sha256)throw Error('Checksum do áudio preparado diverge.');
+      return {audio,reference:Object.fromEntries(preparedAudioFields.map(field=>[field,video[field]]))};
+    }
+    const bytes=await at('read_media',()=>storage.read(video.video_key,{generation:video.video_generation}));
+    const prepared=await prepareAudio(video,bytes);
+    // The worker persists lineage before a paid request; standalone adapters
+    // still preserve the immutable object and refuse an unreferenced replay.
+    if(recordPreparedAudio)await recordPreparedAudio(prepared.reference);
+    return prepared;
   }
 
   function speechSettings(){
@@ -61,15 +98,15 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
       if(media.audio_status!=='present')throw Object.assign(new Error('Áudio ausente ou silencioso; transcrição não iniciada.'),{operation_step:'inspect_download'});
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
-      return result(video.id,'upload',{video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
+      const audioPrepared=config.worker_stage==='upload'?await prepareAudio({...video,video_key:key,video_generation:object.generation},bytes):null;
+      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
     },
-    async transcription({video,executionId}){
+    async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();
       const key=`originals/instagram/${video.id}/video.mp4`;
       if(video.video_key!==key||!/^\d+$/.test(video.video_generation??'')||video.media_verified!==true||video.audio_status!=='present')throw new Error('Mídia verificada obrigatória.');
-      const bytes=await at('read_media',()=>storage.read(key,{generation:video.video_generation})),audio=await at('extract_audio',()=>tools.extractAudio(bytes));
-      const audioKey=`results/instagram/${video.id}/${executionId}/audio.flac`;
-      await at('persist_audio',()=>storage.writeImmutable(audioKey,audio,{contentType:'audio/flac',uploadsEnabled:true}));
+      if(executionId!==stageExecutionId(video.id,'transcription'))throw Error('Execução STT fora do caminho imutável.');
+      const {audio,reference}=await transcriptionAudio(video,recordPreparedAudio),audioKey=reference.audio_key;
       // Chirp 3 supports synchronous Recognize for audio below one minute.
       // Select before submission; never fall back by repeating a paid request.
       if(config.synchronous_short_audio===true&&config.speech_model==='chirp_3'&&Number.isFinite(video.duration_seconds)&&video.duration_seconds>0&&video.duration_seconds<=55&&audio.length<=7000000){
@@ -77,7 +114,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
         const text=(response.results??[]).map(r=>r.alternatives?.[0]?.transcript??'').join('\n').trim();
         const key=`results/instagram/${video.id}/${executionId}/transcription.json`;
         const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'})});
-        return result(video.id,'transcription',{transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
+        return result(video.id,'transcription',{...reference,transcript:text,transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'));
       }
       const operation=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:batchRecognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},files:[{uri:`gs://${storage.bucket}/${audioKey}`}],recognitionOutputConfig:{inlineResponseConfig:{}}},timeoutMs:120000});
       if(!operation?.name)throw new Error('STT não confirmou identificador.');

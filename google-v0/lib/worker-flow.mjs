@@ -1,3 +1,5 @@
+import {validatePreparedAudio,preparedAudioFields as audioFields} from './audio-artifact.mjs';
+import {workerReservationGate} from './worker-reservation-gate.mjs';
 import {assertAssistedScope} from './assisted-scope.mjs';
 import {settledRetryId,settledRetryAllowed,settledRetryAuthorizationPath} from './smart-retry.mjs';
 import {metadataRecoveryAllowed,recoveryAuthorizationPath,uploadRecoveryId} from './firestore-recovery.mjs';
@@ -134,7 +136,14 @@ export class WorkerFlow {
       }
       await save({status:'started'});
       if(limitedUpload)adapterCalls++;
-      const result=await operation({...(limitedUpload?{recordAcquisitionExtraction:()=>{if(extractions)throw Error('Extração duplicada bloqueada.');extractions++;extractionEndUnconfirmed=true;return ()=>{extractionEndUnconfirmed=false;};}}:{}),video:{...video.data,id:videoId},executionId:id,...(stage==='analysis'?{analysisAttempts,recordAnalysisAttempts:async history=>{if(history.at(-1)?.status==='started'){const controls=(await this.store.get('settings/automation'))?.data;if(!controls?.enabled||!controls.analysis_enabled)throw Error('Análise pausada durante espera.');}await save({analysis_attempts:history});}}:{})});
+      const recordPreparedAudio=async changes=>{
+        if(!changes||typeof changes!=='object'||Array.isArray(changes)||Object.keys(changes).length!==audioFields.length||Object.keys(changes).some(key=>!audioFields.includes(key)))throw Error('Referência de áudio fora do schema.');
+        const current=await this.store.get(`videos/${videoId}`),key=`results/instagram/${videoId}/${executionId(videoId,'transcription')}/audio.flac`;
+        validatePreparedAudio({...current.data,id:videoId,...changes},key);
+        if(validatePreparedAudio({...current.data,id:videoId},key)&&audioFields.some(key=>current.data[key]!==changes[key]))throw Error('Áudio preparado não pode ser substituído.');
+        await this.store.patch(`videos/${videoId}`,changes,{updateTime:current.updateTime});
+      };
+      const result=await operation({...(stage==='transcription'?{recordPreparedAudio}:{}),...(limitedUpload?{recordAcquisitionExtraction:()=>{if(extractions)throw Error('Extração duplicada bloqueada.');extractions++;extractionEndUnconfirmed=true;return ()=>{extractionEndUnconfirmed=false;};}}:{}),video:{...video.data,id:videoId},executionId:id,...(stage==='analysis'?{analysisAttempts,recordAnalysisAttempts:async history=>{if(history.at(-1)?.status==='started'){const controls=(await this.store.get('settings/automation'))?.data;if(!controls?.enabled||!controls.analysis_enabled)throw Error('Análise pausada durante espera.');}await save({analysis_attempts:history});}}:{})});
       if(!ownsResult(result,videoId,stage))throw new Error('Resultado não pertence à tarefa.');
       if(result.operation_name){
         if(stage!=='transcription'||typeof result.operation_name!=='string'||!/^projects\/(?:megabrain-v0-1017370021431|711042421394)\/locations\/[a-z0-9-]+\/operations\/[A-Za-z0-9_-]+$/.test(result.operation_name))throw new Error('Operação assíncrona inválida.');
@@ -213,8 +222,17 @@ export class WorkerFlow {
     if(!validId(videoId))throw new Error('Vídeo inválido.');
     if(this.eligibleVideos&&!this.eligibleVideos.has(videoId))return {status:'blocked',reason:'outside_pilot'};
     if(this.batchId){const batch=validateBatch((await this.store.get('settings/financial'))?.data?.batch);if(batch.id!==this.batchId||batch.status!=='active'||!batch.video_ids.includes(videoId))return {status:'blocked',reason:'outside_active_batch'};}
+    // Pausing transcription stops new submissions; global automation still stops collection.
+    if((await this.store.get('settings/automation'))?.data?.enabled!==true)return {status:'paused'};
     const stage='transcription',id=executionId(videoId,stage),path=`jobs/${id}`,snapshot=await this.store.get(path);
     if(snapshot?.data.status!=='waiting')return {status:snapshot?.data.status??'absent'};
+    if(snapshot.data.video_id!==videoId||snapshot.data.stage!==stage||typeof snapshot.data.operation_name!=='string'||!/^projects\/(?:megabrain-v0-1017370021431|711042421394)\/locations\/[a-z0-9-]+\/operations\/[A-Za-z0-9_-]+$/.test(snapshot.data.operation_name))return {status:'blocked',reason:'operation_ownership_mismatch'};
+    // Preflight existing finance/ownership before acquiring the poll claim.
+    // A pause or expired reference must not turn a known operation uncertain.
+    try{
+      const reservation=await workerReservationGate(this.store,{clock:this.clock})({executionId:id,stage,videoId});
+      if(reservation.maximum_cents!==this.quotes[stage])throw Error('Estimativa divergente.');
+    }catch{return {status:'blocked',reason:'collection_reservation_not_ready'};}
     if(typeof this.operations.pollTranscription!=='function')throw new Error('Consulta STT indisponível.');
     // Claim this poll using the document version. Duplicate poll deliveries fail
     // before the adapter. Crashes remain visible for manual reconciliation.
@@ -234,7 +252,7 @@ export class WorkerFlow {
   }
   async finish({path,id,videoId,stage,result,maximumCents,reconcile=false}){
     if(!Number.isSafeInteger(result.actual_cents)||result.actual_cents<0||result.actual_cents>maximumCents)throw new Error('Custo precisa de reconciliação.');
-    const allowed=stage==='upload'?['video_key','video_generation','video_bytes','media_verified','audio_status','duration_seconds','source_caption','caption_status']:stage==='transcription'?['transcript','transcript_status','transcript_key','transcript_generation']:['analysis','analysis_key','analysis_generation','source_caption','caption_status','analysis_quality_status','analysis_review_reasons','analysis_candidate','candidate_analysis_key','candidate_analysis_generation'];
+    const allowed=stage==='upload'?['video_key','video_generation','video_bytes','media_verified','audio_status','duration_seconds','source_caption','caption_status',...audioFields]:stage==='transcription'?['transcript','transcript_status','transcript_key','transcript_generation',...audioFields]:['analysis','analysis_key','analysis_generation','source_caption','caption_status','analysis_quality_status','analysis_review_reasons','analysis_candidate','candidate_analysis_key','candidate_analysis_generation'];
     const changes=result.changes;
     if(!changes||typeof changes!=='object'||Array.isArray(changes)||!Object.keys(changes).length||Object.keys(changes).some(key=>!allowed.includes(key)))throw new Error('Persistência fora do schema da etapa.');
     if(stage==='upload'&&(changes.media_verified!==true||changes.audio_status!=='present'))throw new Error('Mídia precisa de diagnóstico.');
@@ -247,6 +265,11 @@ export class WorkerFlow {
     if(changes.analysis_review_reasons!==undefined&&(!Array.isArray(changes.analysis_review_reasons)||changes.analysis_review_reasons.some(r=>!['incomplete_response','invalid_json','invalid_categories','invalid_report','missing_knowledge','unsupported_revision'].includes(r))))throw new Error('Motivo de revisão inválido.');
     if(stage==='analysis'&&!reviewRequired&&(!changes.analysis||typeof changes.analysis!=='object'))throw new Error('Análise ausente.');
     const video=await this.store.get(`videos/${videoId}`);
+    if(stage==='upload'||stage==='transcription'){
+      const audioVideo={...video.data,...changes,id:videoId};
+      if(validatePreparedAudio({...video.data,id:videoId},'results/instagram/'+videoId+'/'+executionId(videoId,'transcription')+'/audio.flac')&&audioFields.some(key=>changes[key]!==undefined&&changes[key]!==video.data[key]))throw Error('Áudio preparado não pode ser substituído.');
+      validatePreparedAudio(audioVideo,`results/instagram/${videoId}/${executionId(videoId,'transcription')}/audio.flac`);
+    }
     if(reviewRequired&&(JSON.stringify(changes.analysis??null)!==JSON.stringify(video.data.analysis??null)||(changes.analysis_key??null)!==(video.data.analysis_key??null)||(changes.analysis_generation??null)!==(video.data.analysis_generation??null)))throw new Error('Revisão pendente não pode substituir análise publicada.');
     await this.store.patch(`videos/${videoId}`,{...changes,status:stage==='upload'?'downloaded':stage==='transcription'?'transcribed':changes.analysis_quality_status==='review_required'?'needs_attention':'analyzed',error:changes.analysis_quality_status==='review_required'?'Resposta recebida com problemas de qualidade; confira o candidato preservado. A análise publicada não foi substituída.':null,updated_at:new Date(this.clock()).toISOString(),...(stage==='upload'?{has_audio:true,instagram_review_status:null,instagram_error_case:null,retry_status:'completed'}:{})},{updateTime:video.updateTime});
     // Persist result before settling. A later failure holds the reservation and

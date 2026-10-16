@@ -11,7 +11,7 @@ export class WorkerRecovery{
   if(plan.financial_paused||!controls?.enabled)return {status:'paused'};
   if(!['ready_for_dispatch','operation_pending'].includes(plan.status))return {status:plan.status};
   const action=plan.actions[0],task=action.kind==='dispatch_stage'?action.task:{videoId,stage:'transcription',poll:1};
-  if(task.stage==='transcription'&&!controls.transcription_enabled||task.stage==='analysis'&&!controls.analysis_enabled)return {status:'paused'};
+  if(task.stage==='transcription'&&task.poll===0&&!controls.transcription_enabled||task.stage==='analysis'&&!controls.analysis_enabled)return {status:'paused'};
   // A new dispatch identifier never changes the paid execution identifier.
   // WorkerFlow still refuses replay of any claimed/started/completed stage.
   return this.queue.enqueue({...task,recoveryId});

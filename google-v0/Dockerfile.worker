@@ -12,6 +12,7 @@ COPY --chown=node:node scripts/serve-worker.mjs /app/scripts/serve-worker.mjs
 COPY --chown=node:node lib/stage-contract.mjs lib/stage-upload.mjs lib/stage-transcription.mjs lib/stage-analysis.mjs /app/lib/
 COPY --chown=node:node scripts/serve-stage-worker.mjs scripts/smoke-stage-workers.mjs /app/scripts/
 COPY --chown=node:node config/stage-workers.example.json /app/config/stage-workers.example.json
+COPY --chown=node:node lib/audio-artifact.mjs /app/lib/audio-artifact.mjs
 COPY --chown=node:node lib/ongoing-costs.mjs /app/lib/ongoing-costs.mjs
 COPY --chown=node:node lib/knowledge.mjs /app/lib/knowledge.mjs
 COPY --chown=node:node lib/category-taxonomy.mjs /app/lib/category-taxonomy.mjs

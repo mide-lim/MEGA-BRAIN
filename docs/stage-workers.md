@@ -24,6 +24,24 @@ A outbox conserva os IDs atuais. Entrega duplicada reutiliza trabalho concluído
 
 Uma outbox antiga com o mesmo ID e outra fila retorna `requires_queue_migration`, sem reescrever a prova nem reenfileirar. Esse bloqueio exige conferência na migração; não apagar claims, trocar IDs ou reenviar registros para contorná-lo. Uma falha de entrega depois da persistência conserva a conclusão para retomada segura.
 
+## Áudio preparado e reutilizado
+
+Nos novos workers, a aquisição prepara o FLAC a partir do MP4 local e grava o objeto imutável antes de entregar à transcrição. A referência conserva caminho, geração, bytes, checksum e caminho/geração do MP4 de origem. A transcrição verifica essa ligação e lê somente a geração de áudio registrada; não baixa novamente o MP4 nem converte outra vez.
+
+Para manter os nomes de operação já existentes, o áudio usa o mesmo caminho canônico que o adaptador STT já utilizava. Um legado sem referência pode preparar e registrar o áudio antes da submissão; referências parciais, fonte divergente ou objeto órfão exigem conferência, sem sobrescrita ou chamada STT. Uma falha depois de submeter ao provedor continua incerta; preparar/reutilizar áudio não autoriza reenviar trabalho pago.
+
+O caminho assistido legado continua limitado ao MP4. Esta mudança não amplia seu escopo, não migra artefatos antigos nem libera reservas.
+
+## Pausar novas transcrições e coletar resultados
+
+Usar o controle existente `settings/automation.transcription_enabled=false` para pausar novas submissões. Com a automação global habilitada, a coleta consulta o nome de operação já persistido e conserva a reserva existente; não inicia outra transcrição. Não é necessário adicionar outro botão ou uma nova configuração neste PR.
+
+`settings/automation.enabled=false`, o serviço desabilitado e os bloqueios financeiros/de lote/de escopo continuam sendo paradas gerais. Um bloqueio detectado antes de consultar não transforma uma operação aguardando resultado em falha incerta. Pausar a fila inteira também pausa a coleta; para colher operações, manter sua entrega disponível e usar o controle de novas submissões.
+
+Uma tarefa de submissão recebida durante a pausa não inicia STT nem reserva dinheiro. A inspeção e a retomada explícita existentes em WorkerRecovery permitem retomar esse trabalho após a despausa com nova intenção de entrega, mantendo o mesmo ID de execução paga. A retomada de uma consulta conhecida também funciona durante a pausa de novas submissões. Nenhuma dessas retomadas é acionada automaticamente por este PR.
+
+A retomada segue os registros e os controles existentes. Não apagar outboxes/claims nem reenfileirar chamadas incertas para contornar uma pausa. As validações aqui são locais e não ativam nenhum controle de produção.
+
 ## Configuração e ativação posterior
 
 O exemplo [stage-workers.example.json](../google-v0/config/stage-workers.example.json) é descritivo: nomes de origem são exemplos, a imagem precisa ser construída, as três filas estão pausadas e os serviços têm entradas fechadas. Os overrides precisam ser combinados com a configuração privada revisada existente; o arquivo não é uma configuração completa de execução.

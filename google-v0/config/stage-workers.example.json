@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "example_only": true,
+  "resources_applied": false,
+  "shared_image": "megabrain-stage-worker:local-build-required",
+  "config_source_environment": "MEGABRAIN_V0_WORKER_CONFIG",
+  "stage_routes": {
+    "upload": {
+      "queue": "v0-acquisition",
+      "workerOrigin": "https://megabrain-v0-acquisition.example.run.app"
+    },
+    "transcription": {
+      "queue": "v0-transcription",
+      "workerOrigin": "https://megabrain-v0-transcription.example.run.app"
+    },
+    "analysis": {
+      "queue": "v0-analysis",
+      "workerOrigin": "https://megabrain-v0-analysis.example.run.app"
+    }
+  },
+  "queues": [
+    {
+      "name": "v0-acquisition",
+      "paused": true,
+      "max_concurrent_dispatches": 1,
+      "max_attempts": 1
+    },
+    {
+      "name": "v0-transcription",
+      "paused": true,
+      "max_concurrent_dispatches": 1,
+      "max_attempts": 1
+    },
+    {
+      "name": "v0-analysis",
+      "paused": true,
+      "max_concurrent_dispatches": 1,
+      "max_attempts": 1
+    }
+  ],
+  "services": [
+    {
+      "name": "megabrain-v0-acquisition",
+      "image": "megabrain-stage-worker:local-build-required",
+      "command": [
+        "node",
+        "/app/scripts/serve-stage-worker.mjs",
+        "upload"
+      ],
+      "cpu": 1,
+      "memory": "512Mi",
+      "max_instances": 1,
+      "concurrency": 1,
+      "config_overrides": {
+        "worker_stage": "upload",
+        "worker_origin": "https://megabrain-v0-acquisition.example.run.app",
+        "enabled": false,
+        "dispatch_enabled": false,
+        "admission_enabled": false,
+        "assisted_upload_enabled": false,
+        "assisted_single_upload_enabled": false
+      }
+    },
+    {
+      "name": "megabrain-v0-transcription",
+      "image": "megabrain-stage-worker:local-build-required",
+      "command": [
+        "node",
+        "/app/scripts/serve-stage-worker.mjs",
+        "transcription"
+      ],
+      "cpu": 1,
+      "memory": "512Mi",
+      "max_instances": 1,
+      "concurrency": 1,
+      "config_overrides": {
+        "worker_stage": "transcription",
+        "worker_origin": "https://megabrain-v0-transcription.example.run.app",
+        "enabled": false,
+        "dispatch_enabled": false,
+        "admission_enabled": false,
+        "assisted_upload_enabled": false,
+        "assisted_single_upload_enabled": false
+      }
+    },
+    {
+      "name": "megabrain-v0-analysis",
+      "image": "megabrain-stage-worker:local-build-required",
+      "command": [
+        "node",
+        "/app/scripts/serve-stage-worker.mjs",
+        "analysis"
+      ],
+      "cpu": 1,
+      "memory": "512Mi",
+      "max_instances": 1,
+      "concurrency": 1,
+      "config_overrides": {
+        "worker_stage": "analysis",
+        "worker_origin": "https://megabrain-v0-analysis.example.run.app",
+        "enabled": false,
+        "dispatch_enabled": false,
+        "admission_enabled": false,
+        "assisted_upload_enabled": false,
+        "assisted_single_upload_enabled": false
+      }
+    }
+  ],
+  "requires_build": true
+}

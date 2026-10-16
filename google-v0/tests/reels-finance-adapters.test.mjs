@@ -24,7 +24,8 @@ test('v2 synchronous STT returns the exact persisted USD usage, keeping BRL quot
 test('v2 batch STT measures once on collection; submission is not measured or invoiced',async()=>{
  const pending=fixture({name:`projects/${project}/locations/us/operations/saved`},{synchronous:false});
  const submitted=await pending.operations.transcription({video,executionId});assert.equal(submitted.finance,undefined);assert.equal(pending.calls(),1);
- const response={results:{[audioUri]:{metadata:{totalBilledDuration:'60s'},inlineResult:{transcript:{results:[{alternatives:[{transcript:'Fonte preservada.'}]}]}}}},f=fixture({done:true,response});
+ const response={results:{[audioUri]:{metadata:{totalBilledDuration:'60s'},inlineResult:{transcript:{results:[{alternatives:[{transcript:'Fonte preservada.'}]}]}}}}};
+ const f=fixture({done:true,response});
  const result=await f.operations.pollTranscription({operationName:submitted.operation_name,videoId:id,executionId});
  assert.equal(f.calls(),1);assert.equal(result.finance.measuredUsd,0.016);assert.deepEqual(result.finance.measurement,f.artifacts[0].usage_cost);
  assert.equal(result.finance.measurement.source,'response.results[file].metadata.totalBilledDuration');

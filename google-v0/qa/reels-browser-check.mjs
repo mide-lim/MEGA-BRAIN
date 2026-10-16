@@ -145,7 +145,7 @@ try {
   assert.equal((await context.request.post(server.origin+'/api/reels/register',{headers:{Origin:'https://not-allowed.invalid'},data:{links:'https://www.instagram.com/reel/QaNever_001/'}})).status(),403);
   assert.equal(await server.store.get('videos/QaNever_001'),null);assert.equal([...server.store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,1);
   assert.ok(server.calls.filter(x=>x.path==='/api/reels/commands'&&['start','retry','complement'].includes(x.body?.type)).every(x=>x.status===423));assert.ok(server.store.reads.filter(x=>x.collection==='videos').every(x=>Array.isArray(x.select)&&!x.select.includes('transcript')&&!x.select.includes('analysis')));
-  assert.deepEqual(server.externalAttempts,[]);assert.deepEqual(failures,[]);
+  assert.deepEqual(server.calls.filter(x=>x.path==='/api/reels/items'&&x.status===400),[],'Filter changes must never send a cursor from a different query.');assert.deepEqual(server.externalAttempts,[]);assert.deepEqual(failures,[]);
  });
  const report={passed:true,checks,mode:'synthetic_database_real_workspace_and_reels_API',external_calls:0,providers_called:0,reels_processed:0,production_data_modified:false,credentials_loaded:false,http_calls:server.calls.length,limitations:['QA session is injected; Google login, Next production routing and real Google storage are not validated by this harness.','Synthetic fixture media validates browser decoding only.','Compilation, broad service tests and independent review remain separate gates.']};
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "c7169d7c23f8a986a40f3ee55447092d32dc1132",
+  "objective": "Unit-only operator utility for administrative reconciliation of the exact retired revision47 acquisition slot. Default dry run, explicit plan hash/authorization for atomic audit+active removal. Implement/tests/PR only; never apply, access live Google, release money, run media or deploy. No changes to worker, financial policies, allowlists or retry.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Hardcoded exact job/attempt/video/revision UID, trusted bounded Cloud Run and unit record correlation, all gates closed.",
+    "Dry run makes zero writes. Atomic transaction creates immutable audit and removes only exact active key; money/claim/approval/ExecutionStops unchanged.",
+    "Reject drift, wrong proof, ambiguity, inconsistent/missing audit; fail closed on unknown commit and recover read-only with no replay. Tests offline, independent review, CI.",
+    "Consume original path-bound plan durably before transaction; lost receipt or submitted marker never enables replay. Explicit inspect mode cannot start transaction/commit."
+  ],
+  "allowed_paths": [
+    "ops/reconcile-retired-acquisition.py",
+    "ops/test_reconcile_retired_acquisition.py",
+    "docs/assisted-upload.md",
+    "tasks/MEG-109-retired-capacity.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/execution-stops.mjs",
+      "reason": "Never fabricate worker stop evidence",
+      "sections": [
+        "matches and verify"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/acquisition-control.mjs",
+      "reason": "Exact active key and proof policy preserved",
+      "sections": [
+        "entry schema and release"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "Existing encoding and CAS/commit conventions",
+      "sections": [
+        "encoding and patch"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "docs/assisted-upload.md",
+      "reason": "External proof bridge limited scope",
+      "sections": [
+        "executor closure and assisted scope"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "ops/test_deploy_existing_services.py",
+      "reason": "Offline Python unittest style",
+      "sections": [
+        "fixtures"
+      ],
+      "max_chars": 1000
+    }
+  ],
+  "validation_commands": [
+    "python3 -m unittest discover -s ops -p test_*.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "git diff --check"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent reviewer requested P2 correction on initial head. Same authorized implementation session corrected local plan consumption/recovery; no extra model worker or scope. Final independent recheck and human review remain required before merge/application."
+  }
+}

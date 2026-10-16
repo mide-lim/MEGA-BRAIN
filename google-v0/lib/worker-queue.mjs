@@ -18,7 +18,7 @@ const routesFor=routes=>{
   return Object.freeze(result);
 };
 export function validateTask(task){
-  if(!task||(task.recoverSettled!==undefined&&(task.recoverSettled!==true||!['upload','analysis'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429||task.recoverFirestoreWrite))||(task.recoverFirestoreWrite!==undefined&&(task.recoverFirestoreWrite!==true||!['upload','transcription'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429))||(task.recoverUpload!==undefined&&(task.recoverUpload!==true||task.stage!=='upload'||task.poll!==0||!task.recoveryId||task.recoverAnalysis429))||(task.recoverAnalysis429!==undefined&&(task.recoverAnalysis429!==true||task.stage!=='analysis'||task.poll!==0||!task.recoveryId))||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId','recoverAnalysis429','recoverUpload','recoverFirestoreWrite','recoverSettled'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
+  if(!task||(task.unitRequestId!==undefined&&(typeof task.unitRequestId!=='string'||!/^[A-Za-z0-9_-]{16,64}$/.test(task.unitRequestId)||['recoveryId','recoverSettled','recoverUpload','recoverAnalysis429','recoverFirestoreWrite'].some(k=>task[k]!==undefined)))||(task.recoverSettled!==undefined&&(task.recoverSettled!==true||!['upload','analysis'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429||task.recoverFirestoreWrite))||(task.recoverFirestoreWrite!==undefined&&(task.recoverFirestoreWrite!==true||!['upload','transcription'].includes(task.stage)||task.poll!==0||!task.recoveryId||task.recoverUpload||task.recoverAnalysis429))||(task.recoverUpload!==undefined&&(task.recoverUpload!==true||task.stage!=='upload'||task.poll!==0||!task.recoveryId||task.recoverAnalysis429))||(task.recoverAnalysis429!==undefined&&(task.recoverAnalysis429!==true||task.stage!=='analysis'||task.poll!==0||!task.recoveryId))||Object.keys(task).some(k=>!['videoId','stage','poll','recoveryId','recoverAnalysis429','recoverUpload','recoverFirestoreWrite','recoverSettled','unitRequestId'].includes(k))||(task.recoveryId!==undefined&&!/^[A-Za-z0-9_-]{16,64}$/.test(task.recoveryId))||!/^[A-Za-z0-9_-]{5,32}$/.test(task.videoId??'')||!['upload','transcription','analysis'].includes(task.stage)||!Number.isInteger(task.poll)||task.poll<0||task.poll>120||(task.poll>0&&task.stage!=='transcription'))throw new Error('Tarefa inválida.');
   return task;
 }
 export class WorkerQueue{
@@ -33,7 +33,7 @@ export class WorkerQueue{
     const route=this.stageRoutes?.[stage];
     return route?{parent:`projects/${project}/locations/us-central1/queues/${route.queue}`,workerOrigin:route.workerOrigin}:{parent:this.parent,workerOrigin:this.workerOrigin};
   }
-  dispatchPath(task){return `jobs/dispatch_${createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex')}`;}
+  dispatchPath(task){return `jobs/dispatch_${createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.unitRequestId?['unit_pipeline_v1',task.unitRequestId]:[]),...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex')}`;}
   async enqueueAdmission(task){
     if(!this.enabled)throw Error('Dispatch desativado.');
     if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(task.batchId??'')||!/^[A-Za-z0-9_-]{16,64}$/.test(task.runId??'')||!Number.isSafeInteger(task.tick)||task.tick<0||task.tick>10000)throw Error('Tick inválido.');
@@ -45,7 +45,7 @@ export class WorkerQueue{
   async enqueue(input){
     const task=validateTask(input);
     if(!this.enabled)return {status:'disabled'};
-    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex');
+    const id='dispatch_'+createHash('sha256').update(JSON.stringify([task.videoId,task.stage,task.poll,...(task.unitRequestId?['unit_pipeline_v1',task.unitRequestId]:[]),...(task.recoveryId?[task.recoveryId]:[]),...(task.recoverAnalysis429?[true]:[]),...(task.recoverUpload?['upload_recovery']:[]),...(task.recoverFirestoreWrite?['firestore_metadata_recovery']:[]),...(task.recoverSettled?['settled_retry_v1']:[])])).digest('hex');
     const {parent,workerOrigin}=this.destination(task.stage);
     const path=`jobs/${id}`,name=`${parent}/tasks/${id}`;
     // Outbox first. An unknown create response is reconciled manually against
@@ -66,7 +66,7 @@ export class WorkerQueue{
     }
   }
 }
-export function workerHandler({flow,queue,authorize,stage=null}){
+export function workerHandler({flow,queue,authorize,stage=null,unitFlow=null,requireUnitRequest=false}){
   if(stage!==null&&!Object.hasOwn(stageQueues,stage))throw new Error('Etapa do worker inválida.');
   if(typeof authorize!=='function')throw new Error('Autenticação do worker obrigatória.');
   return async request=>{
@@ -78,10 +78,13 @@ export function workerHandler({flow,queue,authorize,stage=null}){
     try{const text=await request.text();if(text.length>2048)throw new Error();task=validateTask(JSON.parse(text));}catch{return Response.json({error:'Tarefa inválida.'},{status:400});}
     if(stage!==null&&task.stage!==stage)return Response.json({status:'blocked',reason:'wrong_stage'},{status:409,headers:{'Cache-Control':'no-store'}});
     try{
-      const result=task.poll?await flow.poll({videoId:task.videoId}):await flow.run(task);
+      if((task.unitRequestId&&!unitFlow)||(requireUnitRequest&&!task.unitRequestId))return Response.json({status:'blocked',reason:'unit_authorization_required'},{status:409});
+      const currentFlow=task.unitRequestId?await unitFlow(task):flow;
+      const result=task.poll?await currentFlow.poll({videoId:task.videoId}):await currentFlow.run(task);
       let next=null;
       if(result.status==='waiting'&&task.stage==='transcription'&&task.poll<120)next={videoId:task.videoId,stage:'transcription',poll:task.poll+1};
       if(result.status==='completed'&&task.stage!=='analysis')next={videoId:task.videoId,stage:task.stage==='upload'?'transcription':'analysis',poll:0};
+      if(next&&task.unitRequestId)next.unitRequestId=task.unitRequestId;
       if(next&&task.recoveryId)next.recoveryId=task.recoveryId;
       const dispatch=next?await queue.enqueue(next):null;
       return Response.json({status:result.status,dispatch:dispatch?.status??null,...(dispatch?.reason?{dispatch_reason:dispatch.reason}:{}),poll_limit:result.status==='waiting'&&task.poll===120},{headers:{'Cache-Control':'no-store'}});

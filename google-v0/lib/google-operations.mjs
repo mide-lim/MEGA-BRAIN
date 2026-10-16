@@ -3,7 +3,7 @@ import {sha256} from './storage.mjs';
 import {executionId as stageExecutionId} from './worker-flow.mjs';
 import {preparedAudioFields,validatePreparedAudio} from './audio-artifact.mjs';
 import {analysisTimeoutMs} from './google-rest.mjs';
-import {submitAnalysisWithRetry} from './analysis-retry.mjs';
+import {submitAnalysisWithRetry,maximumAnalysisAttempts} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
 
@@ -103,6 +103,8 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
     },
     async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();
+      // Unit mode reserves room for the durable result before submitting STT.
+      if(config.single_reel_pipeline_enabled===true){if(typeof storage.reserveResult!=='function')throw Error('Reserva do resultado STT indisponível.');await storage.reserveResult(`results/instagram/${video.id}/${executionId}/transcription.json`,1048576);}
       const key=`originals/instagram/${video.id}/video.mp4`;
       if(video.video_key!==key||!/^\d+$/.test(video.video_generation??'')||video.media_verified!==true||video.audio_status!=='present')throw new Error('Mídia verificada obrigatória.');
       if(executionId!==stageExecutionId(video.id,'transcription'))throw Error('Execução STT fora do caminho imutável.');
@@ -152,7 +154,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
         if(remainingMs<1)throw Object.assign(new Error('Prazo total da análise esgotado.'),{name:'TimeoutError',google_diagnostic:{operation_step:'submit_analysis',elapsed_ms:timeoutMs,error_name:'TimeoutError',error_code:null,http_status:null,request_id:null,model:config.gemini_model,attempt:attempt+1,timeout_ms:timeoutMs}});
         return api.request(`https://aiplatform.googleapis.com/v1/projects/${api.project}/locations/global/publishers/google/models/${config.gemini_model}:generateContent`,{method:'POST',json:request,timeoutMs:remainingMs,operationStep:'submit_analysis',model:config.gemini_model,attempt:++attempt,onDiagnostic:diagnostic=>{callDiagnostics.push(diagnostic);}});
       });
-      const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts}):await submit();
+      const response=typeof recordAnalysisAttempts==='function'?await submitAnalysisWithRetry({submit,admit:()=>admitted(executionId,'analysis',video.id),record:recordAnalysisAttempts,attempts:analysisAttempts,maximumAttempts:config.single_reel_pipeline_enabled===true?1:maximumAnalysisAttempts}):await submit();
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:measureGeminiUsage(response,{model:config.gemini_model,location:'global'})}));

@@ -1,3 +1,4 @@
+import {pipelineFlow} from './assisted-pipeline.mjs';
 import {stageBoundFlow,stageConfig} from './stage-contract.mjs';
 import {assistedUploadHandler} from './assisted-upload.mjs';
 import {WorkerAdmission,admissionHandler} from './worker-admission.mjs';
@@ -25,6 +26,9 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
   if(config?.project!=='megabrain-v0-1017370021431'||config.cost_accounting!=='conservative_estimate_not_invoice')throw new Error('Configuração independente do worker obrigatória.');
   if(config.assisted_upload_enabled!==undefined&&typeof config.assisted_upload_enabled!=='boolean')throw Error('Modo assistido inválido.');
   const assisted=config.assisted_upload_enabled===true;
+  if(config.single_reel_pipeline_enabled!==undefined&&typeof config.single_reel_pipeline_enabled!=='boolean')throw Error('Modo unitário de três etapas inválido.');
+  const pipeline=config.single_reel_pipeline_enabled===true;
+  if(pipeline&&(stage===null||assisted||config.assisted_single_upload_enabled===true||config.admission_enabled!==false||config.pilot_video_ids?.length!==1||!config.batch_id||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(config.analysis_revision)||Object.keys(config.quotes??{}).sort().join(',')!=='analysis,transcription,upload'||Object.values(config.quotes).some(n=>!Number.isSafeInteger(n)||n<1)||config.quotes.upload>100||Object.values(config.quotes).reduce((a,b)=>a+b,0)>2000))throw Error('Configuração unitária de três etapas inválida.');
   if(config.assisted_single_upload_enabled!==undefined&&typeof config.assisted_single_upload_enabled!=='boolean')throw Error('Escopo unitário inválido.');
   const single=config.assisted_single_upload_enabled===true;
   if(single&&(!assisted||config.pilot_video_ids?.length!==1||!Number.isSafeInteger(config.quotes?.upload)||config.quotes.upload<1||config.quotes.upload>100))throw Error('Escopo unitário exige modo assistido, um vídeo e teto até100centavos.');
@@ -35,7 +39,7 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
   const tools=mediaTools({downloadEnabled:config.downloads_enabled===true});
   if(config.analysis_revision&&config.analysis_revision!==preset.version)throw new Error('Preset diverge da revisão autorizada.');
   const stops=new ExecutionStops({store,analysisRevision:config.analysis_revision??null});
-  const acquisition=new AcquisitionControl({store,maximumParallelism:assisted?1:4,verifyExecutionStopped:input=>stops.verify(input)});
+  const acquisition=new AcquisitionControl({store,maximumParallelism:assisted||pipeline?1:4,verifyExecutionStopped:input=>stops.verify(input)});
   const makeFlow=(assistedScope=null)=>{
     const capacity=new StorageCapacity(store,{assistedScope});
     const storage=new Storage(api,bucket,{admitObject:input=>capacity.admit(input),reserveObject:input=>capacity.reserveResult(input)});
@@ -49,7 +53,8 @@ export function workerRuntime(config,preset,{withHandler=false,stage=null}={}){
   if(!withHandler)return flow;
   const authorize=workerAuthorization({audience:config.worker_origin});
   if(stage!==null){
-    const processing=workerHandler({flow,queue,authorize,stage});
+    const unitFlow=pipeline?async task=>{if(config.enabled!==true)throw Error('Worker unitário desligado.');return stageBoundFlow(await pipelineFlow({store,task,stage,allowedVideoIds:config.pilot_video_ids,quotes:config.quotes,analysisRevision:config.analysis_revision,makeFlow,verifyExecutionStopped:input=>stops.verify(input)}),stage);}:null;
+    const processing=workerHandler({flow,queue,authorize,stage,unitFlow,requireUnitRequest:pipeline});
     const admission=stage==='upload'?admissionHandler({authorize,admission:new WorkerAdmission({store,queue,acquisition,batchId:config.batch_id,quotes:config.quotes,enabled:config.enabled&&config.admission_enabled})}):null;
     return request=>{
       const path=new URL(request.url).pathname;

@@ -27,3 +27,10 @@ test('pause during backoff and failed attempt persistence prevent the next submi
  await assert.rejects(()=>submitAnalysisWithRetry({submit:async()=>{calls++;throw rejected429();},admit:async()=>{if(++gates===2)throw Error('paused');},record:async()=>{},sleep:async()=>{}}));assert.equal(calls,1);
  await assert.rejects(()=>submitAnalysisWithRetry({submit:()=>assert.fail('unrecorded call'),admit:async()=>{},record:async()=>{throw Error('CAS failed');}}));
 });
+
+
+test('one-attempt unit analysis records HTTP429 without a retry or sleep',async()=>{
+ let calls=0,sleeps=0;const history=[];
+ await assert.rejects(submitAnalysisWithRetry({maximumAttempts:1,submit:async()=>{calls++;throw Object.assign(Error('rate limit'),{status:429});},admit:async()=>{},record:async h=>history.push(structuredClone(h)),sleep:async()=>{sleeps++;}}));
+ assert.equal(calls,1);assert.equal(sleeps,0);assert.equal(history.at(-1)[0].status,'http_429');
+});

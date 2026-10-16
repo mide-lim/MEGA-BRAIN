@@ -7,10 +7,10 @@ export function recoverableAnalysis429(job){
   return job?.stage==='analysis'&&job.status==='uncertain'&&confirmedAnalysis429(job.failure_diagnostic)&&
     (attempts===undefined||Array.isArray(attempts)&&attempts.length>0&&attempts.length<maximumAnalysisAttempts&&attempts.every((a,i)=>a.number===i+1&&a.status==='http_429'));
 }
-export async function submitAnalysisWithRetry({submit,admit,record,attempts=[],sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
-  if(!Array.isArray(attempts)||attempts.length>=maximumAnalysisAttempts||attempts.some((a,i)=>a.number!==i+1||a.status!=='http_429'))throw Error('Histórico não permite repetir análise.');
+export async function submitAnalysisWithRetry({submit,admit,record,attempts=[],maximumAttempts=maximumAnalysisAttempts,sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
+  if(!Number.isInteger(maximumAttempts)||maximumAttempts<1||maximumAttempts>maximumAnalysisAttempts||!Array.isArray(attempts)||attempts.length>=maximumAttempts||attempts.some((a,i)=>a.number!==i+1||a.status!=='http_429'))throw Error('Histórico não permite repetir análise.');
   const history=structuredClone(attempts);
-  for(let number=history.length+1;number<=maximumAnalysisAttempts;number++){
+  for(let number=history.length+1;number<=maximumAttempts;number++){
     if(number>1)await sleep(number===2?5000:15000);
     await admit();
     const attempt={number,status:'started'};history.push(attempt);await record(history);
@@ -20,7 +20,7 @@ export async function submitAnalysisWithRetry({submit,admit,record,attempts=[],s
       attempt.status=error.status===429?'http_429':'uncertain';
       if(error.provider_diagnostic)attempt.provider_diagnostic=error.provider_diagnostic;
       await record(history);
-      if(error.status!==429||number===maximumAnalysisAttempts)throw error;
+      if(error.status!==429||number===maximumAttempts)throw error;
       continue;
     }
     attempt.status='response_received';await record(history);

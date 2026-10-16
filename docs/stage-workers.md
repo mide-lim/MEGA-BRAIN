@@ -59,3 +59,55 @@ Antes do corte, as tarefas existentes MEG-94 e MEG-99 precisam confirmar o inven
 Os testes das etapas usam o fluxo e os controles financeiros reais com armazenamento/provedores simulados. Cobrem persistência antes do envio, operação STT reutilizada, duplicatas, falhas incertas, tarefa em etapa errada, outbox antiga e percurso completo. O smoke da imagem inicia os três entrypoints com configuração sintética fechada, sem credenciais e sem rede externa.
 
 A suíte anterior e o smoke do worker legado continuam no CI. Esses testes demonstram integração de código e compatibilidade; não comprovam disponibilidade de download no Instagram nem substituem validação autorizada no ambiente real. Não houve conciliação, liberação de reserva, aquisição, análise ou deploy por esta implementação.
+
+
+## Piloto unitário nas três etapas
+
+O modo opt-in `single_reel_pipeline_enabled:true` amplia a autorização unitária
+existente para as três filas. Continua desligado por padrão e só é aceito nos
+entrypoints de etapa, com uma allowlist de um ID, admissão desligada, revisão
+v3/v4 igual ao preset, quotes positivas das três etapas e concorrência persistida1.
+O upload tem teto máximo100centavos; a soma das três quotes não excede2000centavos.
+Esses são limites de código, não autorização de gasto nem tarifa do provedor.
+
+O operador prepara na coleção privada existente `jobs/assisted_upload_<requestId>`
+uma autorização `kind:assisted_pipeline`, schema1, status authorized, request_id,
+authorization_ref, authorized_at/expires_at (até1h), maximum_cents igual à soma de
+stage_maximum_cents:{upload,transcription,analysis}, analysis_revision e
+task:{videoId,stage:upload,poll:0}. Configuração e autorização precisam concordar
+exatamente. Nenhum endpoint emite essa aprovação, renova saldo ou libera reservas.
+
+Uma mensagem normal em `/tasks/run` acrescenta somente `unitRequestId`, referência
+dessa aprovação. O primeiro worker consome-a por CAS; cada sucessor e consulta
+recarrega a mesma aprovação e compõe dependências próprias da etapa. A referência
+é carregada pela outbox nas filas existentes, com IDs de transporte distintos;
+os IDs de execução paga continuam determinísticos por vídeo/etapa/revisão.
+Um cliente não fornece scope, orçamento, revisão, recuperação ou permissão.
+
+Só um Reel novo pode começar: histórico financeiro, claims, mídia ou resultado
+anteriores impedem a aquisição. A transcrição exige upload e lançamento financeiro
+completed da mesma aprovação e prova positiva de encerramento do executor. A análise
+exige transcrição e lançamento completed próprios. O lote262 e seus históricos
+permanecem intactos; os três lançamentos novos usam o mesmo ledger global,
+assisted_scope_ref, assisted_scope_kind pipeline_v1 e assisted_scope_total_cents,
+sem batch_id. Frescor, cobertura, reservas, teto global e capacidade continuam
+obrigatórios. Cada etapa só pode gravar seus caminhos imutáveis; aquisição também
+pode preparar o FLAC canônico da transcrição.
+
+A capacidade para transcription.json é reservada antes da submissão STT, inclusive
+no modo síncrono. Falta de espaço bloqueia antes de pagar. O mesmo nome de operação
+STT é persistido e consultado; pausa de novas submissões
+permite coleta já admitida, enquanto os hard stops continuam bloqueando. Expiração
+da aprovação impede iniciar outra etapa, mas permite coletar uma operação waiting
+já própria. Gemini faz uma única tentativa nesse modo, inclusive em429; o caminho
+normal conserva sua política existente. Timeout, resposta desconhecida, conflito,
+recibo perdido ou escrita parcial nunca repetem uma chamada paga. A aprovação
+consumida sem claim próprio fica retida; os claims/ledger são o estado das etapas,
+sem um segundo coordenador.
+
+Antes do piloto real: revisão independente e CI no commit final, merge/publicação
+autorizados, uma aprovação/ID realmente elegível, quotes/modelos/regiões/preset e
+teto total aprovados, referência financeira legítima e vaga legada tratada apenas
+pelo procedimento já existente. Concorrência1 não autoriza remover uma vaga antiga.
+Esta mudança não aplica controles, migração/outboxes antigas, conciliação,
+liberação de reservas, processamento, merge ou deploy.

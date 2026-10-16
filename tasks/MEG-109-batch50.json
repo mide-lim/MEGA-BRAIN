@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "4e9458888d40c6c6c5dfd2d617cd39dbaed13e1e",
+  "objective": "Owner explicitly authorizes50 newReels in existing three queues/workers at concurrency1, without repeated paid stages. Reuse one private approval/scope/ledger perReel; allow server allowlist1..50 and batch-only approvalTTL48h. In authentic batchscope only, uncertain attempt keeps its reservation/claim/no retry but does not globally pause otherReels. Original262 financialbatch, all quotas/identities/objectproofs and unit/legacy behavior preserved. Native development/review authorized. This developer performs code/tests/sharedimage/PR only; no providers, Google mutation, secrets, merge or deployment.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Server allowlist1..50 uniquevalidIDs only; outsideID/51/duplicate malformed config or mixedauthority blocked. Exactlyone private approval and deterministic execution pervideo/stage; no financial.batch262 replacement.",
+    "Batchmode derived only from server configlist>1; WeakSetscopeimmutablebatch marker; TTL<=48h onlybatch, unitdefault<=1h unchanged. Quote/revision/approvalbinding and expirednewstage guards preserved.",
+    "Only verified privatebatchpipeline uncertain transition doesnot setglobalpaused; money/claim remainuncertain and samepaidstage cannotretry, while otherIDcancomplete. Unit/normaluncertain stillpauses; overestimatecomplete stillpauses; missingendproof stillholdsslot. Batch review_required preserves paid candidate/needs_attention without global pause; original unit/normal262 quality hold unchanged.",
+    "Offline integration crosses3queues with sharedledger/proofs for multipleapprovedIDs, prevents foreign authority, preserves oldbatch/reserves and records perID no successorsonfailure. Focus+fullGoogle/packet/link checks and one sharedimage smoke all3realentrypoints networknone512Mi1CPU required.",
+    "Independent fresh-context reviewer required before integration; developer opensPR/CI but doesnotwaitusingmodels, merge, deploy, process providers or mutateGoogle."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/assisted-pipeline.mjs",
+    "google-v0/lib/assisted-scope.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/tests/assisted-pipeline.test.mjs",
+    "google-v0/tests/batch-pipeline.test.mjs",
+    "tasks/MEG-109-batch50.json",
+    "google-v0/lib/worker-flow.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Existing server-owned allowlist validation only",
+      "sections": [
+        "pipeline config/runtime construction"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/assisted-pipeline.mjs",
+      "reason": "Private approval consumption and invocation scope minting",
+      "sections": [
+        "pipelineFlow"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/assisted-scope.mjs",
+      "reason": "WeakSet identity and authorityTTL contract",
+      "sections": [
+        "validatePipelineApproval/createPipelineScope"
+      ],
+      "max_chars": 3500
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Conditional uncertainty transition and invariantpreservation",
+      "sections": [
+        "transition uncertain"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/assisted-pipeline.test.mjs",
+      "reason": "Existing realflow contract and runtime rejection case adjusted fornewvalidmultilist",
+      "sections": [
+        "runtime pipeline optin test; fixtureproofpattern"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "One existing reviewRequired/global262 pause must preserve candidate without freezing privatebatch",
+      "sections": [
+        "finish reviewRequired settlement"
+      ],
+      "max_chars": 1000
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/batch-pipeline.test.mjs google-v0/tests/assisted-pipeline.test.mjs google-v0/tests/assisted-scope.test.mjs google-v0/tests/unit-budget.test.mjs google-v0/tests/financial-ledger.test.mjs",
+    "node --test --test-concurrency=1 google-v0/tests/*.test.mjs",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "python3 ops/prepare-release-context.py --output /workspace/meg109-batch50-context",
+    "docker build --build-arg VCS_REF=\"$(git rev-parse HEAD)\" -t megabrain-worker:meg109-batch50 -f /workspace/meg109-batch50-context/Dockerfile.worker /workspace/meg109-batch50-context",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-batch50 scripts/smoke-worker.mjs",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-batch50 scripts/smoke-stage-workers.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Batchauthority and failureisolation arehighrisk; parent uses fresh-context native reviewer. One developer and one reviewer authorized by current human scope; no developer Google/providers/merge/deploy."
+  }
+}

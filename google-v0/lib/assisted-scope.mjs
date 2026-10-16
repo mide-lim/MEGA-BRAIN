@@ -33,20 +33,21 @@ export function assertAssistedJob(scope,id,job){
 const pipelineStages=['upload','transcription','analysis'];
 export const pipelineExecution=(video,stage,revision)=>'job_'+createHash('sha256').update(video+':'+stage+':'+(stage==='analysis'?revision:'v0')).digest('hex');
 const pipelineFields=a=>Object.fromEntries([...approvalFields,'stage_maximum_cents','analysis_revision'].map(k=>[k,structuredClone(a[k])]));
-export function validatePipelineApproval(a,{path,videoId,quotes,analysisRevision,now=Date.now(),allowExpired=false}){
+export function validatePipelineApproval(a,{path,videoId,quotes,analysisRevision,now=Date.now(),allowExpired=false,batch=false}){
+ if(typeof batch!=='boolean')throw Error('Modo de lote privado inválido.');
  if(!a||a.schema_version!==1||a.kind!=='assisted_pipeline'||!/^[A-Za-z0-9_-]{16,64}$/.test(a.request_id??'')||path!==`jobs/assisted_upload_${a.request_id}`||!/^[A-Za-z0-9][A-Za-z0-9_:#./-]{4,199}$/.test(a.authorization_ref??'')||!isDeepStrictEqual(a.task,{videoId,stage:'upload',poll:0})||!/^[A-Za-z0-9_-]{5,32}$/.test(videoId??'')||!['megabrain-video-text-v3','megabrain-video-text-v4'].includes(analysisRevision)||a.analysis_revision!==analysisRevision||!isDeepStrictEqual(a.stage_maximum_cents,quotes)||Object.keys(quotes??{}).sort().join(',')!=='analysis,transcription,upload'||pipelineStages.some(s=>!Number.isSafeInteger(quotes[s])||quotes[s]<1)||quotes.upload>100||!Number.isSafeInteger(a.maximum_cents)||a.maximum_cents!==pipelineStages.reduce((n,s)=>n+quotes[s],0)||a.maximum_cents>2000||a.outcome!==undefined)throw Error('Autorização das três etapas inválida.');
  const start=Date.parse(a.authorized_at),end=Date.parse(a.expires_at);
- if(!Number.isFinite(now)||!Number.isFinite(start)||!Number.isFinite(end)||start>now||end<=start||end-start>3600000||!allowExpired&&end<=now)throw Error('Autorização das três etapas expirada.');
+ if(!Number.isFinite(now)||!Number.isFinite(start)||!Number.isFinite(end)||start>now||end<=start||end-start>(batch?172800000:3600000)||!allowExpired&&end<=now)throw Error('Autorização das três etapas expirada.');
 }
-export async function createPipelineScope({store,path,receipt,videoId,stage,quotes,analysisRevision,now=Date.now(),allowExpired=false}){
+export async function createPipelineScope({store,path,receipt,videoId,stage,quotes,analysisRevision,now=Date.now(),allowExpired=false,batch=false}){
  if(!pipelineStages.includes(stage))throw Error('Etapa unitária inválida.');
  const current=await store.get(path),a=current?.data;
- validatePipelineApproval(a,{path,videoId,quotes,analysisRevision,now,allowExpired});
+ validatePipelineApproval(a,{path,videoId,quotes,analysisRevision,now,allowExpired,batch});
  const consumed=Date.parse(a.consumed_at);
  if(a.status!=='consumed'||!receipt?.updateTime||current.updateTime!==receipt.updateTime||!isDeepStrictEqual(a,receipt.data)||!Number.isFinite(consumed)||consumed<Date.parse(a.authorized_at)||consumed>now||consumed>=Date.parse(a.expires_at))throw Error('Consumo unitário não confirmado.');
  const fields=pipelineFields(a);Object.freeze(fields.task);Object.freeze(fields.stage_maximum_cents);Object.freeze(fields);
  const ids=Object.freeze(Object.fromEntries(pipelineStages.map(s=>[s,pipelineExecution(videoId,s,analysisRevision)])));
- const scope=Object.freeze({pipeline:true,reference:path,videoId,stage,executionId:ids[stage],executionIds:ids,maximumCents:quotes[stage],totalMaximumCents:a.maximum_cents,analysisRevision,fields});scopes.add(scope);return scope;
+ const scope=Object.freeze({pipeline:true,...(batch?{batch:true}:{}),reference:path,videoId,stage,executionId:ids[stage],executionIds:ids,maximumCents:quotes[stage],totalMaximumCents:a.maximum_cents,analysisRevision,fields});scopes.add(scope);return scope;
 }
 export function assertPipelineHistory(scope,state,{checkPredecessors=true}={}){
  assertAssistedScope(scope);if(!scope.pipeline)throw Error('Escopo de pipeline obrigatório.');

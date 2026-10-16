@@ -193,7 +193,9 @@ export class FinancialLedger{
       const decision=reservationDecision({...state,reserved_cents:state.reserved_cents-job.maximum_cents,jobs:Object.fromEntries(Object.entries(state.jobs).filter(([id])=>id!==executionId))},{now:this.clock(),maximumCents:job.maximum_cents,stage:job.stage,videoId:job.video_id,assistedScope:this.assistedScope});
       if(!decision.ready)throw new Error(decision.reasons.join(' '));updated.status='started';
     }else if(action==='uncertain'){
-      if(job.status!=='started')throw new Error('Apenas execução iniciada pode ficar incerta.');updated.status='uncertain';changes.paused=true;
+      if(job.status!=='started')throw new Error('Apenas execução iniciada pode ficar incerta.');
+      // Private batch failures retain this job/reserve without freezing other Reels.
+      updated.status='uncertain';if(!this.assistedScope?.pipeline||this.assistedScope.batch!==true)changes.paused=true;
     }else if(action==='cancel'){
       if(job.status!=='reserved')throw new Error('Não liberar reserva de uma operação iniciada.');updated.status='cancelled';changes.reserved_cents=state.reserved_cents-job.maximum_cents;
     }else if(action==='complete'){

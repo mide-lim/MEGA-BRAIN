@@ -130,3 +130,58 @@ Um erro normal com árvore encerrada mantém o resultado e a reserva financeira 
 A imagem e seu smoke usam processos e mídia sintéticos sem rede para conferir a supervisão. A validação local não comprova suporte no sandbox Cloud Run: uma futura publicação autorizada deve executar smoke sintético com as entradas fechadas antes de uma aquisição real.
 
 Esta implementação não reconcilia a tentativa anterior da MEG-109, não interpreta RETIRED como prova interna retroativa, não altera claims existentes e não libera reservas antigas ou o R$1 já retido. A ponte administrativa para evidência externa da revisão antiga fica fora deste PR do executor. Publicação, conciliação operacional e nova aquisição continuam dependendo de autorizações próprias.
+
+
+## Conciliação administrativa unitária da revisão aposentada (MEG-109)
+
+`ops/reconcile-retired-acquisition.py` é uma ferramenta de operador restrita ao
+job/tentativa de C02Z8eipgu2 e à revisão 00047-dpj/UID já registrados. Seu padrão
+é um plano somente de leitura. Ela consulta a revisão pelo Google, exige
+RETIRED/Active negativo, revisão atual 00048-wnv e tráfego sem rota antiga,
+fila/scheduler pausados, entradas fechadas e concorrência 1. Correlaciona a
+requisição original única com a aprovação consumida e o ciclo do claim; não
+interpreta HTTP200, tempo ou ausência de mídia como prova de encerramento.
+
+A decisão administrativa usa a infraestrutura aposentada como evidência externa
+de capacidade; não cria ExecutionStops, não marca o extrator como encerrado nem
+converte resultado incerto em sucesso. O claim segue uncertain/unconfirmed e
+os R$19,50 continuam retidos. Não altera worker, identidade/IAM, retry, política
+financeira, allowlist, armazenamento, análises ou os seis legados anteriores.
+
+Para preparar o plano, forneça um token temporário pela entrada padrão, através
+de pipe (nunca em argumentos, arquivo ou terminal interativo), por exemplo:
+
+```sh
+gcloud auth print-access-token | python3 ops/reconcile-retired-acquisition.py --token-stdin --plan /caminho-protegido/unit-plan.json
+```
+
+O plano novo contém versões/hashes e exatamente dois alvos propostos. Nada é
+gravado no Google. Aplicação futura requer revisão, autorização explícita
+`MEG-109:...`, o mesmo plano/fingerprint (`--plan-sha256`), `--apply` e um
+caminho exclusivo `--receipt`. Esta implementação/PR não autoriza sua aplicação.
+
+Uma transação lê os documentos protegidos, exige as mesmas versões e confirma
+novamente a referência externa antes do commit. Cria a auditoria em jobs com
+precondição de inexistência e remove apenas a ocupação fixa de acquisition.active.
+Não altera financeiro, claim, vídeo, aprovação ou ExecutionStops. A auditoria
+guarda reconciled_at, sem inventar ended_at/ended:true. Concorrência externa de
+deploy/reativação é proibida nessa janela; drift de etag/prova bloqueia avanço,
+inclusive na conferência posterior. As APIs Cloud Run e Firestore não participam
+da mesma transação.
+
+Recibo perdido/incompleto não dispara replay ou restauração de snapshots. Ao
+reinvocar com o mesmo plano, autorização e caminho de recibo, o utilitário apenas
+confirma um resultado já auditado e idêntico; intenção existente sem resultado
+confirmado bloqueia nova transação. Auditoria divergente, slot ausente sem
+auditoria ou qualquer documento protegido alterado exigem conferência manual.
+A verificação posterior mantém gates fechados; nunca recria automaticamente a
+ocupação antiga nem devolve dinheiro.
+
+Após conciliação autorizada, o modo assistido atual poderá testar outro ID limpo,
+com aprovação nova e orçamento validado. Repetir o mesmo Reel continua bloqueado
+pelo claim/histórico existentes. Cadastro, configuração, orçamento, aquisição
+real e eventual liberação financeira permanecem fora deste utilitário.
+
+Os testes de ops são offline: fake da API/transação para dry-run, conflitos,
+identidades/provas inválidas, commit atômico, perda de recibo, idempotência e
+preservação dos registros. Não chamam Google ou provedores.

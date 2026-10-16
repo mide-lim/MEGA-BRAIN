@@ -1,5 +1,6 @@
 import {measureGeminiUsage,measureSpeechUsage} from './usage-costs.mjs';
 import {sha256} from './storage.mjs';
+import {settledRetryId} from './smart-retry.mjs';
 import {executionId as stageExecutionId} from './worker-flow.mjs';
 import {preparedAudioFields,validatePreparedAudio} from './audio-artifact.mjs';
 import {analysisTimeoutMs} from './google-rest.mjs';
@@ -69,7 +70,14 @@ export function googleOperations({api,storage,tools,preset,config,gate,inspect=i
   const speechOrigin=()=>config.speech_location==='us'?'https://us-speech.googleapis.com':'https://speech.googleapis.com';
   return {
     async sourceFailureMediaAbsent({video}){return video.media_verified!==true&&!video.video_key&&!video.transcript_key&&!video.analysis&&!await storage.metadata(`originals/instagram/${video.id}/video.mp4`);},
-    async prepareUploadRecovery({video}){if(video.media_verified||video.video_key||await storage.metadata(`originals/instagram/${video.id}/video.mp4`))throw Error('Mídia existente impede repetir download.');},
+    async prepareUploadRecovery({video,sourceOnlyRecovery=false}){
+      if(video.media_verified||video.video_key||await storage.metadata('originals/instagram/'+video.id+'/video.mp4'))throw Error('Mídia existente impede repetir download.');
+      if(sourceOnlyRecovery){
+        const transcription=stageExecutionId(video.id,'transcription'),analyses=[stageExecutionId(video.id,'analysis'),...['megabrain-video-text-v3','megabrain-video-text-v4'].map(r=>stageExecutionId(video.id,'analysis',r))];
+        const keys=[audioKeyFor(video.id),'results/instagram/'+video.id+'/'+transcription+'/transcription.json',...analyses.flatMap(id=>[id,settledRetryId(id)].map(job=>'results/instagram/'+video.id+'/'+job+'/analysis.json'))];
+        for(const key of keys)if(await storage.metadata(key))throw Error('Artefato preservado exige conferência sem repetir processamento.');
+      }
+    },
     async prepareSettledAnalysisRetry({video,originalExecutionId}){
       if(video.analysis||video.analysis_key||video.candidate_analysis_key||await storage.metadata(`results/instagram/${video.id}/${originalExecutionId}/analysis.json`))throw Error('Resultado existente exige reconciliação sem inferência.');
       for(const [key,generation] of [[video.video_key,video.video_generation],[video.transcript_key,video.transcript_generation]]){

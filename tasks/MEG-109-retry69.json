@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "612e7ca29157a553dee447c0ec91a75df2182aed",
+  "objective": "Explicit owner recovery of69 old review Reels: implement private source-only re-entry for eligible unpaid source failures through existing three stage queues, retaining original claims/reserves and the live50 batch. Legacy source_acquisition uses existing settledRetryKind exactly; recent private uncertain upload requires positive ended proof. No paid historical stage or saved artifact may be re-executed. No providers, Google mutation, secrets, merge or deployment by this developer.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Existing50 pilot allowlist unchanged; separate server recovery_video_ids1..100 uniquevalid disjoint IDs. Private recovery approval binds original upload claim and financial digests, video, quotes and revision. No external task supplies authority.",
+    "Existing settledRetryKind source_acquisition classifies only accounted legacy metadata source failures. Recent private upload uncertainty requires positive matching ended proof. Unknown generic markers/unproved recent attempts, paid STT/analysis claims or artifacts are blocked.",
+    "Exactly one deterministic settledRetryId upload child may be created; original claim/ledger immutable, old reserves retained. STT/analysis original IDs must have no prior history. Existing private stage scope/ledger/budget/queue/proofs reused; no batch262 replacement or balance freshness changes.",
+    "Positive child upload end proof gates STT; GCS create-only uploads prevent overwrite. Duplicate delivery cannot re-download/re-infer; stale snapshots/approval mutation/foreign IDs/paid history reject. Private failure isolation preserves old reserves and active fresh50. Recovery absence preflight checks bounded canonical/settled-child GCS result keys and prepared audio, not only video metadata, before any new acquisition or provider call.",
+    "Focused and full offline tests, packet/link validation, one shared image with worker+three-stage smokes offline512Mi1CPU; independent reviewer before parent integration. No new Paperclip task."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/worker-runtime.mjs",
+    "google-v0/lib/assisted-pipeline.mjs",
+    "google-v0/lib/assisted-scope.mjs",
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/lib/worker-flow.mjs",
+    "google-v0/tests/recovery-pipeline.test.mjs",
+    "tasks/MEG-109-retry69.json",
+    "google-v0/lib/google-operations.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/assisted-scope.mjs",
+      "reason": "Extend authenticated private scope, snapshot validation and exact parent history exclusion",
+      "sections": [
+        "pipeline approval/scope/history"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/assisted-pipeline.mjs",
+      "reason": "Existing private queue reference and predecessor proof contract",
+      "sections": [
+        "pipelineFlow"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "google-v0/lib/smart-retry.mjs",
+      "reason": "Reuse deterministic child and exact legacy source predicate",
+      "sections": [
+        "settledRetryId/settledRetryKind"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/worker-runtime.mjs",
+      "reason": "Separate recovery allowlist and per-scope eligibility, leaving fresh50 intact",
+      "sections": [
+        "pipeline config/makeFlow/unitFlow"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "Exclude only approved immutable parent from duplicate guard",
+      "sections": [
+        "reserve assisted/duplicate guard"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/worker-flow.mjs",
+      "reason": "Use minted child upload execution and existing absence preflight",
+      "sections": [
+        "run identity/prepareUploadRecovery"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Reviewer identified orphan paid JSON/audio without video references; bounded sourceOnlyRecovery metadata preflight prevents paid replay",
+      "sections": [
+        "prepareUploadRecovery"
+      ],
+      "max_chars": 500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/recovery-pipeline.test.mjs google-v0/tests/batch-pipeline.test.mjs google-v0/tests/assisted-pipeline.test.mjs google-v0/tests/smart-retry.test.mjs google-v0/tests/financial-ledger.test.mjs",
+    "node --test --test-concurrency=1 google-v0/tests/*.test.mjs",
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "python3 ops/prepare-release-context.py --output /workspace/meg109-retry69-context",
+    "docker build --build-arg VCS_REF=\"$(git rev-parse HEAD)\" -t megabrain-worker:meg109-retry69 -f /workspace/meg109-retry69-context/Dockerfile.worker /workspace/meg109-retry69-context",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-retry69 scripts/smoke-worker.mjs",
+    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-retry69 scripts/smoke-stage-workers.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Private recovery authority/history exclusions require fresh independent reviewer; owner authorizes native parallel work and recovery. Parent handles Google/publishing/processing only after review."
+  }
+}

@@ -62,7 +62,7 @@ export class WorkerFlow {
     if(stage==='analysis'&&(typeof video.data.transcript!=='string'||!video.data.transcript.trim())&&!completedEmptyTranscript(video.data,videoId))return {status:'blocked',reason:'transcript_missing'};
     const revision=stage==='analysis'?this.analysisRevision:null;
     const originalId=executionId(videoId,stage,revision);
-    const id=recoverSettled?settledRetryId(originalId):recoverFirestoreWrite&&stage==='upload'?uploadRecoveryId(originalId):originalId,path=`jobs/${id}`;
+    const id=this.assistedScope?.pipeline?this.assistedScope.executionId:recoverSettled?settledRetryId(originalId):recoverFirestoreWrite&&stage==='upload'?uploadRecoveryId(originalId):originalId,path=`jobs/${id}`;
     const existing=await this.store.get(path);
     if(this.assistedScope?.pipeline&&existing&&existing.data.assisted_scope_ref!==this.assistedScope.reference)throw Error('Claim unitário divergente.');
     if(this.assistedScope&&!this.assistedScope.pipeline&&existing)return {status:'blocked',reason:'assisted_existing_claim',execution_id:id,duplicate:true};
@@ -126,7 +126,8 @@ export class WorkerFlow {
         const archive=await this.store.create(`analyses/${id}_previous`,{video_id:videoId,analysis:video.data.analysis,analysis_key:video.data.analysis_key??null,analysis_generation:video.data.analysis_generation??null,archived_at:new Date(this.clock()).toISOString()});
         if(!archive.created){const previous=await this.store.get(`analyses/${id}_previous`);if(!recovery||previous?.data.analysis_key!==video.data.analysis_key||previous?.data.analysis_generation!==video.data.analysis_generation)throw new Error('Histórico da análise já existe; conferir antes de executar.');}
       }
-      if(limitedUpload&&!recoverSettled&&!metadataUpload&&!uploadRecovery&&typeof this.operations.prepareUploadRecovery==='function')await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});
+      if(stage==='upload'&&this.assistedScope?.recovery&&typeof this.operations.prepareUploadRecovery!=='function')throw Error('Ausência de artefatos precisa ser conferida.');
+      if(limitedUpload&&!recoverSettled&&!metadataUpload&&!uploadRecovery&&typeof this.operations.prepareUploadRecovery==='function')await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id,...(this.assistedScope?.recovery?{sourceOnlyRecovery:true}:{})});
       if(recoverSettled)await this.operations[stage==='upload'?'prepareUploadRecovery':'prepareSettledAnalysisRetry']({video:{...video.data,id:videoId},executionId:id,originalExecutionId:originalId});
       if(stage==='analysis'&&typeof this.operations.prepareAnalysis==='function')await this.operations.prepareAnalysis({video:{...video.data,id:videoId},executionId:id});
       if(metadataUpload)await this.operations.prepareUploadRecovery({video:{...video.data,id:videoId},executionId:id});

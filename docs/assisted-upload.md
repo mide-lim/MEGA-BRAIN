@@ -117,3 +117,16 @@ O orçamento proposto permanece atéR$1 por operação dentro do envelopeR$20,
 sujeito à quote/margem reais e autorização futura; STT/Gemini/sucessores0.
 Testes são sintéticos/offline; não constituem aquisição real nem aprovação
 de merge/deploy ou ativação.
+
+
+## Executor de download com encerramento comprovado
+
+O downloader usa um supervisor Linux local, empacotado na mesma imagem com o Python já existente. Antes de iniciar o comando, o supervisor verifica e assume a função de subreaper: descendentes órfãos, inclusive após setsid/double-fork, continuam sob sua responsabilidade. Um recibo normal só é produzido depois de aguardar o término da árvore inteira. O retorno numérico do processo principal, o fechamento de streams, um grupo vazio ou o tempo decorrido não substituem essa confirmação. Falta de suporte bloqueia a execução antes do extrator.
+
+O adaptador Node valida o protocolo, o identificador da invocação e os limites do recibo. Apenas resultados/erros reconhecidos em memória pelo executor podem confirmar encerramento; campos JSON de uma tarefa, do stderr ou de um erro arbitrário não servem como prova. O media-tools aguarda também os comandos de diagnóstico de versão e a limpeza temporária antes de comunicar o encerramento ao adaptador de upload.
+
+Um erro normal com árvore encerrada mantém o resultado e a reserva financeira como uncertain; o WorkerFlow existente pode registrar ExecutionStops e encerrar somente a ocupação de aquisição daquela nova tentativa. Timeout, abort, saída excedida, supervisor interrompido ou recibo inválido/perdido mantêm a ocupação retida. Não há retry, nova extração, STT/Gemini ou sucessor por causa desse recibo.
+
+A imagem e seu smoke usam processos e mídia sintéticos sem rede para conferir a supervisão. A validação local não comprova suporte no sandbox Cloud Run: uma futura publicação autorizada deve executar smoke sintético com as entradas fechadas antes de uma aquisição real.
+
+Esta implementação não reconcilia a tentativa anterior da MEG-109, não interpreta RETIRED como prova interna retroativa, não altera claims existentes e não libera reservas antigas ou o R$1 já retido. A ponte administrativa para evidência externa da revisão antiga fica fora deste PR do executor. Publicação, conciliação operacional e nova aquisição continuam dependendo de autorizações próprias.

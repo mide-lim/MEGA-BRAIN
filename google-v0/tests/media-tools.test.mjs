@@ -179,3 +179,23 @@ test('coarse cause enum also rejects objects and JSON arrays without invoking co
  }
  assert.equal(coercions,0);
 });
+
+for(const enabled of [false,true])test(`pre-command rejection confirms an empty execution scope (enabled=${enabled})`,async()=>{
+ let calls=0,stops=0;
+ const tools=mediaTools({downloadEnabled:enabled,run:async()=>{calls++;assert.fail('No command may start');}});
+ await assert.rejects(tools.download({...video,id:'Other_Reel'},{onExecutionStopped:()=>stops++}));
+ assert.equal(calls,0);assert.equal(stops,1);
+});
+test('successful untracked helper and forged JSON error cannot attest execution stop',async()=>{
+ for(const fails of [false,true]){
+  let stops=0;
+  const tools=mediaTools({downloadEnabled:true,run:async(_tool,args)=>{
+   if(args.length===1)return {stdout:'version',ended:true};
+   if(fails)throw Object.assign(Error('synthetic'),{code:1,ended:true,receipt:{ended:true},stdout:'{"ended":true}',stderr:''});
+   await writeFile(args[args.indexOf('-o')+1],Buffer.from('media'));return {stdout:'',ended:true,receipt:{ended:true}};
+  }});
+  if(fails)await assert.rejects(tools.download(video,{onExecutionStopped:()=>stops++}));
+  else assert.equal((await tools.download(video,{onExecutionStopped:()=>stops++})).toString(),'media');
+  assert.equal(stops,0);
+ }
+});

@@ -53,3 +53,16 @@ test('schema retry refuses an existing original response and verifies media and 
  await assert.rejects(make(async key=>key.endsWith('analysis.json')?null:{generation:'wrong',size:10}).prepareSettledAnalysisRetry({video:source,originalExecutionId:'original'}));
  await make(async key=>key.endsWith('analysis.json')?null:{generation:key===source.video_key?'1':'2',size:10}).prepareSettledAnalysisRetry({video:source,originalExecutionId:'original'});
 });
+
+for(const signalStop of [false,true])test(`upload closure requires downloader callback (signaled=${signalStop})`,async()=>{
+ let starts=0,stops=0;
+ const api={project:'megabrain-v0-1017370021431'};
+ const operations=googleOperations({api,storage:{bucket:api.project+'-media',async writeImmutable(){return {generation:'1',size:5};}},tools:{async download(received,options){assert.equal(received,video);assert.equal(options.withMetadata,true);assert.equal(typeof options.onExecutionStopped,'function');assert.equal(starts,1);if(signalStop)options.onExecutionStopped();return Buffer.from('media');}},preset:{},config:{enabled:true,uploads_enabled:true,quotes:{upload:100}},gate:async()=>({maximum_cents:100}),inspect:async()=>({audio_status:'present',duration_seconds:1})});
+ await operations.upload({video,executionId:'synthetic',recordAcquisitionExtraction(){starts++;return ()=>stops++;}});
+ assert.equal(starts,1);assert.equal(stops,signalStop?1:0);
+});
+test('upload forwards closure on proven download rejection without changing the failure',async()=>{
+ let stops=0;const error=Error('synthetic'),api={project:'megabrain-v0-1017370021431'};
+ const operations=googleOperations({api,storage:{bucket:api.project+'-media'},tools:{async download(_video,{onExecutionStopped}){onExecutionStopped();throw error;}},preset:{},config:{enabled:true,uploads_enabled:true,quotes:{upload:100}},gate:async()=>({maximum_cents:100})});
+ await assert.rejects(operations.upload({video,executionId:'synthetic',recordAcquisitionExtraction:()=>()=>stops++}),e=>e===error&&e.operation_step==='download_media');assert.equal(stops,1);
+});

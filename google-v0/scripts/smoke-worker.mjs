@@ -8,11 +8,21 @@ import {workerRuntime} from '../lib/worker-runtime.mjs';
 import {workerHTTP} from '../lib/worker-http.mjs';
 import {inspectMedia} from '../lib/media-inspector.mjs';
 import {mediaTools} from '../lib/media-tools.mjs';
+import {executeDownloadProcess,downloadProcessEnded} from '../lib/download-executor.mjs';
 const run=promisify(execFile);
 assert.equal((await run('yt-dlp',['--version'])).stdout.trim(),'2026.08.19');
 assert.match((await run('ffmpeg',['-version'])).stdout,/ffmpeg version 5\.1\.9/);
 const folder=await mkdtemp(join(tmpdir(),'v0-worker-smoke-'));
 try{
+ // A normal tool error may close its streams while a detached child survives.
+ // The packaged supervisor must wait for that child, without network or media.
+ const marker=join(folder,'descendant-ended');
+ const child=`setTimeout(()=>require('node:fs').writeFileSync(${JSON.stringify(marker)},'ended'),60);`;
+ const parent=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(child)}],{detached:true,stdio:'ignore'}).unref();process.exit(1);`;
+ let failed;
+ try{await executeDownloadProcess(process.execPath,['-e',parent],{timeout:3000,maxBuffer:4096});}catch(error){failed=error;}
+ assert.equal(failed?.code,1);assert.equal(downloadProcessEnded(failed),true);
+ assert.equal(await readFile(marker,'utf8'),'ended');
  const file=join(folder,'synthetic.mp4');
  await run('ffmpeg',['-nostdin','-v','error','-threads','1','-filter_threads','1','-f','lavfi','-i','color=c=black:s=32x32:r=10','-f','lavfi','-i','sine=frequency=440:sample_rate=16000','-t','1','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',file],{timeout:30000,maxBuffer:65536});
  const bytes=await readFile(file),media=await inspectMedia(bytes);
@@ -29,4 +39,4 @@ try{
  assert.equal((await fetch(url,{method:'POST',body:'x'.repeat(2049)})).status,413);
  assert.equal((await fetch(url)).status,405);
 }finally{await new Promise(resolve=>server.close(resolve));}
-console.log('Worker smoke passed: fixed tools, synthetic audio, extraction, anonymous rejection, bounded request. No Google calls.');
+console.log('Worker smoke passed: fixed tools, supervised detached descendant closure, synthetic audio, extraction, anonymous rejection, bounded request. No Google calls.');

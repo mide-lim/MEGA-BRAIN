@@ -214,6 +214,14 @@ class RetirementTests(unittest.TestCase):
             with self.assertRaises(m.Refused): m.main()
         self.assertEqual(self.api.begins, 0)
 
+    def test_non_posix_application_is_refused_before_any_action(self):
+        calls = len(self.api.calls)
+        with patch.object(m.os, 'name', 'nt'):
+            with self.assertRaises(m.Refused): self.apply()
+        self.assertEqual(len(self.api.calls), calls)
+        self.assertTrue(self.source.exists()); self.assertFalse(self.receipt.exists())
+        self.assertEqual(self.api.commits, 0)
+
     def test_transport_rejects_all_unrelated_mutations(self):
         api = m.Google('synthetic-token')
         for method, url in [('POST', m.FIRE + ':commit'), ('PATCH', m.FIRE + '/settings/acquisition'), ('POST', m.RUN), ('GET', 'https://example.com')]:

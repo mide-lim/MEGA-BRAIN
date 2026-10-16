@@ -236,6 +236,7 @@ def inspect(api, p, expected_hash, authorization):
 
 
 def consume_plan(p):
+    require(os.name == 'posix', 'Apply requires POSIX local filesystem with hardlink and fsync')
     source = Path(p['plan_path']); submitted = source.with_name(source.name + '.submitted')
     require(not source.is_symlink() and source.is_file(), 'Original plan consumed or unavailable; inspect only')
     require(json.loads(source.read_text(encoding='utf-8')) == p, 'Original plan content changed')
@@ -246,13 +247,13 @@ def consume_plan(p):
         source.unlink()
     except OSError:
         raise Refused('Plan application fence exists or is unavailable; inspect only') from None
-    if os.name == 'posix':
-        fd = os.open(str(source.parent), os.O_RDONLY | os.O_DIRECTORY)
-        try: os.fsync(fd)
-        finally: os.close(fd)
+    fd = os.open(str(source.parent), os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(fd)
+    finally: os.close(fd)
 
 
 def apply(api, p, expected_hash, authorization, receipt):
+    require(os.name == 'posix', 'Apply requires POSIX; use read-only inspection on other platforms')
     reviewed_plan(p, expected_hash, authorization)
     source = Path(p['plan_path']); submitted = source.with_name(source.name + '.submitted')
     require(receipt.resolve() not in [source.resolve(), submitted.resolve()], 'Receipt must not overwrite original or submitted plan')

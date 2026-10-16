@@ -169,6 +169,10 @@ deploy/reativação é proibida nessa janela; drift de etag/prova bloqueia avan�
 inclusive na conferência posterior. As APIs Cloud Run e Firestore não participam
 da mesma transação.
 
+A aplicação exige POSIX e filesystem local protegido com hardlink e fsync de
+diretório. Fora de POSIX, --apply é recusado antes de qualquer ação; dry-run
+e --inspect permanecem disponíveis.
+
 O plano vincula seu caminho original ao fingerprint. Antes de iniciar qualquer
 transação, a aplicação cria de modo exclusivo um hardlink <plano>.submitted,
 consome o arquivo original e sincroniza o diretório em disco. O plano original

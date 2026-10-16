@@ -44,3 +44,11 @@ O detalhe consulta execuções pela identidade do Reel e projeta apenas etapa, w
 Recibos financeiros v2 propagam a medição já gravada junto à resposta. `days[].estimatedByCurrency` preserva a moeda da estimativa (incluindo BRL); `measuredUsd` valoriza uso por preços versionados, no dia BRT de registro do resultado. A fatura continua separada; cobertura informa versão, data e lacunas. Nenhum desses valores concede ou bloqueia execução.
 
 Builds, suites e jornadas de navegador desta versão rodam exclusivamente em GitHub Actions, sem credenciais de provedores. A VPS recebe somente operações leves de contexto/transporte/versionamento. Workers novos ficam desabilitados e a web fixa processamento emfalse; testes com adaptadores em memória não comprovam operação real. Nenhuma exclusão ou corte de escritor é executado pelo ensaio de migração.
+
+## Publicação candidata e aceite real pendente
+
+O publicador manual aceita `services=web`, mantendo `all` como padrão compatível. Para esta versão candidata, usar somente `web`: publica e atualiza exclusivamente a imagem da interface; a identidade, configuração, workers e filas permanecem no baseline observado. O modo mantém a revisão de configuração e a reversão da imagem anterior. Nenhum workflow de publicação é disparado como efeito de abrir ou aprovar este PR.
+
+A web lê o formato atual sem exigir migração. Publicar a interface não executa reset, corte de escritor nem habilita processamento. Após autorização específica de publicação, conferir login da conta permitida, lista/detalhe e reprodução autenticada com dados existentes, somente leitura. Contagens sintéticas e testes de navegador não são inventário real.
+
+O módulo de migração atual oferece manifesto, backup e restauração de registros em memória, ensaio puro e planos de corte/reversão. O pacote real ainda exige coletor somente leitura revisado, inventário por ID/versão, provas de artefatos por chave/geração/SHA256 e ensaio da restauração abrangente sobre cópia privada. Não executar limpeza, importação, corte ou ativação de workers antes dessa conferência. O custo confirmado por fatura permanece desconhecido até integração da fonte oficial; o financeiro explicita cobertura e nunca bloqueia o fluxo.

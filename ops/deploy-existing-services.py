@@ -16,6 +16,14 @@ import urllib.request
 KINDS = ("worker", "web")
 
 
+def selected_kinds(services):
+    if services == "all":
+        return KINDS
+    if services == "web":
+        return ("web",)
+    raise DeploymentError("Services must be all or web")
+
+
 class DeploymentError(RuntimeError):
     def __init__(self, message, code="operation_failed"):
         super().__init__(message)
@@ -175,13 +183,14 @@ def command(args, input_text=None):
     return result.stdout
 
 
-def publish(config, token, commit):
+def publish(config, token, commit, services="all"):
+    kinds = selected_kinds(services)
     images = {}
     with tempfile.TemporaryDirectory(prefix="megabrain-registry-") as directory:
         os.chmod(directory, 0o700)
         command(["docker", "--config", directory, "login", config["region"] + "-docker.pkg.dev",
                  "--username", "oauth2accesstoken", "--password-stdin"], token)
-        for kind in KINDS:
+        for kind in kinds:
             local = "megabrain-" + kind + ":ci"
             inspected = json.loads(command(["docker", "image", "inspect", local]))[0]
             if inspected["Config"].get("Labels", {}).get("org.opencontainers.image.revision") != commit:
@@ -251,13 +260,21 @@ def wait_ready(api, kind, original, image):
     raise DeploymentError("Updated service readiness not confirmed", "readiness_timeout")
 
 
-def rollout(api, config, originals, images, smoke=smoke_web):
+def rollout(api, config, originals, images, smoke=smoke_web, services="all"):
+    kinds = selected_kinds(services)
+
+    def verify_untargeted():
+        for kind in KINDS:
+            if kind not in kinds and service_view(api.service(kind)) != service_view(originals[kind]):
+                raise DeploymentError("Untargeted service changed; operator review required", "configuration_changed")
+
     changed = []
     phase = "preflight"
     try:
-        for kind in KINDS:
+        for kind in kinds:
             phase = kind + "_preflight"
             api.paused()
+            verify_untargeted()
             current = api.service(kind)
             if service_view(current) != service_view(originals[kind]):
                 raise DeploymentError("Reviewed service changed before update")
@@ -273,6 +290,7 @@ def rollout(api, config, originals, images, smoke=smoke_web):
         smoke(api.service("web")["uri"])
         phase = "queue_final_check"
         api.paused()
+        verify_untargeted()
     except Exception as error:
         rollback_errors = []
         for kind in reversed(changed):
@@ -297,7 +315,8 @@ def rollout(api, config, originals, images, smoke=smoke_web):
         raise DeploymentError("Deployment failed; previous images preserved or restored; phase=" + phase + "; cause=" + safe_failure_code(error)) from None
 
 
-def run(mode, config, commit, expected_baseline, token):
+def run(mode, config, commit, expected_baseline, token, services="all"):
+    kinds = selected_kinds(services)
     validate_config(config)
     if not re.fullmatch(r"[a-f0-9]{40}", commit) or not re.fullmatch(r"[a-f0-9]{64}", expected_baseline):
         raise DeploymentError("Commit and reviewed baseline are required")
@@ -307,22 +326,23 @@ def run(mode, config, commit, expected_baseline, token):
     validate_services(originals, config)
     if baseline_digest(originals) != expected_baseline:
         raise DeploymentError("Production differs from the reviewed baseline")
-    for kind in KINDS:
+    for kind in kinds:
         api.update(kind, originals[kind], originals[kind]["template"]["containers"], validate_only=True)
     if mode == "review":
-        return {"commit": commit, "status": "review_passed", "deployed": False}
-    images = publish(config, token, commit)
+        return {"commit": commit, "status": "review_passed", "deployed": False, "services": services}
+    images = publish(config, token, commit, services=services)
     # Re-read and validate after publication to reject concurrent edits.
     api.paused()
     if baseline_digest({k: api.service(k) for k in KINDS}) != expected_baseline:
         raise DeploymentError("Production changed during image publication")
-    rollout(api, config, originals, images)
-    return {"commit": commit, "status": "deployed_and_checked", "deployed": True}
+    rollout(api, config, originals, images, services=services)
+    return {"commit": commit, "status": "deployed_and_checked", "deployed": True, "services": services}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["review", "deploy"], required=True)
+    parser.add_argument("--services", choices=["all", "web"], default="all")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--output", required=True)
@@ -336,7 +356,7 @@ def main():
                 raise DeploymentError("Protected runtime limits conflict with reviewed workflow")
             config = {**config, "runtime_max_instances": expected_limits}
         token = os.environ["GOOGLE_ACCESS_TOKEN"]
-        outcome = run(args.mode, config, args.commit, args.baseline, token)
+        outcome = run(args.mode, config, args.commit, args.baseline, token, services=args.services)
         Path(args.output).write_text(json.dumps(outcome, indent=2) + "\n")
         print(outcome["status"])
     except DeploymentError as error:

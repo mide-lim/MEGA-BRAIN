@@ -11,7 +11,8 @@
     "Consultas leves para mais de3mil itens; conhecimento publicado e legenda separados; categorias somente acervo final.",
     "Comandos idempotentes, orçamento informativo sem gates financeiros, execução nova testada por adaptadores simulados.",
     "Migração apenas ensaio com preservação integral de origens e prova de restauração/reversão.",
-    "Revisão independente e testes da versão exata; nenhum processamento/provedor/exclusão real."
+    "Revisão independente e testes da versão exata; nenhum processamento/provedor/exclusão real.",
+    "Pacote de publicação permite atualizar somente web, preservando worker/filas/configuração; implementação testada sem executar publicação."
   ],
   "allowed_paths": [
     "tasks/MEG-81-reels-web.json",
@@ -23,7 +24,10 @@
     "google-v0/Dockerfile.web-google",
     "google-v0/Dockerfile.worker",
     "google-v0/qa/",
-    ".github/workflows/frontend-qa.yml"
+    ".github/workflows/frontend-qa.yml",
+    "ops/deploy-existing-services.py",
+    "ops/test_deploy_existing_services.py",
+    ".github/workflows/google-deploy.yml"
   ],
   "context": [
     {
@@ -108,6 +112,7 @@
       "interface": "componentes web, page/layout/globals.css"
     },
     "source_plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
-    "ci_authorization": "Usuário autorizou GitHub Actions nesta implementação; testes sem credenciais/providers, não disparar deploy manual."
+    "ci_authorization": "Usuário autorizou GitHub Actions nesta implementação; testes sem credenciais/providers, não disparar deploy manual.",
+    "publication_preparation": "Extensão compatível web-only no publicador existente; preparar pacote concreto antes de aprovação final, sem merge/deploy/Google nesta implementação."
   }
 }

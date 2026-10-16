@@ -234,6 +234,142 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(api.calls, [])
 
 
+class WebOnlyDeploymentTests(unittest.TestCase):
+    def test_review_validates_only_web_and_keeps_complete_baseline(self):
+        original = services()
+        api = FakeGoogle(original)
+        with patch.object(deployment, "Google", return_value=api), patch.object(deployment, "publish") as publish:
+            outcome = deployment.run("review", CONFIG, "d" * 40, deployment.baseline_digest(original), "dummy", services="web")
+        publish.assert_not_called()
+        self.assertEqual([(kind, validate) for kind, _, validate in api.calls], [("web", True)])
+        self.assertEqual(api.values, original)
+        self.assertEqual(outcome["services"], "web")
+        self.assertFalse(outcome["deployed"])
+
+        # The worker still belongs to the reviewed baseline, despite receiving no PATCH.
+        api.values["worker"]["template"]["containers"][0]["env"] = []
+        api.calls.clear()
+        with patch.object(deployment, "Google", return_value=api):
+            with self.assertRaisesRegex(deployment.DeploymentError, "baseline"):
+                deployment.run("review", CONFIG, "d" * 40, deployment.baseline_digest(original), "dummy", services="web")
+        self.assertEqual(api.calls, [])
+
+    def test_deploy_propagates_web_selection_without_worker_validation(self):
+        original = services()
+        api = FakeGoogle(original)
+        web_image = {"web": images()["web"]}
+        with patch.object(deployment, "Google", return_value=api), patch.object(deployment, "publish", return_value=web_image) as publish, patch.object(deployment, "rollout") as rollout:
+            outcome = deployment.run("deploy", CONFIG, "d" * 40, deployment.baseline_digest(original), "dummy", services="web")
+        publish.assert_called_once_with(CONFIG, "dummy", "d" * 40, services="web")
+        rollout.assert_called_once_with(api, CONFIG, original, web_image, services="web")
+        self.assertEqual([(kind, validate) for kind, _, validate in api.calls], [("web", True)])
+        self.assertEqual(outcome["services"], "web")
+
+    def test_worker_change_during_publication_blocks_web_patch(self):
+        original = services()
+        api = FakeGoogle(original)
+        def published(*args, **kwargs):
+            api.values["worker"]["template"]["containers"][0]["env"] = []
+            return {"web": images()["web"]}
+        with patch.object(deployment, "Google", return_value=api), patch.object(deployment, "publish", side_effect=published), patch.object(deployment, "rollout") as rollout:
+            with self.assertRaisesRegex(deployment.DeploymentError, "changed during image publication"):
+                deployment.run("deploy", CONFIG, "d" * 40, deployment.baseline_digest(original), "dummy", services="web")
+        rollout.assert_not_called()
+        self.assertEqual([(kind, validate) for kind, _, validate in api.calls], [("web", True)])
+
+    def test_rollout_changes_only_web_image_and_keeps_worker_identical(self):
+        original = services()
+        api = FakeGoogle(original)
+        smoke = []
+        deployment.rollout(api, CONFIG, original, {"web": images()["web"]}, smoke=smoke.append, services="web")
+        self.assertEqual([kind for kind, _, _ in api.calls], ["web"])
+        self.assertEqual(api.values["worker"], original["worker"])
+        self.assertEqual(deployment.without_image(api.values["web"]), deployment.without_image(original["web"]))
+        self.assertEqual(api.values["web"]["template"]["containers"][0]["image"], images()["web"])
+        self.assertEqual(len(smoke), 1)
+        self.assertGreaterEqual(api.pause_checks, 2)
+
+    def test_smoke_failure_rolls_back_only_web(self):
+        original = services()
+        api = FakeGoogle(original)
+        def fail(origin):
+            raise deployment.DeploymentError("private diagnostic", "smoke_video_http_503")
+        with self.assertRaisesRegex(deployment.DeploymentError, "cause=smoke_video_http_503"):
+            deployment.rollout(api, CONFIG, original, {"web": images()["web"]}, smoke=fail, services="web")
+        self.assertEqual([kind for kind, _, _ in api.calls], ["web", "web"])
+        self.assertEqual(api.values["worker"], original["worker"])
+        self.assertEqual(deployment.baseline_digest(api.values), deployment.baseline_digest(original))
+
+    def test_concurrent_worker_change_is_detected_without_worker_recovery(self):
+        for before_patch in [True, False]:
+            original = services()
+            api = FakeGoogle(original)
+            def edit_worker(origin=None):
+                api.values["worker"]["template"]["containers"][0]["env"] = []
+            if before_patch:
+                edit_worker()
+            with self.assertRaisesRegex(deployment.DeploymentError, "cause=configuration_changed"):
+                deployment.rollout(api, CONFIG, original, {"web": images()["web"]}, smoke=edit_worker, services="web")
+            self.assertEqual([kind for kind, _, _ in api.calls], [] if before_patch else ["web", "web"])
+            self.assertEqual(api.values["worker"]["template"]["containers"][0]["env"], [])
+            self.assertEqual(deployment.service_view(api.values["web"]), deployment.service_view(original["web"]))
+
+    def test_uncertain_web_update_does_not_repeat_patch_or_touch_worker(self):
+        original = services()
+        api = FakeGoogle(original)
+        api.reconciling = True
+        with self.assertRaisesRegex(deployment.DeploymentError, "operator review"):
+            deployment.rollout(api, CONFIG, original, {"web": images()["web"]}, smoke=lambda origin: None, services="web")
+        self.assertEqual([kind for kind, _, _ in api.calls], ["web"])
+        self.assertEqual(api.values["worker"], original["worker"])
+
+    def test_publication_targets_web_only_or_all_by_default(self):
+        for selection, expected in [("web", ["web"]), (None, ["worker", "web"])]:
+            calls = []
+            def command(args, input_text=None):
+                calls.append(args)
+                if args[:3] == ["docker", "image", "inspect"]:
+                    image = args[3]
+                    if image.startswith("megabrain-"):
+                        return json.dumps([{"Config": {"Labels": {"org.opencontainers.image.revision": "d" * 40}}}])
+                    kind = image.split("/")[-1].split(":")[0]
+                    return json.dumps([{"RepoDigests": [images()[kind]]}])
+                return ""
+            with patch.object(deployment, "command", side_effect=command):
+                kwargs = {} if selection is None else {"services": selection}
+                result = deployment.publish(CONFIG, "dummy", "d" * 40, **kwargs)
+            self.assertEqual(set(result), set(expected))
+            self.assertEqual([args[3] for args in calls if args[:3] == ["docker", "image", "inspect"] and args[3].startswith("megabrain-")], ["megabrain-" + kind + ":ci" for kind in expected])
+            pushes = [args[-1] for args in calls if "push" in args]
+            self.assertEqual(pushes, [CONFIG["registry"] + "/" + kind + ":git-" + "d" * 40 for kind in expected])
+
+    def test_invalid_selection_has_no_cloud_or_publication_side_effects(self):
+        with patch.object(deployment, "Google") as google, patch.object(deployment, "command") as command:
+            for invalid in ["worker", "all,web", "", None]:
+                with self.assertRaises(deployment.DeploymentError):
+                    deployment.run("deploy", CONFIG, "d" * 40, "e" * 64, "dummy", services=invalid)
+                with self.assertRaises(deployment.DeploymentError):
+                    deployment.publish(CONFIG, "dummy", "d" * 40, services=invalid)
+            google.assert_not_called()
+            command.assert_not_called()
+
+    def test_cli_selection_defaults_to_all_and_propagates_web(self):
+        for selection in [None, "web"]:
+            argv = ["deploy-existing-services.py", "--mode", "review", "--commit", "d" * 40, "--baseline", "e" * 64, "--output", "unused.json"]
+            if selection:
+                argv.extend(["--services", selection])
+            outcome = {"status": "review_passed", "services": selection or "all"}
+            with patch.object(deployment.sys, "argv", argv), patch.dict(deployment.os.environ, {"MEGABRAIN_DEPLOY_CONFIG": json.dumps(CONFIG), "GOOGLE_ACCESS_TOKEN": "dummy"}, clear=True), patch.object(deployment, "run", return_value=outcome) as run, patch.object(deployment.Path, "write_text"), patch("builtins.print"):
+                self.assertEqual(deployment.main(), 0)
+            run.assert_called_once_with("review", CONFIG, "d" * 40, "e" * 64, "dummy", services=selection or "all")
+
+    def test_workflow_passes_explicit_selection_to_cli(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/google-deploy.yml").read_text()
+        self.assertRegex(workflow, r"services:\s+description:[^\n]+\s+required: true\s+default: all\s+type: choice\s+options: \[all, web\]")
+        self.assertIn("DEPLOY_SERVICES: ${{ inputs.services }}", workflow)
+        self.assertIn('--services "$DEPLOY_SERVICES"', workflow)
+
+
 class GoogleValidationTests(unittest.TestCase):
     def test_validate_only_does_not_poll_an_unpersisted_operation(self):
         api = deployment.Google(CONFIG, "dummy")

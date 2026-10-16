@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "68a833938316ffa73bf9a76fad3b231e1915e0c8",
+  "objective": "Current explicit owner instruction removes promotional balance/freshness/coverage/credit-expiry/account-capacity prerequisites ONLY from authenticated private one-Reel pipeline total<=500 cents. Keep immutable observation, financial ledger validation/reserves, explicit pilot envelope, paused/stage gates and live private approval. Normal, upload-only and over500 paths unchanged. Offline code/tests/PR only; no Google changes, paid processing, merge, deploy or Paperclip task creation.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Authentic invocation-owned pipeline<=500 and live private approval may use explicit pilot envelope without promotional balance/24h/coverage/credit-expiry/ongoing-freshness/account-available checks. Never change stored observation or pretend fresh balance.",
+    "Require explicit numeric pilot envelope; preserve envelope-spent-reserved-ongoing arithmetic, ledger validation, paused/enabled stage and exact scope quote checks. Missing envelope, insufficient budget or invalid scope blocks. Approval expiry stays at existing scope minting: expired approval cannot start new stage; known waiting STT may still collect its own operation.",
+    "Normal/legacy/upload-only/pipeline501+ retain all existing account and credit gates. Tests mint real scopes and exercise ledger reserve/start/provider reservation gate, invalid approval/forgery/expiry and budget controls without providers.",
+    "Independent fresh-context final review and CI required; no merge/deploy or paid calls by this implementation."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/financial-ledger.mjs",
+    "google-v0/tests/unit-budget.test.mjs",
+    "tasks/MEG-109-unit-budget.json",
+    "google-v0/tests/assisted-pipeline.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/financial-ledger.mjs",
+      "reason": "One existing freshness guard and reserve/gate contract",
+      "sections": [
+        "reservationDecision; reserve/start"
+      ],
+      "max_chars": 3500
+    },
+    {
+      "path": "google-v0/lib/assisted-scope.mjs",
+      "reason": "Existing WeakSet authority and live private approval checks prevent forged exception",
+      "sections": [
+        "createPipelineScope; verifyAssistedScope; assertAssistedScope"
+      ],
+      "max_chars": 4500
+    },
+    {
+      "path": "google-v0/tests/assisted-pipeline.test.mjs",
+      "reason": "Existing real-scope fixture must now declare its explicit envelope; credit-evidence negative cases become unit-budget/pause negatives under the owner-approved behavior.",
+      "sections": [
+        "fixture scope and ledger composition"
+      ],
+      "max_chars": 3500
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/unit-budget.test.mjs google-v0/tests/financial-ledger.test.mjs google-v0/tests/assisted-pipeline.test.mjs",
+    "node --test --test-concurrency=1 google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Financial execution gate is high risk; parent dispatches independent fresh-context native reviewer. User authorization overrides historical no-delegation for this exact task only."
+  }
+}

@@ -22,7 +22,7 @@ function fixture({sync=false,failure=null}={}){
  const store={async get(p){return structuredClone(docs.get(p)??null);},async create(p,data){if(docs.has(p))return {created:false};seed(p,data);return {created:true};},async patch(p,c,{updateTime}){if(docs.get(p)?.updateTime!==updateTime)throw Object.assign(Error('CAS'),{status:412});seed(p,{...docs.get(p).data,...c});return this.get(p);}};
  const batch={schema_version:1,id:'pilot_30_oct12',status:'active',budget_cents:120000,overhead_cents:2400,video_ids:Array.from({length:262},(_,i)=>'Legacy_'+i),parallelism:4,active_video_ids:[]};
  const retained={old_upload:{stage:'upload',video_id:'Retained_upload',maximum_cents:100,status:'uncertain'},old_analysis:{stage:'analysis',video_id:'Retained_analysis',maximum_cents:250,status:'uncertain'},old_media:{stage:'media_access',video_id:'Retained_media',maximum_cents:1100,status:'started'}};
- seed('settings/financial',{...newLedger(),paused:false,coverage_verified:true,ongoing_commitment_cents:0,ongoing_costs_observed_at:new Date(now).toISOString(),ongoing_costs_valid_until:new Date(now+86400000).toISOString(),ongoing_storage_planned_bytes:100000000,remaining_credit_cents:150000,balance_observed_at:new Date(now).toISOString(),credit_expires_at:new Date(now+30*86400000).toISOString(),enabled_stages:{upload:true,transcription:true,analysis:true},reserved_cents:1450,jobs:retained,batch});
+ seed('settings/financial',{...newLedger(),pilot_envelope_cents:150000,paused:false,coverage_verified:true,ongoing_commitment_cents:0,ongoing_costs_observed_at:new Date(now).toISOString(),ongoing_costs_valid_until:new Date(now+86400000).toISOString(),ongoing_storage_planned_bytes:100000000,remaining_credit_cents:150000,balance_observed_at:new Date(now).toISOString(),credit_expires_at:new Date(now+30*86400000).toISOString(),enabled_stages:{upload:true,transcription:true,analysis:true},reserved_cents:1450,jobs:retained,batch});
  seed('settings/automation',{enabled:true,parallelism:1,transcription_enabled:true,analysis_enabled:true});
  seed('settings/acquisition',{schema_version:1,enabled:true,parallelism:1,active:{}});
  seed('settings/capacity',{schema_version:1,enabled:true,limit_bytes:100000000,admitted_bytes:0,claims:{},claim_limit:2400});
@@ -111,8 +111,8 @@ test('same approval racing consumes once; lost receipt cannot be replayed',async
  other.store.patch=async(p,c,o)=>{const v=await patch(p,c,o);if(c.consumed_at)throw Error('lost receipt');return v;};
  assert.equal((await other.deliver(other.first)).http,500);await other.deliver(other.first);assert.equal(other.calls.upload,0);
 });
-test('freshness and pause still block paid stages, consumed request does not retry',async()=>{
- for(const delta of [{paused:true},{remaining_credit_cents:0},{balance_observed_at:null},{ongoing_costs_observed_at:null}]){
+test('unit budget and pause still block paid stages, consumed request does not retry',async()=>{
+ for(const delta of [{paused:true},{pilot_envelope_cents:null},{pilot_envelope_cents:1},{enabled_stages:{upload:false}}]){
   const f=fixture();f.set('settings/financial',delta);await f.deliver(f.first);assert.equal(f.calls.upload,0);assert.equal(f.sent.length,0);
  }
 });

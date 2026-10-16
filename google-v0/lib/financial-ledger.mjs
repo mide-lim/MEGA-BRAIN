@@ -40,18 +40,25 @@ export function reservationDecision(state,{now=Date.now(),maximumCents,stage,vid
   validate(state);if(assistedScope)assertAssistedScope(assistedScope,{stage,videoId,maximumCents});const reasons=[];
   if(!cents(maximumCents)||maximumCents===0||!stages.has(stage))reasons.push('Estimativa positiva e etapa válidas são obrigatórias.');
   if(state.paused!==false||state.enabled_stages?.[stage]!==true)reasons.push('Etapa pausada ou desligada.');
-  if(state.coverage_verified!==true)reasons.push('Cobertura dos créditos não confirmada.');
-  const ongoingObserved=Date.parse(state.ongoing_costs_observed_at),ongoingUntil=Date.parse(state.ongoing_costs_valid_until);
-  if(!cents(state.ongoing_commitment_cents)||!Number.isFinite(ongoingObserved)||ongoingObserved>now||now-ongoingObserved>86400000||!Number.isFinite(ongoingUntil)||ongoingUntil<=now)reasons.push('Custos persistentes ausentes ou desatualizados.');
-  const observed=Date.parse(state.balance_observed_at),age=state.balance_max_age_seconds;
-  if(!Number.isFinite(observed)||!Number.isSafeInteger(age)||age<1||age>86400||observed>now||now-observed>age*1000)reasons.push('Saldo financeiro ausente ou desatualizado.');
-  const expiry=Date.parse(state.credit_expires_at),margin=state.expiry_margin_hours;
-  if(!Number.isFinite(expiry)||!Number.isFinite(margin)||margin<72||expiry<=now+margin*3600000)reasons.push('Crédito próximo do vencimento.');
+  // The owner's one-Reel <=R$5 approval uses its explicit pilot envelope;
+  // promotional-credit evidence is not renewed or required for this scope.
+  const unitBudget=assistedScope?.pipeline===true&&assistedScope.totalMaximumCents<=500;
+  if(unitBudget){
+    if(!cents(state.pilot_envelope_cents)||state.pilot_envelope_cents<1)reasons.push('Orçamento unitário explícito obrigatório.');
+  }else{
+    if(state.coverage_verified!==true)reasons.push('Cobertura dos créditos não confirmada.');
+    const ongoingObserved=Date.parse(state.ongoing_costs_observed_at),ongoingUntil=Date.parse(state.ongoing_costs_valid_until);
+    if(!cents(state.ongoing_commitment_cents)||!Number.isFinite(ongoingObserved)||ongoingObserved>now||now-ongoingObserved>86400000||!Number.isFinite(ongoingUntil)||ongoingUntil<=now)reasons.push('Custos persistentes ausentes ou desatualizados.');
+    const observed=Date.parse(state.balance_observed_at),age=state.balance_max_age_seconds;
+    if(!Number.isFinite(observed)||!Number.isSafeInteger(age)||age<1||age>86400||observed>now||now-observed>age*1000)reasons.push('Saldo financeiro ausente ou desatualizado.');
+    const expiry=Date.parse(state.credit_expires_at),margin=state.expiry_margin_hours;
+    if(!Number.isFinite(expiry)||!Number.isFinite(margin)||margin<72||expiry<=now+margin*3600000)reasons.push('Crédito próximo do vencimento.');
+  }
   // remaining_credit_cents must conservatively include account-wide consumption.
   const accountAvailable=Math.min(state.remaining_credit_cents,state.allocation_cents-state.spent_cents)-state.reserve_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
   const pilotAvailable=state.pilot_envelope_cents==null?accountAvailable:state.pilot_envelope_cents-state.spent_cents-state.reserved_cents-(state.ongoing_commitment_cents??0);
   const batch=assistedScope?{reasons:[],available_cents:assistedScope.maximumCents}:batchDecision(state,{videoId,maximumCents});reasons.push(...batch.reasons);
-  const available=Math.min(accountAvailable,pilotAvailable,batch.available_cents);
+  const available=unitBudget?Math.min(pilotAvailable,batch.available_cents):Math.min(accountAvailable,pilotAvailable,batch.available_cents);
   if(!Number.isSafeInteger(available)||maximumCents>available)reasons.push('Reserva insuficiente.');
   return {ready:reasons.length===0,reasons,available_cents:Math.max(0,available),uploads_enabled:stage==='upload'&&state.enabled_stages.upload===true,
     media_access_enabled:stage==='media_access'&&state.enabled_stages.media_access===true,

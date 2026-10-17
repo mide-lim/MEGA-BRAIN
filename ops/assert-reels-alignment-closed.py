@@ -1,10 +1,12 @@
 """Read-only owner guard for the reviewed pre-publication cleanup window.
 No credential file, provider call, data write or error body is read/exported.
 """
-import concurrent.futures
 import datetime as dt
 import json
 import os
+import socket
+import time
+import urllib.error
 import urllib.request
 
 PROJECT = "megabrain-v0-1017370021431"
@@ -30,9 +32,9 @@ def inspect(get):
         targets["control:" + s] = DOCS + "reels_controls/" + s + "?mask.fieldPaths=paused&mask.fieldPaths=active&mask.fieldPaths=desiredConcurrency&mask.fieldPaths=effectiveConcurrency"
     for s in ("admission", "automation"):
         targets["writer:" + s] = DOCS + "settings/" + s + "?mask.fieldPaths=enabled"
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {k: pool.submit(get, url) for k, url in targets.items()}
-        observations = {k: future.result() for k, future in futures.items()}
+    # Owner transport is sequential and fail-fast. No pending worker continues
+    # issuing GETs after a refusal or validation failure.
+    observations = {k: get(url) for k, url in targets.items()}
     for s in ("web", *STAGES, "worker"):
         value = observations["service:" + s]
         resource = BASE.split("/v2/")[1] + s
@@ -77,13 +79,40 @@ def inspect(get):
     return {"project": PROJECT, "closed": True, "fourServicesClosed": True, "fourQueuesClosed": True, "legacyPreserved": True, "observedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True}
 
 
+def get_with_dns_retry(url, token, deadline, *, opener=urllib.request.urlopen, clock=time.monotonic, sleep=time.sleep):
+    """Only retry temporary DNS resolution failure before any HTTP response."""
+    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token}, method="GET")
+    for attempt in range(3):
+        remaining = deadline - clock()
+        require(remaining > 0)
+        received_response = False
+        try:
+            response = opener(request, timeout=min(30, remaining))
+            received_response = True
+            with response:
+                result = json.load(response)
+            require(clock() < deadline)
+            return result
+        except urllib.error.URLError as error:
+            reason = error.reason
+            temporary_dns = (type(error) is urllib.error.URLError and
+                             isinstance(reason, socket.gaierror) and
+                             reason.errno == socket.EAI_AGAIN)
+            if received_response or not temporary_dns or attempt == 2:
+                raise
+            # No retry of HTTP errors, body/JSON/validation failures, timeouts,
+            # other DNS errors, provider calls or writes. Never exceed budget.
+            require(deadline - clock() > 2)
+            sleep(2)
+    raise ValueError("Closed-runtime DNS read budget exhausted.")
+
+
 def main():
     token = os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "")
     require(bool(token))
+    deadline = time.monotonic() + 90
     def get(url):
-        request = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
+        return get_with_dns_retry(url, token, deadline)
     print(json.dumps(inspect(get)))
 
 

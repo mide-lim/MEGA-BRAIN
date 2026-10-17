@@ -5,11 +5,15 @@ on:
     paths:
       - ops/owner-serial-transport.mjs
       - ops/owner-serial-transport.test.mjs
+      - ops/assert-reels-alignment-closed.py
+      - ops/test_reels_alignment_closed.py
       - .github/workflows/reels-owner-transport.yml
   pull_request:
     paths:
       - ops/owner-serial-transport.mjs
       - ops/owner-serial-transport.test.mjs
+      - ops/assert-reels-alignment-closed.py
+      - ops/test_reels_alignment_closed.py
       - .github/workflows/reels-owner-transport.yml
 permissions:
   contents: read
@@ -26,8 +30,10 @@ jobs:
         with:
           node-version: '24.19.0'
       - name: Test synthetic transport only
-        run: node --test ops/owner-serial-transport.test.mjs
-      - name: Bind preload artifact to the seven unchanged reviewed sources
+        run: |
+          node --test ops/owner-serial-transport.test.mjs
+          python3 -m unittest discover -s ops -p test_reels_alignment_closed.py -v
+      - name: Bind owner transport artifact to six unchanged sources and the reviewed guard override
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/owner-serial-transport
         run: |
@@ -44,7 +50,6 @@ jobs:
             'google-v0/lib/firestore.mjs',
             'google-v0/lib/control-fragments.mjs',
             'google-v0/lib/reels-runtime.mjs',
-            'ops/assert-reels-alignment-closed.py'
           ];
           const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
           const sources=paths.map(path=>{
@@ -56,13 +61,15 @@ jobs:
           const preloadPath='ops/owner-serial-transport.mjs',preload=readFileSync(preloadPath);
           mkdirSync(join(process.env.ARTIFACT_DIR,'ops'),{recursive:true});
           writeFileSync(join(process.env.ARTIFACT_DIR,preloadPath),preload);
+          const guardPath='ops/assert-reels-alignment-closed.py',guard=readFileSync(guardPath),previousGuard=execFileSync('git',['show',reviewedCommit+':'+guardPath]);
+          writeFileSync(join(process.env.ARTIFACT_DIR,guardPath),guard);
           const artifactCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
           const changed=execFileSync('git',['diff','--name-only',reviewedCommit,'HEAD'],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
-          const allowed=new Set([preloadPath,'ops/owner-serial-transport.test.mjs','.github/workflows/reels-owner-transport.yml']);
-          if(changed.some(path=>!allowed.has(path)))throw Error('Transport branch exceeds the three-file scope.');
-          const provenance={schemaVersion:1,kind:'owner-serial-transport',reviewedSourceCommit:reviewedCommit,artifactCommit,event:process.env.GITHUB_EVENT_NAME,workflowRun:process.env.GITHUB_RUN_ID,nodeVersion:process.version,sevenReviewedSources:sources,preload:{path:preloadPath,sha256:sha(preload),bytes:preload.length},test:{path:'ops/owner-serial-transport.test.mjs',sha256:sha(readFileSync('ops/owner-serial-transport.test.mjs')),result:'passed'},workflowSHA256:sha(readFileSync('.github/workflows/reels-owner-transport.yml')),network:'synthetic fetch only; no Google authentication or provider calls',retryAdded:false,productSourceModified:false};
+          const allowed=new Set([preloadPath,'ops/owner-serial-transport.test.mjs',guardPath,'ops/test_reels_alignment_closed.py','.github/workflows/reels-owner-transport.yml']);
+          if(changed.some(path=>!allowed.has(path)))throw Error('Transport branch exceeds the five-file scope.');
+          const provenance={schemaVersion:2,kind:'owner-serial-transport',reviewedSourceCommit:reviewedCommit,artifactCommit,event:process.env.GITHUB_EVENT_NAME,workflowRun:process.env.GITHUB_RUN_ID,nodeVersion:process.version,sixReviewedSources:sources,preload:{path:preloadPath,sha256:sha(preload),bytes:preload.length,retryAdded:false},guard:{path:guardPath,sha256:sha(guard),bytes:guard.length,reviewedPreviousSHA256:sha(previousGuard),readConcurrency:1,dnsReadRetry:{type:'URLError with pre-response socket.gaierror EAI_AGAIN only',maxTotalAttempts:3,backoffSeconds:2,globalBudgetSeconds:90,httpOrWriteRetry:false}},tests:['ops/owner-serial-transport.test.mjs','ops/test_reels_alignment_closed.py'].map(path=>({path,sha256:sha(readFileSync(path)),result:'passed'})),workflowSHA256:sha(readFileSync('.github/workflows/reels-owner-transport.yml')),network:'synthetic fetch and urllib only; no Google authentication or provider calls',productSourceModified:false};
           writeFileSync(join(process.env.ARTIFACT_DIR,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');
-          console.log(JSON.stringify({artifactCommit,nodeVersion:process.version,preloadSHA256:provenance.preload.sha256,reviewedSources:7}));
+          console.log(JSON.stringify({artifactCommit,nodeVersion:process.version,preloadSHA256:provenance.preload.sha256,guardSHA256:provenance.guard.sha256,reviewedSources:6}));
           NODE
       - uses: actions/upload-artifact@v4
         with:

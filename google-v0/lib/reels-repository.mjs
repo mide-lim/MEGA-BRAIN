@@ -60,8 +60,9 @@ export class ReelsRepository{
  async matching(query={}){
   this.validateQuery(query);
   const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
-  const items=await this.items();if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
-  const {taxonomy}=categoryNavigation(items,(await this.store.get('settings/reels_v2_taxonomy'))?.data),ids=new Set([query.category]);let added=true;
+  const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items;
+  if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
+  const {taxonomy}=navigation,ids=new Set([query.category]);let added=true;
   while(added){added=false;for(const node of taxonomy.nodes??[])if(ids.has(node.parentId)&&!ids.has(node.id)){ids.add(node.id);added=true;}}
   const {category,...rest}=query;return refine(items.filter(x=>matchesReel(x,rest)&&x.categoryIds.some(id=>ids.has(id))));
  }
@@ -115,7 +116,7 @@ export class ReelsRepository{
   return {groups:[...groups.values()].sort((a,b)=>(b.day??'').localeCompare(a.day??'')||a.kind.localeCompare(b.kind)),coverage:{records:entries.length,unknownAmounts:entries.filter(e=>e.amount===null).length,withoutDate:entries.filter(e=>e.day===null).length,billingConfirmed:false,costsComplete:false},historical:true,executable:false,observedAt:this.now(),note:'Contabilidade antiga e reservas não são fatura nem produção atual. Valores sem data permanecem sem alocação diária; ausência não significa zero.'};
  }
  async categories(){
-  const navigation=categoryNavigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
+  const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
   const memberships=new Map(nodes.map(n=>[n.id,new Set()])),direct=new Map(nodes.map(n=>[n.id,new Set()]));
   for(const item of items)for(const cid of item.categoryIds){direct.get(cid)?.add(item.id);let id=cid;const seen=new Set();while(byId.has(id)&&!seen.has(id)){seen.add(id);memberships.get(id).add(item.id);id=byId.get(id).parentId;}}
   return {nodes:nodes.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false})),total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};

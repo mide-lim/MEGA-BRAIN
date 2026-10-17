@@ -7,17 +7,17 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {prepareReelsPilot} from '../lib/reels-pilot-readiness.mjs';
 const candidateCommit='a'.repeat(40),now=Date.parse('2026-10-17T03:00:00Z'),observedAt=new Date(now).toISOString();
-const policy={maxAttempts:20,maxRetryDurationSeconds:3600,minBackoffSeconds:10,maxBackoffSeconds:60};
-function observation(){return {schemaVersion:1,candidateCommit,observedAt,processingEnabled:false,dispatchEnabled:false,bindings:{web:true,acquisition:true,transcription:true,analysis:true},queues:['acquisition','transcription','analysis'].map(stage=>({stage,paused:true,taskCount:0,retryPolicy:{...policy}})),iam:{effectivePermissionsObserved:true,observedAt,tasksCreate:true,tasksGet:true,tasksFullView:true,actAs:true,runInvoker:true,firestore:true},legacyOccupancyReconciled:true,proofFreshAt:observedAt,candidates:{count:1,unheld:true,identityBound:true,noActiveOrUncertain:true},concurrency:1};}
+const policy={maxAttempts:20,maxRetryDurationSeconds:3600,minBackoffSeconds:10,maxBackoffSeconds:60,maxDoublings:3};
+function observation(){return {schemaVersion:2,mode:'pre_activation',candidateCommit,observedAt,processingEnabled:false,dispatchEnabled:false,bindings:{web:true,acquisition:true,transcription:true,analysis:true},queues:['acquisition','transcription','analysis'].map(stage=>({stage,state:'RUNNING',maxConcurrentDispatches:1,taskCount:0,retryPolicy:{...policy}})),iam:{effectivePermissionsObserved:true,observedAt,tasksCreate:true,tasksGet:true,tasksFullView:true,actAs:true,runInvoker:true,firestore:true},isolation:{observedAt,proofKind:'positive_per_sample_inventory',evidenceDigest:'e'.repeat(64),identityAndVersionBound:true,enumeratedScopeComplete:true,noLegacyJobOrClaimOverlap:true,noDispatchOrAdmissionOverlap:true,noFinancialOrCapacityOverlap:true,noV2ExecutionOrOutboxOverlap:true,noSavedMediaOrPaidResultOverlap:true,namespaceBoundariesVerified:true,legacyUncertainPreserved:true,legacyUncertainRemaining:60},candidates:{count:1,currentHeld:true,currentEligible:false,identityAndVersionBound:true,registered:true},holdReleasePlan:{count:1,exactIdentityAndVersionBound:true,compareAndSetRequired:true,onlyImportHoldActive:true,authorizationRequired:true,applied:false},concurrency:1};}
 const plan=input=>prepareReelsPilot({candidateCommit,observation:input,now});
 const codes=report=>report.blockers.map(item=>item.code);
 test('unknown metadata stays blocked and never authorizes processing or mutation',()=>{
  const result=plan({});assert.equal(result.technicalPrerequisitesMet,false);assert.equal(result.status,'prepared_not_run');assert.equal(result.processAuthorized,false);assert.equal(result.activationAllowed,false);
- assert.ok(codes(result).includes('LEGACY_OCCUPANCY_UNRECONCILED'));assert.ok(codes(result).includes('IAM_FIRESTORE'));assert.equal(result.proposal.budgetGate,false);assert.equal(result.preservation.delete,false);assert.equal(result.preservation.releaseReservations,false);
+ assert.ok(codes(result).includes('SAMPLE_ISOLATION_UNPROVEN'));assert.ok(codes(result).includes('IAM_FIRESTORE'));assert.equal(result.proposal.budgetGate,false);assert.equal(result.preservation.delete,false);assert.equal(result.preservation.releaseReservations,false);
 });
 test('even complete fresh evidence produces only an unapplied proposal for separate authorization',()=>{
- const input=observation(),before=structuredClone(input),result=plan(input);assert.deepEqual(input,before);assert.equal(result.blockers.length,0);assert.equal(result.technicalPrerequisitesMet,true);
- assert.equal(result.processAuthorized,false);assert.equal(result.activationAllowed,false);assert.equal(result.nextAction,'request_separate_activation_review');assert.deepEqual(result.proposal.publication,{processingEnabled:false,dispatchEnabled:false,activate:false});
+ const input=observation(),before=structuredClone(input),result=plan(input);assert.deepEqual(input,before);assert.equal(result.executionReady,false);assert.equal(result.currentEligible,false);assert.equal(result.releaseRequired,true);assert.equal(result.legacyOccupancyReconciled,false);assert.equal(result.legacyUncertainRemaining,60);assert.equal(result.blockers.length,0);assert.equal(result.technicalPrerequisitesMet,true);
+ assert.equal(result.processAuthorized,false);assert.equal(result.activationAllowed,false);assert.equal(result.nextAction,'request_separate_publication_and_activation_review');assert.deepEqual(result.proposal.publication,{processingEnabled:false,dispatchEnabled:false,activate:false});
  assert.equal(result.proposal.stageQueues.length,3);assert.equal(result.proposal.oldProcessingQueue,'preserve_unchanged');assert.ok(result.proposal.stageQueues.every(queue=>queue.apply===false));
 });
 test('single-attempt stage queues require a future retry change, never touching the old fourth queue',()=>{
@@ -28,16 +28,16 @@ test('single-attempt stage queues require a future retry change, never touching 
  assert.ok(!JSON.stringify(result).includes('legacy-processing'));
 });
 test('IAM role declarations and an empty v2 active list cannot establish effective permissions or legacy occupancy',()=>{
- const input=observation();delete input.iam.effectivePermissionsObserved;delete input.legacyOccupancyReconciled;input.active=[];
- let result=plan(input);assert.ok(codes(result).includes('IAM_PROOF_REQUIRED'));assert.ok(codes(result).includes('LEGACY_OCCUPANCY_UNRECONCILED'));
+ const input=observation();delete input.iam.effectivePermissionsObserved;delete input.isolation;input.active=[];
+ let result=plan(input);assert.ok(codes(result).includes('IAM_PROOF_REQUIRED'));assert.ok(codes(result).includes('SAMPLE_ISOLATION_UNPROVEN'));
  for(const field of ['tasksCreate','tasksGet','tasksFullView','actAs','runInvoker','firestore']){const changed=observation();changed.iam[field]='unknown';result=plan(changed);assert.ok(codes(result).includes('IAM_'+field.toUpperCase()));}
 });
 test('exact commit and fresh current observations are mandatory, including legacy and IAM proof dates',()=>{
  assert.throws(()=>prepareReelsPilot({candidateCommit:'main',observation:observation(),now}),/SHA/);
- for(const change of [input=>input.candidateCommit='b'.repeat(40),input=>input.observedAt='2026-10-16T03:00:00Z',input=>input.observedAt='2026-10-18T03:00:00Z',input=>input.proofFreshAt='2026-10-16T03:00:00Z',input=>input.iam.observedAt='2026-10-16T03:00:00Z']){const input=observation();change(input);assert.equal(plan(input).technicalPrerequisitesMet,false);}
+ for(const change of [input=>input.candidateCommit='b'.repeat(40),input=>input.observedAt='2026-10-16T03:00:00Z',input=>input.observedAt='2026-10-18T03:00:00Z',input=>input.isolation.observedAt='2026-10-16T03:00:00Z',input=>input.iam.observedAt='2026-10-16T03:00:00Z']){const input=observation();change(input);assert.equal(plan(input).technicalPrerequisitesMet,false);}
 });
 test('sample bounds, holds, current flags and candidate bindings fail closed',()=>{
- for(const change of [input=>input.candidates.count=2,input=>input.candidates.unheld=false,input=>input.candidates.identityBound=false,input=>input.candidates.noActiveOrUncertain=false,input=>input.concurrency=2,input=>delete input.processingEnabled,input=>input.processingEnabled=true,input=>input.dispatchEnabled=true,input=>input.bindings.web=false,input=>input.queues[0].paused=false,input=>input.queues[0].taskCount=1,input=>input.queues.push({...input.queues[0]})]){const input=observation();change(input);assert.equal(plan(input).technicalPrerequisitesMet,false);}
+ for(const change of [input=>input.candidates.count=2,input=>input.candidates.currentHeld=false,input=>input.candidates.identityAndVersionBound=false,input=>input.candidates.currentEligible=true,input=>input.concurrency=2,input=>delete input.processingEnabled,input=>input.processingEnabled=true,input=>input.dispatchEnabled=true,input=>input.bindings.web=false,input=>input.queues[0].state='UNKNOWN',input=>input.queues[0].taskCount=1,input=>input.queues.push({...input.queues[0]})]){const input=observation();change(input);assert.equal(plan(input).technicalPrerequisitesMet,false);}
 });
 test('output projects only fixed safe fields and never copies private identifiers, provider content or paths',()=>{
  const input=observation();input.privateReelIds=['PRIVATE_REEL_SENTINEL'];input.rawResult='PRIVATE_PROVIDER_SENTINEL';input.iam.secret='PRIVATE_SECRET_SENTINEL';input.queues[0].name='PRIVATE_QUEUE_SENTINEL';
@@ -51,4 +51,15 @@ test('CLI accepts only read-only preparation flags and emits a blocked sanitized
   assert.equal(result.status,2);const report=JSON.parse(result.stdout);assert.equal(report.processAuthorized,false);assert.equal(report.status,'prepared_not_run');assert.doesNotMatch(result.stdout+result.stderr,/PRIVATE_CLI_SENTINEL/);
   const rejected=spawnSync(process.execPath,[script,'--apply',path,'--candidate',candidateCommit],{encoding:'utf8',env:{PATH:process.env.PATH}});assert.equal(rejected.status,1);assert.equal(rejected.stdout,'');assert.equal(await readFile(path,'utf8'),source);
  }finally{await rm(directory,{recursive:true,force:true});}
+});
+
+test('per-sample isolation requires every positive proof and never accepts old global flags or expired leases',()=>{
+ const fields=['identityAndVersionBound','enumeratedScopeComplete','noLegacyJobOrClaimOverlap','noDispatchOrAdmissionOverlap','noFinancialOrCapacityOverlap','noV2ExecutionOrOutboxOverlap','noSavedMediaOrPaidResultOverlap','namespaceBoundariesVerified','legacyUncertainPreserved'];
+ for(const field of fields){const input=observation();input.isolation[field]=false;input.legacyOccupancyReconciled=true;input.leaseExpired=true;assert.ok(codes(plan(input)).includes('SAMPLE_ISOLATION_UNPROVEN'));}
+ for(const value of [undefined,'','NOT_A_DIGEST',{},1]){const input=observation();input.isolation.evidenceDigest=value;assert.equal(plan(input).technicalPreflightReady,false);}
+ for(const change of [input=>input.isolation.proofKind='empty_v2',input=>input.isolation.legacyUncertainRemaining=-1,input=>input.holdReleasePlan.applied=true,input=>input.holdReleasePlan.count=2,input=>input.holdReleasePlan.compareAndSetRequired=false,input=>input.holdReleasePlan.authorizationRequired=false,input=>input.holdReleasePlan.onlyImportHoldActive=false,input=>input.holdReleasePlan.exactIdentityAndVersionBound=false,input=>input.schemaVersion=1,input=>input.mode='activate',input=>input.queues[0].maxConcurrentDispatches=2]){const input=observation();change(input);assert.equal(plan(input).technicalPreflightReady,false);}
+});
+test('RUNNING and PAUSED queues can be prepared only behind closed runtime and dispatch fences',()=>{
+ const input=observation();input.queues[0].state='PAUSED';assert.equal(plan(input).technicalPreflightReady,true);
+ input.processingEnabled=true;assert.equal(plan(input).technicalPreflightReady,false);
 });

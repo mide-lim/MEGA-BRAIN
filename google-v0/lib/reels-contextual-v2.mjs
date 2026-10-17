@@ -36,13 +36,13 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
  const refs=input=>list(input).slice(0,8).map(ref=>proofs.get(ref)??{id:typeof ref==='string'?ref:'unknown',source:'unknown',excerpt:'',state:'invalid',reason:'EVIDENCE_REFERENCE_MISSING'});
  const completeEvidence=ev=>ev.length>0&&ev.every(p=>p.state==='supported');
  const contextSignal=signal.primaryContext,definition=categoryDefinitions.find(c=>c.id===contextSignal?.categoryId),contextProof=refs(contextSignal?.evidenceRefs);
- const context=definition?{value:groupContext[definition.group]??null,state:completeEvidence(contextProof)?'supported':'present_unverified',categoryId:definition.id,reason:completeEvidence(contextProof)?'INDEPENDENT_CONTEXT_SUPPORT_REVIEWED':'PUBLISHED_CONTEXT_CANDIDATE'}:null;
+ const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:completeEvidence(contextProof)?'supported':'present_unverified',categoryId:definition.id,reason:completeEvidence(contextProof)?'INDEPENDENT_CONTEXT_SUPPORT_REVIEWED':'PUBLISHED_CONTEXT_CANDIDATE'}:null;
  const units=list(signal.units).slice(0,64).filter(u=>object(u)&&id(u.unitId)).map(u=>({id:u.unitId,kind:u.type,title:u.unitId,state:'present_unverified',complete:false,claimedCompleteness:u.completeness,evidence:refs(u.evidenceRefs)}));
  let verifiedUnits=[],independentUnitCount=null,format=null;
  // Recipe unit independence remains the existing temporal contract, augmented
  // with independent evidence review. A model's complete/state flags alone never
  // make an enumeration known.
- if(context?.value==='recipe'&&units.length&&new Set(units.map(u=>u.id)).size===units.length&&units.every((u,i)=>u.kind==='recipe'&&signal.units[i]?.completeness==='complete'&&completeEvidence(u.evidence))){
+ if(context?.value==='recipe'&&units.length&&new Set(units.map(u=>u.id)).size===units.length&&units.every(u=>u.kind==='recipe'&&u.claimedCompleteness==='complete'&&completeEvidence(u.evidence))){
   const adapted={...raw,analysis:{...raw.analysis,knowledge:{...(raw.analysis.knowledge??{}),context:'recipe'},taxonomySignals:{version:1,parentCategoryId:context.categoryId,complete:true,confidence:1,units:units.map(u=>({id:u.id,kind:'recipe',title:u.id,evidence:u.evidence.map(p=>({source:p.source,excerpt:p.excerpt,start_seconds:p.startSeconds,end_seconds:p.endSeconds}))}))}}};
   const recurrence=recipeRecurrence(adapted);
   if(recurrence.state==='supported'){
@@ -60,7 +60,7 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
   const pol=['positive','negated','unknown'].includes(a.polarity)?a.polarity:'unknown',role=roles.has(a.role)?a.role:'unknown';
   if(!roles.has(a.role)||!['positive','negated','unknown'].includes(a.polarity))state='invalid',reason='INVALID_ROLE_OR_POLARITY';
   if(a.dimension==='format'&&state==='supported'&&(!format||format.value!==a.valueId))state='unknown',reason='FORMAT_ENUMERATION_NOT_PROVEN';
-  attributes.push({dimensionId:a.dimension,dimension:a.dimension,valueId:a.valueId,label:a.valueId.replace(/[_-]+/g,' '),scope,unitIds,role:pol==='negated'?'excluded':role==='central'&&!semantic?'unknown':role,claimedRole:role,polarity:pol==='positive'?'affirmed':pol,state,reason,evidence:ev});
+  attributes.push({dimensionId:a.dimension,dimension:a.dimension,valueId:a.valueId,label:a.valueId.replace(/[_-]+/g,' '),scope,unitIds,role:pol==='negated'?'excluded':role==='central'&&!semantic?'unknown':role,claimedRole:role,polarity:pol,state,reason,evidence:ev});
  }
  return {context,units:verifiedUnits,unitCandidates:units,independentUnitCount,format,attributes,evidence:[...proofs.values()],receiptTrusted:trusted};
 }

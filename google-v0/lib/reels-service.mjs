@@ -9,8 +9,9 @@ export class ReelsService {
  constructor({repository,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued}){this.onCommandQueued=onCommandQueued;this.onQueued=onQueued;this.repository=repository;this.store=repository.store;this.processingEnabled=processingEnabled===true;this.clock=clock;}
  async preview(selection,type='start'){if(!processingTypes.has(type))throw fail('INVALID_COMMAND','Tipo de prévia inválido.');const selected=await this.select(selection,type);const id=hash({type:'preview',commandType:type,...selected});await ensure(this.store,'reels_commands/'+id,{id,type:'preview',commandType:type,status:'preview',...selected,createdAt:nowISO(this.clock)});return {...selected,selectionToken:id};}
  async command(input,actor='authorized-user'){
-  key(input.idempotencyKey);const type=input.type;if(!['start','retry','complement','pause','resume','capacity'].includes(type))throw fail('INVALID_COMMAND','Comando inválido.');
+  key(input.idempotencyKey);const type=input.type;if(!['start','retry','complement','pause','resume','capacity','resume_operation'].includes(type))throw fail('INVALID_COMMAND','Comando inválido.');
   if(processingTypes.has(type)&&!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento real desabilitado nesta entrega.',423);
+  if(type==='resume_operation')return this.resumeOperation(input,actor);
   const stage=input.stage??null;if(type==='start'&&stage&&stage!=='acquisition'||type==='complement'&&stage&&stage!=='analysis')throw fail('INVALID_STAGE','Etapa incompatível com o comando.');if(stage!==null&&!STAGES.includes(stage))throw fail('INVALID_STAGE','Etapa inválida.');
   if(type==='capacity'&&(!stage||!Number.isSafeInteger(input.concurrency)||input.concurrency<1||input.concurrency>1000))throw fail('INVALID_CAPACITY','Capacidade inválida.');
   const id=hash({actor,key:input.idempotencyKey}),path='reels_commands/'+id;
@@ -46,6 +47,32 @@ export class ReelsService {
   await event(this.store,{id:hash(id+':completed'),operationId:id,type:'command_completed',message:'Comando persistido.',reelId:null,stage},this.clock);
   saved=await cas(this.store,path,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock)});
   return {operation:saved.data};
+ }
+ async resumeOperation(input,actor){
+  if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
+  if(Object.keys(input).some(field=>!['type','targetOperationId','idempotencyKey'].includes(field))||!/^[a-f0-9]{64}$/.test(input.targetOperationId??''))throw fail('INVALID_RECOVERY','Identifique somente a operação e a chave de retomada.');
+  const targetId=input.targetOperationId,id=hash({actor,key:input.idempotencyKey}),path='reels_commands/'+id;
+  const fingerprint=hash({type:'resume_operation',targetOperationId:targetId});
+  let saved=await this.store.get(path);
+  if(saved&&saved.data.fingerprint!==fingerprint)throw fail('IDEMPOTENCY_CONFLICT','Chave já usada com outro comando.',409);
+  const target=(await this.store.get('reels_commands/'+targetId))?.data;
+  const supported=target?.admissionMode==='processing'&&processingTypes.has(target.type)||target?.admissionMode==='queued_redrive'&&target.type==='resume';
+  if(!target||target.id!==targetId||target.actor!==actor||!supported||!/^[a-f0-9]{64}$/.test(target.fingerprint??'')||!Array.isArray(target.selected)||!Number.isSafeInteger(target.cursor)||target.cursor<0||target.cursor>target.selected.length||!['pending','running','completed'].includes(target.status))throw fail('OPERATION_NOT_RECOVERABLE','Operação sem admissão durável recuperável.',409);
+  saved=await ensure(this.store,path,{id,fingerprint,type:'resume_operation',actor,targetOperationId:targetId,targetCursor:target.cursor,status:'pending',createdAt:nowISO(this.clock)});
+  if(saved.data.fingerprint!==fingerprint)throw fail('IDEMPOTENCY_CONFLICT','Chave já usada com outro comando.',409);
+  if(saved.data.status!=='completed'){
+   try{
+    if(target.status!=='completed'){
+     if(typeof this.onCommandQueued!=='function')throw Error('Controle indisponível.');
+     const receipt=await this.onCommandQueued(target,{sequence:saved.data.targetCursor,recoveryId:id});
+     if(receipt?.status!=='sent')throw Error('Entrega não confirmada.');
+    }
+    saved=await cas(this.store,path,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock)});
+   }catch{throw Object.assign(fail('COMMAND_DISPATCH_UNCONFIRMED','Retomada salva; entrega requer conferência.',503),{operationId:targetId});}
+  }
+  await event(this.store,{id:hash(id+':completed'),operationId:targetId,type:'command_recovery_queued',message:'Retomada da admissão registrada.',reelId:null,stage:target.stage??null},this.clock);
+  const current=(await this.store.get('reels_commands/'+targetId))?.data??target;
+  return {operation:current,recovery:{id,type:'resume_operation',targetOperationId:targetId,status:saved.data.status,createdAt:saved.data.createdAt,completedAt:saved.data.completedAt??null}};
  }
  async drain({operationId,pageSize=25}){
   if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);

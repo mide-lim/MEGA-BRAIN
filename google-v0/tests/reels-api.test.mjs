@@ -28,3 +28,27 @@ test('retry API preserves failed stage and excludes rejected saved candidates',a
  const override=await api(request('commands',{type:'retry',idempotencyKey:'retry-stage-override',stage:'acquisition',selection:{ids:['Reel_BAD']}}));assert.equal(override.status,400);assert.equal((await override.json()).code,'INVALID_STAGE');assert.equal(dispatches,0);
  assert.equal((await store.get('reels_executions/review_execution')).data.status,'failed');
 });
+
+test('admission recovery API is disabled by default and browser flags cannot enable it',async()=>{
+ const store=memory([reel()]),repository=new ReelsRepository({store,clock});let calls=0;
+ const api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,clock,onCommandQueued:async()=>{calls++;return {status:'sent'};}}),before=structuredClone([...store.docs]);
+ const response=await api(request('commands',{type:'resume_operation',targetOperationId:'a'.repeat(64),idempotencyKey:'disabled-recovery-api',processingEnabled:true}));
+ assert.equal(response.status,423);assert.equal((await response.json()).code,'PROCESSING_DISABLED');assert.equal(calls,0);assert.deepEqual([...store.docs],before);
+});
+test('admission recovery API preserves original selection and ID, scopes the recovery receipt and rejects injected input',async()=>{
+ const store=memory([reel()]),repository=new ReelsRepository({store,clock}),deliveries=[];
+ const api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,processingEnabled:true,clock,onCommandQueued:async(operation,options)=>{deliveries.push({operation:structuredClone(operation),options});return {status:'sent'};}});
+ const started=await api(request('commands',{type:'start',selection:{ids:['Reel_001']},idempotencyKey:'original-command-api'}));assert.equal(started.status,200);const original=(await started.json()).operation;assert.equal(original.status,'pending');
+ const recoveryInput={type:'resume_operation',targetOperationId:original.id,idempotencyKey:'recover-original-api'};
+ const response=await api(request('commands',recoveryInput));assert.equal(response.status,200);const recovered=await response.json();
+ assert.equal(recovered.operation.id,original.id);assert.deepEqual(recovered.operation.selected,original.selected);assert.equal(recovered.operation.cursor,original.cursor);assert.equal(recovered.recovery.targetOperationId,original.id);assert.notEqual(recovered.recovery.id,original.id);assert.equal(recovered.recovery.status,'completed');
+ assert.equal(deliveries.length,2);assert.equal(deliveries[1].operation.id,original.id);assert.equal(deliveries[1].options.recoveryId,recovered.recovery.id);
+ assert.equal([...store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,0);
+ const replay=await api(request('commands',recoveryInput));assert.equal(replay.status,200);assert.deepEqual(await replay.json(),recovered);assert.equal(deliveries.length,2);
+ const conflict=await api(request('commands',{...recoveryInput,targetOperationId:'b'.repeat(64)}));assert.equal(conflict.status,409);assert.equal((await conflict.json()).code,'IDEMPOTENCY_CONFLICT');
+ for(const extra of [{selection:{ids:['Reel_OTHER']}},{stage:'analysis'},{processingEnabled:true},{cursor:999},{recoveryId:'forged'}]){const rejected=await api(request('commands',{...recoveryInput,idempotencyKey:'invalid-recovery-api',...extra}));assert.equal(rejected.status,400);assert.equal((await rejected.json()).code,'INVALID_RECOVERY');}
+ const missing=await api(request('commands',{...recoveryInput,idempotencyKey:'unknown-recovery-api',targetOperationId:'c'.repeat(64)}));assert.equal(missing.status,409);assert.equal((await missing.json()).code,'OPERATION_NOT_RECOVERABLE');
+ const pause=await api(request('commands',{type:'pause',stage:'analysis',idempotencyKey:'pause-recovery-target'})),pauseId=(await pause.json()).operation.id;
+ const wrongType=await api(request('commands',{...recoveryInput,idempotencyKey:'control-not-recoverable',targetOperationId:pauseId}));assert.equal(wrongType.status,409);assert.equal((await wrongType.json()).code,'OPERATION_NOT_RECOVERABLE');
+ assert.equal(deliveries.length,2);assert.deepEqual((await store.get('reels_commands/'+original.id)).data.selected,original.selected);
+});

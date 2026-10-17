@@ -75,7 +75,7 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
   };
   const taxonomy=new ReelsTaxonomy({repository});
   const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
-  const service=new ReelsService({repository,processingEnabled:enabled,onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Despacho requer retomada.');return receipt;},onCommandQueued:operation=>dispatcher.enqueueControl(operation)});
+  const service=new ReelsService({repository,processingEnabled:enabled,onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Despacho requer retomada.');return receipt;},onCommandQueued:(operation,options)=>dispatcher.enqueueControl(operation,options)});
   const runner=new ReelsCommandRunner({service,dispatcher,enabled,pageSize:25});
   runtime={pipeline,store,repository,dispatcher,service,runner};return runtime;
  }

@@ -5,12 +5,12 @@ const legacy={acquisition:'upload',transcription:'transcription',analysis:'analy
 const validId=id=>/^[a-f0-9]{64}$/.test(id??'');
 export class ReelsDispatcher {
  constructor({api,store,routes,enabled=false,clock=Date.now}){Object.assign(this,{api,store,routes,clock});this.enabled=enabled===true;if(api.project!==PROJECT)throw Error('Projeto de filas inválido.');}
- async enqueueControl(operation,{sequence=operation.cursor??0}={}){
+ async enqueueControl(operation,{sequence=operation.cursor??0,recoveryId=null}={}){
   if(!this.enabled)return {status:'disabled'};
-  if(!validId(operation?.id)||!Number.isSafeInteger(sequence)||sequence<0)throw Error('Controle inválido.');
-  const id=hash('control:'+operation.id+':'+sequence);
-  await ensure(this.store,'reels_command_items/'+id,{id,kind:'control',operationId:operation.id,sequence,stage:'acquisition',status:'pending',createdAt:nowISO(this.clock)});
-  return this.dispatch({outboxId:id,stage:'acquisition',kind:'control',operationId:operation.id,sequence});
+  if(!validId(operation?.id)||!Number.isSafeInteger(sequence)||sequence<0||recoveryId!==null&&!validId(recoveryId))throw Error('Controle inválido.');
+  const id=hash('control:'+operation.id+':'+sequence+(recoveryId?':recovery:'+recoveryId:''));
+  await ensure(this.store,'reels_command_items/'+id,{id,kind:'control',operationId:operation.id,sequence,...(recoveryId?{recoveryId}:{}),stage:'acquisition',status:'pending',createdAt:nowISO(this.clock)});
+  return this.dispatch({outboxId:id,stage:'acquisition',kind:'control',operationId:operation.id,sequence,recoveryId});
  }
  async enqueue(job){
   if(!this.enabled)return {status:'disabled'};
@@ -35,7 +35,7 @@ export class ReelsDispatcher {
  async dispatch(intent){
   const {parent,task}=this.task(intent),path='reels_command_items/'+intent.outboxId;
   let snapshot=await this.store.get(path);const data=snapshot?.data;
-  if(!data||data.stage!==intent.stage||(intent.kind==='control'?(data.kind!=='control'||data.operationId!==intent.operationId||data.sequence!==intent.sequence):(data.executionId!==intent.id||data.poll!==Boolean(intent.poll))))throw Error('Outbox não corresponde à execução.');
+  if(!data||data.stage!==intent.stage||(intent.kind==='control'?(data.kind!=='control'||data.operationId!==intent.operationId||data.sequence!==intent.sequence||(data.recoveryId??null)!==(intent.recoveryId??null)):(data.executionId!==intent.id||data.poll!==Boolean(intent.poll))))throw Error('Outbox não corresponde à execução.');
   if(data.status==='sent')return {status:'sent',duplicate:true,taskName:data.taskName??task.name};
   if(!['pending','creating','uncertain'].includes(data.status))throw Error('Outbox inválida.');
   await cas(this.store,path,current=>current.status==='sent'?null:{status:'creating',taskName:task.name,requestHash:hash(task.httpRequest)});

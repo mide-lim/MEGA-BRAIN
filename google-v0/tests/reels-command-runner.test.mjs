@@ -24,7 +24,7 @@ function setup(videos=[]){
   if(!task)throw Object.assign(Error('missing'),{status:404});return structuredClone(task);
  }};
  const dispatcher=new ReelsDispatcher({api,store,routes,enabled:true});
- const service=new ReelsService({repository,processingEnabled:true,onCommandQueued:op=>dispatcher.enqueueControl(op),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('queue unavailable');return receipt;}});
+ const service=new ReelsService({repository,processingEnabled:true,onCommandQueued:(op,options)=>dispatcher.enqueueControl(op,options),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('queue unavailable');return receipt;}});
  return {store,repository,tasks,api,dispatcher,service};
 }
 test('all 3005 membership freezes before admission and restart drains finite durable pages',async()=>{
@@ -152,4 +152,46 @@ test('explicit resume redrives an exhausted sent task with the same queued execu
   const response=await runtime(new Request('https://acquisition.run.app/tasks/run',{method:'POST',body:JSON.stringify(body)}));assert.equal(response.status,200);
  }
  assert.equal(paid,1);assert.equal((await x.store.get('reels_executions/'+id)).data.status,'completed');
+});
+
+
+test('explicit admission recovery replaces an exhausted control task and preserves frozen membership through partial failure',async()=>{
+ const x=setup([reel('Reel_ONE'),reel('Reel_TWO'),reel('Reel_TRE')]),input={type:'start',idempotencyKey:'original-admission-recovery',selection:{all:true}};
+ const {operation}=await x.service.command(input),frozen=structuredClone(operation.selected),oldControl=[...x.tasks.values()][0];
+ const runner=new ReelsCommandRunner({service:x.service,dispatcher:x.dispatcher,enabled:true,pageSize:1});
+ const request=x.api.request;let failed=true;x.api.request=async(url,options)=>{
+  if(failed&&options?.json?.task?.httpRequest.url.endsWith('/tasks/run')){failed=false;throw Object.assign(Error('queue unavailable'),{status:503});}
+  return request(url,options);
+ };
+ await assert.rejects(()=>runner.run({operationId:operation.id}),/queue unavailable/);
+ assert.equal((await x.service.operation(operation.id)).operation.cursor,0);
+ x.tasks.delete(oldControl.name); // Queue exhausted its control delivery; outbox remains sent.
+ await x.store.create('videos/Reel_LATE',reel('Reel_LATE'));
+ const recoveryInput={type:'resume_operation',targetOperationId:operation.id,idempotencyKey:'recover-frozen-admission'};
+ const recovered=await x.service.command(recoveryInput);
+ assert.equal(recovered.operation.id,operation.id);assert.equal(recovered.recovery.status,'completed');assert.deepEqual(recovered.operation.selected,frozen);
+ const recoveryOutboxes=[...x.store.docs.values()].filter(r=>r.data.kind==='control'&&r.data.recoveryId===recovered.recovery.id);
+ assert.equal(recoveryOutboxes.length,1);
+ const fresh=[...x.tasks.values()].find(task=>task.httpRequest.url.endsWith('/tasks/control'));
+ assert.notEqual(fresh.name,oldControl.name);const control=JSON.parse(Buffer.from(fresh.httpRequest.body,'base64'));
+ assert.deepEqual(Object.keys(control).sort(),['operationId','outboxId','sequence']);assert.equal(control.operationId,operation.id);
+ await x.dispatcher.acknowledge({...control,stage:'acquisition'});await runner.run(control);
+ const count=x.tasks.size,replayed=await x.service.command(recoveryInput);assert.equal(replayed.recovery.id,recovered.recovery.id);assert.equal(x.tasks.size,count);
+ let current=(await x.service.operation(operation.id)).operation;
+ while(current.status!=='completed'){await runner.run({operationId:operation.id,sequence:current.cursor});current=(await x.service.operation(operation.id)).operation;}
+ assert.deepEqual(current.selected,frozen);assert.equal(current.accepted.length,3);assert.ok(!current.accepted.includes('Reel_LATE'));
+ assert.equal([...x.store.docs].filter(([path])=>path.startsWith('reels_executions/')).length,3);
+ assert.equal([...x.tasks.values()].filter(task=>task.httpRequest.url.endsWith('/tasks/run')).length,3);
+ const completedCount=x.tasks.size,completed=await x.service.command({type:'resume_operation',targetOperationId:operation.id,idempotencyKey:'completed-admission-recovery'});
+ assert.equal(completed.operation.status,'completed');assert.equal(completed.recovery.status,'completed');assert.equal(x.tasks.size,completedCount);
+ await assert.rejects(()=>x.service.command({...recoveryInput,targetOperationId:hash('another-target')}),e=>e.code==='IDEMPOTENCY_CONFLICT');
+ await assert.rejects(()=>x.service.command({type:'resume_operation',targetOperationId:recovered.recovery.id,idempotencyKey:'no-recovery-of-recovery'}),e=>e.code==='OPERATION_NOT_RECOVERABLE');
+});
+test('admission recovery defaults closed and rejects commands without the durable versioned contract',async()=>{
+ const x=setup(),id=hash('legacy-command');
+ await x.store.create('reels_commands/'+id,{id,type:'start',actor:'authorized-user',fingerprint:hash('legacy'),status:'pending',selected:[],cursor:0});
+ await assert.rejects(()=>x.service.command({type:'resume_operation',targetOperationId:id,idempotencyKey:'reject-legacy-recovery'}),e=>e.code==='OPERATION_NOT_RECOVERABLE');
+ const disabled=new ReelsService({repository:x.repository,onCommandQueued:()=>assert.fail('disabled recovery cannot dispatch')});
+ await assert.rejects(()=>disabled.command({type:'resume_operation',targetOperationId:id,idempotencyKey:'disabled-recovery'}),e=>e.code==='PROCESSING_DISABLED');
+ assert.equal(x.tasks.size,0);
 });

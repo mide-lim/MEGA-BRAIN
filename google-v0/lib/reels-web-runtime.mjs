@@ -22,7 +22,7 @@ export function reelsWebRuntime({repository,api,config={},clock=Date.now}){
  const dispatcher=new ReelsDispatcher({api,store,routes:config.stage_routes,enabled:processingEnabled,clock});
  const confirm=async promise=>{const receipt=await promise;if(receipt?.status!=='sent')throw fail('DISPATCH_UNCONFIRMED','Encaminhamento ainda sem confirmação. Recupere a mesma operação.',503);return receipt;};
  const onQueued=job=>confirm(dispatcher.enqueue(job));
- const onCommandQueued=operation=>confirm(dispatcher.enqueueControl(operation));
+ const onCommandQueued=(operation,options)=>confirm(dispatcher.enqueueControl(operation,options));
  const service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued});
  const taxonomy=new ReelsTaxonomy({repository,clock});
  // Deliberately no provider adapters in the web. Recovering an external

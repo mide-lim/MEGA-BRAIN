@@ -91,6 +91,9 @@ def incomplete(value):
             return True
         if explanation.get("error") or explanation.get("errors"):
             return True
+        if (key == "denyPolicyExplanation" and "permissionDeniable" in explanation
+                and not isinstance(explanation["permissionDeniable"], bool)):
+            return True
         if (key == "denyPolicyExplanation" and explanation.get("permissionDeniable") is False
                 and value.get("overallAccessState") == "CAN_ACCESS"
                 and explanation.get("denyAccessState") != "DENY_ACCESS_STATE_DENIED"):
@@ -194,7 +197,7 @@ def capture_requests(requests, session, clock=None, sleep_fn=None):
         data = response.json()
         # Preserve only diagnostic fields; never persist credentials/headers.
         allowed = ("overallAccessState", "accessTuple", "allowPolicyExplanation",
-                   "denyPolicyExplanation", "pabPolicyExplanation", "errors")
+                   "denyPolicyExplanation", "pabPolicyExplanation", "error", "errors")
         def states_only(value):
             # No recursive policy/binding/member maps: preserve only each
             # policy type's aggregate verdict and diagnostic support flags.
@@ -208,10 +211,25 @@ def capture_requests(requests, session, clock=None, sleep_fn=None):
         if isinstance(data, dict):
             for key in allowed:
                 if key in data:
-                    if key == "errors":
+                    if key in ("error", "errors"):
                         selected[key] = {"present":True} if data[key] else []
                     else:
                         selected[key] = data[key] if key in ("accessTuple", "overallAccessState") else states_only(data[key])
+        # Authenticated capture only: this proto3 implicit-presence bool is
+        # omitted from REST JSON when false. Do not infer this during import.
+        # Primary schema: googleapis/googleapis, policytroubleshooter/iam/v3/
+        # troubleshooter.proto, DenyPolicyExplanation bool permission_deniable=4.
+        # Mapping: protobuf.dev/programming-guides/json/#presence-and-default-values
+        if response.status_code == 200 and isinstance(data, dict):
+            summaries = [data.get(k, {}) for k in ("allowPolicyExplanation", "denyPolicyExplanation", "pabPolicyExplanation")]
+            no_errors = not (data.get("error") or data.get("errors")) and all(
+                isinstance(x, dict) and not (x.get("error") or x.get("errors")) for x in summaries)
+            allow, deny = data.get("allowPolicyExplanation"), data.get("denyPolicyExplanation")
+            if (no_errors and data.get("overallAccessState") == "CAN_ACCESS"
+                    and isinstance(allow, dict) and allow.get("allowAccessState") == "ALLOW_ACCESS_STATE_GRANTED"
+                    and isinstance(deny, dict) and "permissionDeniable" not in deny):
+                selected["denyPolicyExplanation"]["permissionDeniable"] = False
+                selected["denyPolicyExplanation"]["permissionDeniableDefaultedFromProto3"] = True
         if response.status_code != 200:
             error = data.get("error", {}) if isinstance(data, dict) else {}
             selected = {"error": {"code": error.get("code"), "status": error.get("status")}}

@@ -233,6 +233,65 @@ class RuntimeIamTests(unittest.TestCase):
                          {"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO", "permissionDeniable":True})
         self.assertFalse(iam.evaluate([requested], capture, now=NOW)["ready"])
 
+    def capture_fixture(self, data, http_status=200):
+        class Response:
+            status_code = http_status
+            def json(self):
+                return copy.deepcopy(data)
+        class Session:
+            def post(self, url, **kwargs):
+                return Response()
+        return iam.capture_requests(self.requests[:1], Session(), clock=lambda:NOW)
+
+    def test_capture_proto3_missing_false_is_normalized_only_for_definitive_success(self):
+        data = dict(overallAccessState="CAN_ACCESS",
+                    accessTuple={**self.requests[0]["accessTuple"], "conditionContext":{}},
+                    allowPolicyExplanation={"allowAccessState":"ALLOW_ACCESS_STATE_GRANTED"},
+                    denyPolicyExplanation={"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO"})
+        capture = self.capture_fixture(data)
+        deny = capture["checks"][0]["response"]["denyPolicyExplanation"]
+        self.assertIs(deny["permissionDeniable"], False)
+        self.assertIs(deny["permissionDeniableDefaultedFromProto3"], True)
+        self.assertTrue(iam.evaluate(self.requests[:1], capture, now=NOW)["ready"])
+        for flag in (None, "false", True, 0):
+            raw = copy.deepcopy(data)
+            raw["denyPolicyExplanation"]["permissionDeniable"] = flag
+            captured = self.capture_fixture(raw)
+            self.assertNotIn("permissionDeniableDefaultedFromProto3",
+                             captured["checks"][0]["response"]["denyPolicyExplanation"])
+            self.assertFalse(iam.evaluate(self.requests[:1], captured, now=NOW)["ready"])
+        for place in ("top", "allowPolicyExplanation", "denyPolicyExplanation"):
+            raw = copy.deepcopy(data)
+            target = raw if place == "top" else raw[place]
+            target["errors"] = [{"code":7}]
+            captured = self.capture_fixture(raw)
+            self.assertNotIn("permissionDeniableDefaultedFromProto3",
+                             captured["checks"][0]["response"]["denyPolicyExplanation"])
+            self.assertFalse(iam.evaluate(self.requests[:1], captured, now=NOW)["ready"])
+        captured = self.capture_fixture(data, http_status=403)
+        self.assertFalse(iam.evaluate(self.requests[:1], captured, now=NOW)["ready"])
+
+    def test_capture_unknown_and_cannot_access_never_become_defaulted_grants(self):
+        for state in ("UNKNOWN_INFO", "UNKNOWN_CONDITIONAL", "CANNOT_ACCESS"):
+            data = dict(overallAccessState=state, accessTuple=self.requests[0]["accessTuple"],
+                        allowPolicyExplanation={"allowAccessState":"ALLOW_ACCESS_STATE_GRANTED"},
+                        denyPolicyExplanation={"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO"})
+            capture = self.capture_fixture(data)
+            deny = capture["checks"][0]["response"]["denyPolicyExplanation"]
+            self.assertNotIn("permissionDeniable", deny)
+            self.assertNotIn("permissionDeniableDefaultedFromProto3", deny)
+            result = iam.evaluate(self.requests[:1], capture, now=NOW)
+            self.assertFalse(result["ready"])
+            self.assertEqual(result["checks"][0]["access"], "denied" if state == "CANNOT_ACCESS" else "unknown")
+
+    def test_import_raw_missing_bool_is_unknown_even_with_untrusted_default_marker(self):
+        first = self.capture["checks"][0]["response"]
+        first["allowPolicyExplanation"] = {"allowAccessState":"ALLOW_ACCESS_STATE_GRANTED"}
+        first["denyPolicyExplanation"] = {"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO",
+                                         "permissionDeniableDefaultedFromProto3":True}
+        self.assertEqual(self.result()["checks"][0]["access"], "unknown")
+        self.assertBlocked()
+
     def test_capture_paces_fixed_diagnostics_without_retrying(self):
         calls, pauses = [], []
         class Response:

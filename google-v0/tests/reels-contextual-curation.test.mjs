@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {projectContextualPublication,coverageStates,contextualRuleHash} from '../lib/reels-contextual-projection.mjs';
 import {parseContextualQuery,filterContextualEntries,buildContextualIndex} from '../lib/reels-contextual-index.mjs';
 import {ReelsContextualCurator} from '../lib/reels-contextual-curation.mjs';
+import {qualityCandidateHash,qualityDigest,qualitySourceManifest,verifyPublicationQualityReceipt} from '../lib/reels-quality-gate.mjs';
 
 const quote={source:'caption',excerpt:'300g de frango e uma frigideira.',start_seconds:0,end_seconds:0};
 function native(id='RecipeA1'){
@@ -83,4 +84,45 @@ test('read-only cache includes preserved sources, skips unpublished IDs and inva
  f.item.updatedAt='2026-10-17T12:01:00Z';f.video.source_caption.text='Arroz e água.';const second=await curator.overview();assert.equal(calls,4);assert.notEqual(first.versionHash,second.versionHash);
  now+=60001;await curator.overview();assert.equal(calls,6);
  assert.equal((await curator.detail(old.item.id)).sourceIdentity.kind,'legacy_preserved');assert.equal(await curator.detail('Unknown1'),null);
+});
+
+function v2Fixture(){
+ const f=native('V2Recipe1');
+ f.video.analysis.knowledge.fields=[];
+ f.video.analysis.contextualSignals={version:2,primaryContext:{categoryId:'receitas',purpose:'Preparar frango',evidenceRefs:['e1']},units:[],attributes:[{dimension:'ingredient',valueId:'frango',scope:'video',unitIds:[],role:'central',polarity:'positive',state:'supported',evidenceRefs:['e1']}],evidence:[{id:'e1',sourceKind:'caption',sourceIdentity:f.video.source_caption.capture_id,excerpt:quote.excerpt,verificationLevel:'semantic_support_reviewed',verifiedBy:'MODEL_SELF_ASSERTION'}]};
+ return f;
+}
+function serverReceipt(video,reviewed=['e1']){
+ const body={createdBy:'server:gate_v2',policyVersion:'gate_v2',verdict:'accepted',reelId:video.id,analysisKey:video.analysis_key,analysisGeneration:video.analysis_generation,candidateContentHash:qualityCandidateHash(video.analysis),sourceManifest:qualitySourceManifest(video),sourceManifestHash:qualityDigest(qualitySourceManifest(video)),checks:[{code:'SERVER_ACCEPTED_FIXTURE',state:'supported'}],gaps:[],contextualEvidence:video.analysis.contextualSignals.evidence.map(e=>({id:e.id,state:'supported',verificationLevel:reviewed.includes(e.id)?'semantic_support_reviewed':'literal_anchor_verified',...(reviewed.includes(e.id)?{reviewReceiptId:'independent-source-review-'+e.id}:{})}))};
+ const receipt={id:'quality_'+qualityDigest(body),...body};video.publication={qualityReceipt:{receiptId:receipt.id,receiptHash:qualityDigest(receipt)}};return receipt;
+}
+test('canonical v2 model claims cannot certify their own state/central role or evade receipt/source binding',()=>{
+ const f=v2Fixture(),unverified=projectContextualPublication(f);
+ assert.equal(unverified.attributes[0].state,'present_unverified');assert.equal(unverified.attributes[0].role,'unknown');assert.equal(unverified.sourceIdentity.qualityPolicyVersion,'historical_baseline');
+ const receipt=serverReceipt(f.video),verification=verifyPublicationQualityReceipt({video:f.video,receipt}),verified=projectContextualPublication({...f,qualityVerification:verification});
+ assert.equal(verification.trusted,true);assert.deepEqual(verification.verifiedEvidenceIds,['e1']);assert.equal(verified.attributes[0].state,'supported');assert.equal(verified.attributes[0].role,'central');assert.equal(verified.attributes[0].dimension,'ingredient');assert.equal(verified.attributes[0].polarity,'positive');assert.equal(verified.sourceIdentity.qualityPolicyVersion,'gate_v2');
+ const tampered=structuredClone(f);tampered.video.analysis.contextualSignals.evidence[0].sourceIdentity='other-capture';
+ const rejected=verifyPublicationQualityReceipt({video:tampered.video,receipt});assert.equal(rejected.trusted,false);
+ const invalid=projectContextualPublication({...tampered,qualityVerification:rejected});assert.equal(invalid.attributes[0].state,'invalid');
+});
+test('a valid accepted receipt with only literal anchor does not prove v2 semantic central role',()=>{
+ const f=v2Fixture(),receipt=serverReceipt(f.video,[]),verification=verifyPublicationQualityReceipt({video:f.video,receipt});
+ assert.equal(verification.trusted,true);assert.deepEqual(verification.verifiedEvidenceIds,[]);assert.deepEqual(verification.literalEvidenceIds,['e1']);
+ const e=projectContextualPublication({...f,qualityVerification:verification});assert.equal(e.attributes[0].state,'present_unverified');assert.equal(e.attributes[0].role,'unknown');assert.equal(filterContextualEntries([e],{dimension:'ingredient',value:'frango'}).length,0);
+});
+test('v2 recipe units require independent review plus existing temporal source proof before ALL/SAME_UNIT',()=>{
+ const f=v2Fixture();f.video.transcript='Frango na frigideira.';f.video.transcript_key='transcript/V2Recipe1';f.video.transcript_generation='3';
+ f.video.transcript_words=[{word:'Frango',start_seconds:0,end_seconds:0.5},{word:'na',start_seconds:0.5,end_seconds:0.8},{word:'frigideira',start_seconds:0.8,end_seconds:1.5}];
+ const signal=f.video.analysis.contextualSignals;signal.evidence.push({id:'unit1',sourceKind:'transcript',sourceIdentity:'transcript/V2Recipe1@3',excerpt:f.video.transcript,timeRange:{startSeconds:0,endSeconds:2},verificationLevel:'source_present'});
+ signal.units=[{unitId:'recipe1',type:'recipe',completeness:'complete',evidenceRefs:['unit1']}];signal.attributes[0].scope='unit';signal.attributes[0].unitIds=['recipe1'];
+ const receipt=serverReceipt(f.video,['e1','unit1']),verification=verifyPublicationQualityReceipt({video:f.video,receipt}),e=projectContextualPublication({...f,qualityVerification:verification});
+ assert.equal(e.independentUnitCount,1);assert.equal(e.format.value,'single_recipe');assert.equal(filterContextualEntries([e],{dimension:'ingredient',value:'frango',quantifier:'ALL'}).length,1);
+ const missingWords=structuredClone(f);delete missingWords.video.transcript_words;
+ const without=projectContextualPublication({...missingWords,qualityVerification:verification});assert.equal(without.independentUnitCount,null);assert.equal(without.attributes[0].state,'unknown');assert.equal(filterContextualEntries([without],{dimension:'ingredient',value:'frango',quantifier:'ALL'}).length,0);
+});
+test('materialization verifies canonical v2 using only the publication-linked server receipt',async()=>{
+ const f=v2Fixture(),receipt=serverReceipt(f.video),reads=[];
+ const repository={items:async()=>[f.item],raw:async()=>f.video,store:{get:async path=>{reads.push(path);assert.equal(path,'reels_quality_receipts/'+receipt.id);return {data:receipt};}},categories:async()=>({nodes:[]})};
+ const curator=new ReelsContextualCurator({repository});const d=await curator.detail(f.item.id);
+ assert.equal(d.contextualSignals.receiptTrusted,true);assert.equal(d.attributes[0].role,'central');assert.deepEqual(reads,['reels_quality_receipts/'+receipt.id]);
 });

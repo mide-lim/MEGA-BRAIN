@@ -74,17 +74,25 @@ test('web command flows through durable Tasks and three workers to LRO collectio
  assert.equal(operation.status,'pending');assert.equal(operation.accepted.length,0);assert.equal(x.tasks.size,1);assert.deepEqual(calls,{upload:0,transcription:0,analysis:0,polls:0});
  const doubleClick=await handle(post('commands',input));assert.equal((await doubleClick.json()).operation.id,operation.id);assert.equal(x.tasks.size,1);
  const beforeRead=x.requests.length;await handle(get('commands/'+operation.id));assert.equal(x.requests.length,beforeRead);
- const delivered=new Set();
+ const delivered=new Set(),attempts=new Map();let rounds=0,backpressure=0;
  while(true){
-  const task=[...x.tasks.values()].find(t=>!delivered.has(t.name));if(!task)break;delivered.add(task.name);
-  const stage=task.name.includes('/queues/v0-acquisition/')?'acquisition':task.name.includes('/queues/v0-transcription/')?'transcription':'analysis';
-  assert.equal(task.httpRequest.oidcToken.serviceAccountEmail,`v0-queue@${project}.iam.gserviceaccount.com`);assert.equal(task.httpRequest.oidcToken.audience,new URL(task.httpRequest.url).origin);
-  const body=Buffer.from(task.httpRequest.body,'base64').toString(),request=()=>new Request(task.httpRequest.url,{method:'POST',body});
-  const result=await workers[stage](request());assert.equal(result.status,200,JSON.stringify(await result.clone().json()));
-  const payload=JSON.parse(body);
-  if(!payload.poll&&payload.executionId){const duplicate=await workers[stage](request());assert.equal(duplicate.status,200);}
-  assert.ok(delivered.size<25,'finite task graph');
+  const pending=[...x.tasks.values()].filter(t=>!delivered.has(t.name));if(!pending.length)break;
+  assert.ok(++rounds<25,'finite task graph with retryable delivery retention');
+  for(const task of pending){
+   attempts.set(task.name,(attempts.get(task.name)??0)+1);assert.ok(attempts.get(task.name)<20,'finite attempts per synthetic task');
+   const stage=task.name.includes('/queues/v0-acquisition/')?'acquisition':task.name.includes('/queues/v0-transcription/')?'transcription':'analysis';
+   assert.equal(task.httpRequest.oidcToken.serviceAccountEmail,`v0-queue@${project}.iam.gserviceaccount.com`);assert.equal(task.httpRequest.oidcToken.audience,new URL(task.httpRequest.url).origin);
+   const body=Buffer.from(task.httpRequest.body,'base64').toString(),request=()=>new Request(task.httpRequest.url,{method:'POST',body});
+   const before=structuredClone(calls),result=await workers[stage](request()),reply=await result.json();
+   if(result.status===503){assert.equal(reply.reason,'TECHNICAL_BACKPRESSURE');assert.deepEqual(calls,before);backpressure++;continue;}
+   assert.equal(result.status,200,JSON.stringify(reply));delivered.add(task.name);
+   const payload=JSON.parse(body);
+   if(!payload.poll&&payload.executionId){const duplicate=await workers[stage](request());assert.equal(duplicate.status,200);}
+   assert.ok(delivered.size<25,'finite task graph');
+  }
  }
+ assert.ok(backpressure>0,'capacity one must retain a queued second STT delivery until the first poll completes');
+ assert.ok([...attempts.values()].some(count=>count>1));
  assert.deepEqual(calls,{upload:2,transcription:2,analysis:2,polls:4});
  const receipt=await (await handle(get('commands/'+operation.id))).json();assert.equal(receipt.operation.status,'completed');assert.equal(receipt.operation.progress.processed,2);
  for(const id of ['Reel_001','Reel_002']){

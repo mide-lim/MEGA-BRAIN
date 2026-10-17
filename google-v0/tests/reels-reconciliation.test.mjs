@@ -24,7 +24,7 @@ test('inspection is read only, private receipts stay private, default gate stays
  await assert.rejects(()=>c.reconciliation.command(input()),e=>e.code==='PROCESSING_DISABLED');assert.deepEqual([...c.store.docs],before);
 });
 test('legacy artifacts, foreign owner, changed payload and changed version cannot prove this paid execution',async()=>{
- for(const corrupt of [job=>delete job.resultEvidence,job=>job.resultEvidence.owner='other_owner',job=>job.rawResult.changes.analysis.summary='altered',job=>job.resultEvidence.schemaVersion=2,job=>job.resultEvidence.executionId='other_execution']){
+ for(const corrupt of [job=>job.resultEvidence=null,job=>job.resultEvidence.owner='other_owner',job=>job.rawResult.changes.analysis.summary='altered',job=>job.resultEvidence.schemaVersion=2,job=>job.resultEvidence.executionId='other_execution']){
   const c=await setup(),snapshot=await c.store.get('reels_executions/'+c.job.id),job=snapshot.data;corrupt(job);await c.store.patch('reels_executions/'+c.job.id,job,{updateTime:snapshot.updateTime});
   const before=structuredClone([...c.store.docs]);assert.equal((await c.reconciliation.inspect(c.job.id)).actions.length,0);
   await assert.rejects(()=>c.reconciliation.command(input()),e=>e.code==='RECONCILIATION_UNAVAILABLE');assert.deepEqual([...c.store.docs],before);

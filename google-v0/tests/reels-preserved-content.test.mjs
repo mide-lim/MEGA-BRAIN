@@ -25,7 +25,14 @@ test('current Google result wins and uncertainty is never hidden by old preserve
 });
 test('all processing command paths enforce migration hold even with processing enabled',async()=>{
  const docs={'videos/Reel_00001':{id:'Reel_00001',status:'registered',import_hold:{active:true}},'videos/Reel_00002':{id:'Reel_00002',status:'failed',failure_confirmed:true,import_hold:{active:true}},'videos/Reel_00003':{id:'Reel_00003',status:'analyzed',analysis_key:'a',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{},import_hold:{active:true}}};
- const store=memoryReelsStore(docs),service=new ReelsService({repository:new ReelsRepository({store}),processingEnabled:true});for(const [n,type]of ['start','retry','complement'].entries()){const result=await service.command({type,idempotencyKey:'held-command-'+n,selection:{ids:['Reel_00001','Reel_00002','Reel_00003']}});assert.deepEqual(result.operation.accepted,[]);}assert.equal([...store.docs.keys()].some(k=>k.startsWith('reels_executions/')),false);
+ const store=memoryReelsStore(docs),service=new ReelsService({repository:new ReelsRepository({store}),processingEnabled:true,onCommandQueued:async()=>({status:'sent'}),onQueued:()=>assert.fail('held Reel cannot dispatch a stage')});
+ for(const [n,type]of ['start','retry','complement'].entries()){
+  const result=await service.command({type,idempotencyKey:'held-command-'+n,selection:{ids:['Reel_00001','Reel_00002','Reel_00003']}});
+  assert.equal(result.operation.status,'pending');assert.deepEqual(result.operation.accepted,[]);
+  const drained=await service.drain({operationId:result.operation.id});assert.equal(drained.operation.status,'completed');assert.deepEqual(drained.operation.accepted,[]);
+ }
+ assert.equal([...store.docs.keys()].some(k=>k.startsWith('reels_executions/')),false);
+ for(const [path,data]of Object.entries(docs))assert.deepEqual((await store.get(path)).data,data);
 });
 test('history is paged, filtered, inert and detached rows do not reappear in Reel details',async()=>{
  const docs={};for(let n=0;n<103;n++){const row=historical(n);docs['reels_historical_activity/'+row.id]=row;}const detached=historical(104,{reason:'NEW_REGISTERED_COPY_HISTORY_DETACHED'});docs['reels_historical_activity/'+detached.id]=detached;

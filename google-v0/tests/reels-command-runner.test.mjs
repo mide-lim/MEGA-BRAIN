@@ -5,6 +5,7 @@ import {ReelsService} from '../lib/reels-service.mjs';
 import {ReelsCommandRunner} from '../lib/reels-command-runner.mjs';
 import {ReelsDispatcher} from '../lib/reels-dispatcher.mjs';
 import {hash} from '../lib/reels-runtime.mjs';
+import {executionId} from '../lib/reels-pipeline.mjs';
 import {reelsGoogleRuntime} from '../lib/reels-google-runtime.mjs';
 import {workerHTTP} from '../lib/worker-http.mjs';
 function memory(videos=[]){const docs=new Map(videos.map(v=>['videos/'+v.id,{data:structuredClone(v),updateTime:'1'}]));let version=1;const store={docs,get:async p=>structuredClone(docs.get(p)??null),create:async(p,d)=>{if(docs.has(p))return {created:false};const r={data:structuredClone(d),updateTime:String(++version)};docs.set(p,r);return {created:true,...structuredClone(r)};},patch:async(p,d,{updateTime}={})=>{const old=docs.get(p);if(old?.updateTime!==updateTime)throw Object.assign(Error('conflict'),{status:412});const r={data:{...old.data,...structuredClone(d)},updateTime:String(++version)};docs.set(p,r);return structuredClone(r);},list:async(c,{pageSize=100,pageToken}={})=>{const rows=[...docs].filter(([p])=>p.startsWith(c+'/')).sort(([a],[b])=>a.localeCompare(b)),n=Number(pageToken??0);return {records:rows.slice(n,n+pageSize).map(([path,r])=>({path,...structuredClone(r)})),nextPageToken:n+pageSize<rows.length?String(n+pageSize):null};},query:async(c,{limit=500,cursor,select,filters=[]}={})=>{let rows=[...docs].filter(([p])=>p.startsWith(c+'/')).sort(([a],[b])=>a.localeCompare(b));for(const f of filters)rows=rows.filter(([,v])=>v.data[f.field]===f.value);const n=Number(cursor??0);return {records:rows.slice(n,n+limit).map(([path,r])=>({path,...structuredClone(r)})),nextCursor:n+limit<rows.length?String(n+limit):null,lastCursor:String(Math.min(n+limit,rows.length))};}};return store;}
@@ -110,4 +111,45 @@ test('HTTP control reaches acquisition only and admits without opening provider 
   const wrong=reelsGoogleRuntime(config,{}, {stage:'transcription',authorize:()=>true,dependencies});
   assert.equal((await wrong(new Request('https://transcription.run.app/tasks/control',{method:'POST',body:JSON.stringify(body)}))).status,409);
  }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('explicit resume redrives an exhausted sent task with the same queued execution and no paid replay',async()=>{
+ const x=setup([reel('Reel_ONE')]),started=await x.service.command({type:'start',idempotencyKey:'initial-paused-task',selection:{ids:['Reel_ONE']}});
+ const runner=new ReelsCommandRunner({service:x.service,dispatcher:x.dispatcher,enabled:true,pageSize:1});
+ await runner.run({operationId:started.operation.id});
+ const id=executionId(started.operation.id,'Reel_ONE','acquisition'),prior=await x.store.get('reels_executions/'+id);
+ const oldTask=[...x.tasks.values()].find(t=>t.httpRequest.url.endsWith('/tasks/run')),oldBody=JSON.parse(Buffer.from(oldTask.httpRequest.body,'base64'));
+ assert.equal((await x.store.get('reels_command_items/'+oldBody.outboxId)).data.status,'sent');
+ x.tasks.delete(oldTask.name); // Synthetic Cloud Tasks retry exhaustion/tombstone.
+ await x.store.create('reels_controls/acquisition',{id:'acquisition',paused:true,desiredConcurrency:1,active:[],appliedCommands:[]});
+ const preserved=[];
+ for(const [n,status]of ['submitting','waiting','uncertain','queued'].entries()){
+  const reelId='Blocked_'+n,operationId=hash('blocked-operation-'+n),jobId=executionId(operationId,reelId,'acquisition');
+  await x.store.create('videos/'+reelId,{id:reelId,status:'registered',...(status==='queued'?{import_hold:{active:true}}:{}),reels_v2:{status,stage:'acquisition',executionId:jobId,operationId}});
+  const job={id:jobId,operationId,reelId,stage:'acquisition',status};await x.store.create('reels_executions/'+jobId,job);preserved.push(job);
+ }
+ for(const [field,value]of [['rawResult',{changes:{transcript:'already saved'}}],['operationName','projects/fake/locations/us/operations/existing'],['owner','claimed-owner'],['submittedAt','2026-10-17T03:00:00Z']]){
+  const reelId='Saved_'+field,operationId=hash('saved-'+field),jobId=executionId(operationId,reelId,'acquisition');
+  await x.store.create('videos/'+reelId,{id:reelId,reels_v2:{status:'queued',stage:'acquisition',executionId:jobId,operationId}});
+  const job={id:jobId,operationId,reelId,stage:'acquisition',status:'queued',[field]:value};
+  await x.store.create('reels_executions/'+jobId,job);preserved.push(job);
+ }
+ await x.store.create('reels_executions/legacy_queued',{id:'legacy_queued',operationId:'legacy',reelId:'Reel_ONE',stage:'acquisition',status:'queued'});
+ const input={type:'resume',stage:'acquisition',idempotencyKey:'explicit-queue-redrive'},resumed=await x.service.command(input);
+ assert.equal(resumed.operation.status,'pending');assert.deepEqual(resumed.operation.selected,[id]);assert.equal(resumed.operation.admissionMode,'queued_redrive');
+ assert.equal((await x.store.get('reels_controls/acquisition')).data.paused,false);
+ await runner.run({operationId:resumed.operation.id});
+ assert.equal((await x.store.get('reels_executions/'+id)).updateTime,prior.updateTime,'redrive cannot reset or rewrite the execution');
+ const freshTask=[...x.tasks.values()].find(t=>t.httpRequest.url.endsWith('/tasks/run'));
+ const freshBody=JSON.parse(Buffer.from(freshTask.httpRequest.body,'base64'));
+ assert.equal(freshBody.executionId,id);assert.notEqual(freshTask.name,oldTask.name);assert.notEqual(freshBody.outboxId,oldBody.outboxId);
+ assert.equal((await x.store.get('reels_command_items/'+freshBody.outboxId)).data.redriveId,resumed.operation.id);
+ const tasksBeforeReplay=x.tasks.size;await x.service.command(input);assert.equal(x.tasks.size,tasksBeforeReplay);
+ for(const job of preserved)assert.deepEqual((await x.store.get('reels_executions/'+job.id)).data,job);
+ let paid=0;const runtime=reelsGoogleRuntime({project,reels_runtime_version:'v2',reels_processing_enabled:true,stage_routes:routes},{},{stage:'acquisition',authorize:()=>true,dependencies:{...x,storage:{metadata:async()=>null},tools:{},operationsFactory:()=>({upload:async()=>{paid++;return {changes:{video_key:'synthetic-preserved'}};}})}});
+ for(const body of [freshBody,freshBody,oldBody]){
+  const response=await runtime(new Request('https://acquisition.run.app/tasks/run',{method:'POST',body:JSON.stringify(body)}));assert.equal(response.status,200);
+ }
+ assert.equal(paid,1);assert.equal((await x.store.get('reels_executions/'+id)).data.status,'completed');
 });

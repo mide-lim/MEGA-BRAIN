@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {makeContextualCalibrationFixture} from './reels-contextual-calibration-fixture.mjs';
-import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {withFiniteContextualProofs,prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {projectReel,categoryNavigation} from '../lib/reels-model.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 function fixture(){
  const input=makeContextualCalibrationFixture(),{plan}=prepareContextualCategoryPlan(input),docs=new Map(input.records.map(r=>{const s=JSON.parse(r.sourceJson);return ['videos/'+s.video.id,s.video];})),taxonomy=structuredClone(input.taxonomy.data),reads=[];
@@ -67,4 +68,19 @@ test('raw category pointer cannot bypass disabled finite rule, while explicit hu
  assert.equal((await f.repository.list({workspace:'library',category:g.categoryId})).total,0);
  f.taxonomy.assignments.push({reelId:id,categoryIds:[g.categoryId],manual:true,revision:99});
  const human=await f.repository.list({workspace:'library',category:g.categoryId});assert.deepEqual(human.items.map(i=>i.id),[id]);
+});
+
+test('a stale projected item never overrules a fresh manual source edit or withdrawn publication',async()=>{
+ const f=fixture(),group=f.plan.groups[0],id=group.members[0].id,video=structuredClone(f.docs.get('videos/'+id)),stale=projectReel(video);
+ assert.equal(stale.publication.available,true);assert.notEqual(stale.categoryOverride?.manual,true);
+ const baseline=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video})});
+ assert.ok(categoryNavigation(baseline,f.taxonomy).items[0].categoryIds.includes(group.categoryId));
+ const freshManual={...video,taxonomy_override:{manual:true,revision:99}};
+ const afterEdit=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video:freshManual})});
+ assert.equal(afterEdit[0].contextualSourceProof,undefined);
+ assert.equal(categoryNavigation(afterEdit,f.taxonomy).items[0].categoryIds.includes(group.categoryId),false);
+ const withdrawn={...video,analysis_generation:null,analysis_quality_status:'review_required',publication:{available:false}};
+ const afterWithdrawal=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video:withdrawn})});
+ assert.equal(afterWithdrawal[0].contextualSourceProof,undefined);
+ assert.equal(categoryNavigation(afterWithdrawal,f.taxonomy).items[0].categoryIds.includes(group.categoryId),false);
 });

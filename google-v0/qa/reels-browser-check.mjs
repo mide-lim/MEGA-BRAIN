@@ -104,7 +104,7 @@ try {
   await quality.getByText('Publicação histórica · regra anterior',{exact:true}).waitFor();
   await quality.getByRole('button',{name:/Receita publicada/}).click();
   const detail=curate.getByRole('dialog',{name:'Receita publicada',exact:true}),proof=detail.getByRole('region',{name:'Contexto desta publicação',exact:true});
-  const chicken=proof.locator('.contextual-attribute-list article').filter({has:curate.getByText('Frango',{exact:true})});
+  const chicken=proof.locator('.contextual-attribute-list article').filter({has:curate.getByText('Frango',{exact:true})}).filter({has:curate.getByText('300g de frango',{exact:true})});
   await chicken.getByText('Elemento de apoio',{exact:false}).waitFor();await chicken.getByText('Por que este elemento aparece',{exact:true}).click();await chicken.getByText('300g de frango',{exact:true}).waitFor();await closeDialog(curate);
   await navigate(curate,'Categorias');await curate.getByRole('region',{name:'Curadoria do acervo',exact:true}).getByRole('heading',{name:'Contextos, elementos e recorrências',exact:true}).waitFor();
   await navigate(curate,'Filas');assert.equal(await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).inputValue(),'Receita publicada');
@@ -123,6 +123,45 @@ try {
   const fryer=mentionsData.facets.find(f=>f.dimensionId==='tool'&&f.valueId==='air-fryer');assert.ok(fryer,'Saved literal reference must be available as a mention');assert.equal(fryer.supportCount,0);assert.equal(fryer.mentionedCount,1);
   assert.equal(server.calls.filter(x=>['/api/reels/commands','/api/reels/categories'].includes(x.path)&&x.method==='POST').length,writeCount,'Read-only curation must not issue commands or write taxonomy');
   await curate.screenshot({path:join(output,'reels-two-curations-contextual.png'),fullPage:true});await curate.close();
+ });
+
+
+ await record('contextual_same_dimension_or_preserves_options_and_source_age_metadata',async()=>{
+  const template=structuredClone((await server.store.get('videos/QaPub_food')).data),id='QaPub_fish',oldSource='2020-01-02T03:04:05.000Z';
+  const fish={...template,id,title:'Receita de peixe publicada',analysis_key:'qa/'+id+'/published.json',source_url:'https://www.instagram.com/reel/'+id+'/',source_caption:{capture_id:'qa-fish-caption',source:'instagram',text:'300g de peixe.'}};
+  fish.analysis={...template.analysis,title:fish.title,summary:'Receita de peixe salva para a navegação.',source_consolidation:{sources:[{source:'caption',capture_id:'qa-fish-caption',text:'300g de peixe.'}]},knowledge:{context:'recipe',fields:[{kind:'ingredient',name:'Peixe',value:'300g',role:'supporting',polarity:'positive',evidence:[{source:'caption',excerpt:'300g de peixe',start_seconds:0,end_seconds:0}]}]}};
+  await server.store.create('videos/'+id,fish);
+  const orPage=await context.newPage();
+  try {
+   await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   const filters=orPage.locator('.contextual-library-filters');await filters.locator('summary').first().click();
+   await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');
+   const chicken=responseFor(orPage,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"value":"frango"'));
+   await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');assert.equal((await (await chicken).json()).total,1);
+   await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('ingredient');
+   await filters.getByLabel('Elemento 2',{exact:true}).locator('option[value="peixe"]').waitFor({state:'attached'});
+   assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),'ANY','A new row in an existing dimension must inherit its group relation');
+   const union=responseFor(orPage,'/api/reels/items',url=>{const values=JSON.parse(url.searchParams.get('facets')||'[]').filter(f=>f.dimension==='ingredient'&&f.quantifier==='ANY').map(f=>f.value);return values.includes('frango')&&values.includes('peixe');});
+   await filters.getByLabel('Elemento 2',{exact:true}).selectOption('peixe');assert.equal((await (await union).json()).total,2);
+   await orPage.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   for(const relation of ['ALL','SAME_UNIT','ANY']){
+    const grouped=responseFor(orPage,'/api/reels/items',url=>{const facets=JSON.parse(url.searchParams.get('facets')||'[]');return facets.length===2&&facets.every(f=>f.dimension==='ingredient'&&f.quantifier===relation);});
+    await filters.getByLabel('Relação 1',{exact:true}).selectOption(relation);const response=await grouped;assert.equal(response.status(),200);assert.equal((await response.json()).total,relation==='ANY'?2:0);
+    assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),relation,'Changing relation updates every value in the same dimension');
+   }
+
+   // Explicit synthetic metadata injection checks presentation only. Backend
+   // tests separately prove sourceStale/dataAsOf originate from a failed refresh.
+   server.staleNext('/api/reels/contextual',oldSource,2);
+   const staleFilters=responseFor(orPage,'/api/reels/contextual',(_,r)=>r.status()===200);
+   await orPage.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await staleFilters;
+   await filters.locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();
+   const detailPath='/api/reels/contextual/QaPub_food';server.staleNext(detailPath,oldSource);await orPage.locator('.library-card').filter({hasText:'Receita publicada'}).click();
+   const detail=orPage.getByRole('dialog',{name:'Receita publicada',exact:true}).getByRole('region',{name:'Contexto desta publicação',exact:true});
+   await detail.locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();await closeDialog(orPage);
+   server.staleNext('/api/reels/contextual',oldSource);await navigate(orPage,'Categorias');
+   await orPage.getByRole('region',{name:'Curadoria do acervo',exact:true}).locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();
+  } finally {await orPage.close();server.store.docs.delete('videos/'+id);}
  });
 
  await record('discovery_first_preview_global_scope_and_preserved_legacy_evidence_gaps',async()=>{

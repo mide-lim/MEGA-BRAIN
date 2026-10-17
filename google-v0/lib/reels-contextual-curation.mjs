@@ -18,8 +18,14 @@ export class ReelsContextualCurator{
  invalidate(){this.snapshot=null;}
  async snapshotData(){
   const all=await this.repository.items(),items=all.filter(i=>i.publication?.available);
-  const metadataHash=contextualHash({rule:contextualRuleHash,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title})).sort((a,b)=>a.id.localeCompare(b.id))});
-  if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock())return this.snapshot;
+  const metadataHash=contextualHash({rule:contextualRuleHash,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
+  if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock()){
+   // An unchanged catalogue signature does not make a failed source refresh
+   // fresh. Preserve original source observation time and disclose staleness now.
+   const observation=this.repository.observation?.()??{};
+   this.snapshot.sourceStale=this.snapshot.sourceStale||observation.cache?.stale===true;
+   return this.snapshot;
+  }
   if(this.pending){await this.pending;return this.snapshotData();}
   this.pending=(async()=>{
    const started=this.clock(),entries=await mapLimited(items,this.readConcurrency,async item=>{
@@ -63,7 +69,8 @@ export class ReelsContextualCurator{
  async detail(id){
   if(!reelIdPattern.test(id??''))throw bad();
   const snapshot=await this.snapshotData(),entry=snapshot.entries.find(e=>e.id===id);if(!entry)return null;
-  return {...entry,observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,sourceStale:snapshot.sourceStale,processingStarted:false};
+  const {searchText:privateSearchText,...detail}=entry;
+  return {...detail,observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,sourceStale:snapshot.sourceStale,processingStarted:false};
  }
 }
 export default ReelsContextualCurator;

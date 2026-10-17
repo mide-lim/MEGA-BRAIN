@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {publicationAvailable} from './reels-model.mjs';
 import {preservedContentAvailable} from './reels-preserved-content.mjs';
 import {recipeRecurrence} from './reels-taxonomy.mjs';
+import {evidenceWindow} from './reels-speech-evidence.mjs';
 import {normalizeContextualSignalsV2} from './reels-contextual-v2.mjs';
 
 export const contextualVersion='contextual-curation-v1';
@@ -42,7 +43,7 @@ const vocabulary={
   ['fritar','Fritar',['fritar','frito','frita','frying']]
  ]
 };
-export const contextualRuleHash=contextualHash({version:contextualVersion,vocabulary,states:coverageStates,dimensions:dimensionDefinitions,evidence:'literal-captured-caption-or-transcript;visual-candidate;recipe-independent-temporal-v1',role:'typed-inclusion-is-supporting-not-primary-protein',contextualV2:'server-bound-independent-review-and-versioned-source-v2',automatic:false});
+export const contextualRuleHash=contextualHash({version:contextualVersion,vocabulary,states:coverageStates,dimensions:dimensionDefinitions,evidence:'literal-captured-caption-or-transcript;visual-candidate;recipe-independent-temporal-v1',role:'typed-inclusion-is-supporting-not-primary-protein',unitBinding:'literal-source-containment-and-temporal-proof-v2',search:'matchesReel-public-fields-only',contextualV2:'source-reviews-not-propositional;unverified-v2',automatic:false});
 const emptyDimension=(dimensionId,state,reason)=>({dimensionId,state,reason});
 const validNumber=v=>Number.isFinite(v)&&v>=0;
 const captionText=raw=>typeof raw.source_caption==='string'?raw.source_caption:raw.source_caption?.text;
@@ -85,6 +86,17 @@ function polarity(field,proofs){
  // made from an untyped keyword in a source sentence.
  return proofs.some(p=>/\b(nao|sem|not|without|never)\b/.test(normalize(p.excerpt)))?'unknown':'positive';
 }
+// A source anchor or an existing unit ID does not establish an association.
+// Caption quotes must occur in exactly one independently proved unit. Transcript
+// quotes additionally require real word timing within that unit's evidence.
+function proofBindsUnit(raw,proof,unit,allUnits){
+ if(proof.state!=='supported'||!proof.excerpt||!['caption','transcript'].includes(proof.source))return false;
+ const candidates=allUnits.filter(u=>u.evidence.some(up=>up.state==='supported'&&up.source==='transcript'&&up.excerpt.includes(proof.excerpt)));
+ if(candidates.length!==1||candidates[0].id!==unit.id)return false;
+ if(proof.source==='caption')return true;
+ const sourceProof={source:'transcript',excerpt:proof.excerpt,start_seconds:proof.startSeconds,end_seconds:proof.endSeconds};
+ return evidenceWindow(raw,sourceProof)&&unit.evidence.some(up=>up.source==='transcript'&&up.excerpt.includes(proof.excerpt)&&proof.startSeconds>=up.startSeconds&&proof.endSeconds<=up.endSeconds);
+}
 function sourceIdentity(raw,legacy,id){
  if(publicationAvailable(raw))return {kind:'native',reelId:id,analysisKey:raw.analysis_key,analysisGeneration:raw.analysis_generation,qualityPolicyVersion:'historical_baseline',sourceHash:contextualHash({key:raw.analysis_key,generation:raw.analysis_generation})};
  if(preservedContentAvailable(legacy,id))return {kind:'legacy_preserved',reelId:id,recordHash:legacy.provenance.recordHash,sourceSnapshotHash:legacy.provenance.sourceSnapshotHash,qualityPolicyVersion:'historical_baseline',sourceHash:contextualHash({recordHash:legacy.provenance.recordHash,sourceSnapshotHash:legacy.provenance.sourceSnapshotHash})};
@@ -120,12 +132,11 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   let state=attributeState(proofs);
   if(state==='supported'&&!proofs.some(p=>p.state==='supported'&&aliases.some(a=>quoteHas(p.excerpt,a))))state='present_unverified';
   const pol=polarity(f,proofs),requestedRole=safeRole(f.role,'supporting'),role=pol==='negated'?'excluded':requestedRole==='central'?'supporting':requestedRole;
-  const requestedUnits=list(f.unit_ids??f.unitIds),unitIds=requestedUnits.filter(x=>validUnits.some(u=>u.id===x));
-  if(requestedUnits.length!==unitIds.length){state='unknown';unitIds.splice(0);}
-  // Only one independently verified unit makes a field's recipe association
-  // unambiguous. Multi-unit association always requires explicit unit IDs.
-  if(!requestedUnits.length&&unitCount===1)unitIds.push(validUnits[0].id);
-  attributes.push({id:contextualHash({identity,dimension,valueId,field:f}),dimensionId:dimension,dimension,valueId,label,state,role,claimedRole:requestedRole,polarity:pol,unitIds:[...new Set(unitIds)],evidence:proofs});
+  const requestedUnits=list(f.unit_ids??f.unitIds),candidateUnits=requestedUnits.length?validUnits.filter(u=>requestedUnits.includes(u.id)):validUnits;
+  const unitIds=candidateUnits.filter(u=>proofs.some(proof=>aliases.some(alias=>quoteHas(proof.excerpt,alias))&&proofBindsUnit(raw,proof,u,validUnits))).map(u=>u.id);
+  const unitLink={state:unitIds.length?'supported':'unknown',reason:unitIds.length?'SOURCE_EVIDENCE_BOUND_TO_INDEPENDENT_UNIT':'ATTRIBUTE_UNIT_ASSOCIATION_NOT_PROVEN'};
+  if(requestedUnits.length&&(requestedUnits.length!==unitIds.length||!requestedUnits.every(u=>unitIds.includes(u)))){state='unknown';unitIds.splice(0);unitLink.state='unknown';unitLink.reason='DECLARED_UNIT_EVIDENCE_MISMATCH';}
+  attributes.push({id:contextualHash({identity,dimension,valueId,field:f}),dimensionId:dimension,dimension,valueId,label,state,role,claimedRole:requestedRole,polarity:pol,unitLink,unitIds:[...new Set(unitIds)],evidence:proofs});
  }
  const v2=modern?normalizeContextualSignalsV2({raw,identity,verification:qualityVerification,makeEvidence:evidence}):null;
  if(v2){
@@ -151,5 +162,5 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   return emptyDimension(d.id,state??(context.value===null||unmapped?'unknown':'not_recorded'),a.length?'SAVED_TYPED_ATTRIBUTE':unmapped?'CONTROLLED_VALUE_NOT_MAPPED':modern?'ATTRIBUTE_NOT_RECORDED':'LEGACY_STRUCTURED_ATTRIBUTE_UNAVAILABLE');
  });
  const proofContentHash=contextualHash({context,format,units:validUnits,attributes,contextualSignals:modern?raw.analysis.contextualSignals??null:null,legacy:modern?null:{claims:legacy.analysis.claims,topics:legacy.analysis.topics,references:legacy.analysis.candidate_relations}});
- return {id,title:text(item.title??analysis.title??raw.title,300),categoryIds:list(item.categoryIds).filter(x=>typeof x==='string'),sourceIdentity:identity,context,format,units:validUnits,independentUnitCount:unitCount,attributes,coverage,contextualSignals:v2?{version:2,receiptTrusted:v2.receiptTrusted,unitCandidates:v2.unitCandidates}:null,legacyEvidence:modern?null:{claims:list(legacy.analysis.claims).length,references:list(legacy.analysis.candidate_relations).length,topics:list(legacy.analysis.topics).length,state:'present_unverified'},proofContentHash,indexVersion:contextualVersion,ruleHash:contextualRuleHash,fingerprint:contextualHash({identity,proofContentHash,ruleHash:contextualRuleHash,categories:item.categoryIds,manual:item.categoryOverride??null})};
+ return {id,title:text(item.title??analysis.title??raw.title,300),searchText:[item.id,item.sourceUrl,item.title,item.creator,item.publication?.summary,...list(item.tags),...list(item.categoryIds)].join(' '),categoryIds:list(item.categoryIds).filter(x=>typeof x==='string'),sourceIdentity:identity,context,format,units:validUnits,independentUnitCount:unitCount,attributes,coverage,contextualSignals:v2?{version:2,receiptTrusted:v2.receiptTrusted,unitCandidates:v2.unitCandidates}:null,legacyEvidence:modern?null:{claims:list(legacy.analysis.claims).length,references:list(legacy.analysis.candidate_relations).length,topics:list(legacy.analysis.topics).length,state:'present_unverified'},proofContentHash,indexVersion:contextualVersion,ruleHash:contextualRuleHash,fingerprint:contextualHash({identity,proofContentHash,ruleHash:contextualRuleHash,categories:item.categoryIds,manual:item.categoryOverride??null,searchMetadata:{id:item.id,sourceUrl:item.sourceUrl,title:item.title,creator:item.creator,summary:item.publication?.summary,tags:item.tags}})};
 }

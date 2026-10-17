@@ -1,12 +1,14 @@
 import {hash,canonical,nowISO,fail,key,identifier,ensure,cas,event} from './reels-runtime.mjs';
 import {queueOutbox} from './reels-runtime.mjs';
 import {projectReel,stageName,reelIdPattern,eligibility} from './reels-model.mjs';
+import {preservedContentAvailable} from './reels-preserved-content.mjs';
 import {executionId,STAGES} from './reels-pipeline.mjs';
 const processingTypes=new Set(['start','retry','complement']);
 const retryStage=video=>stageName(video?.reels_v2?.stage??video?.error?.stage??video?.stage);
-const retryable=video=>{const item=projectReel(video),error=video.reels_v2?.error??video.error;return item.status==='failed'&&item.error?.uncertain!==true&&error?.retryable!==false&&(error?.retryable===true||video.failure_confirmed===true)&&!!retryStage(video);};
+const retryable=video=>{const item=projectReel(video),error=video.reels_v2?.error??video.error;return !item.publication.available&&item.status==='failed'&&item.error?.uncertain!==true&&error?.retryable!==false&&(error?.retryable===true||video.failure_confirmed===true)&&!!retryStage(video);};
 export class ReelsService {
  constructor({repository,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued}){this.onCommandQueued=onCommandQueued;this.onQueued=onQueued;this.repository=repository;this.store=repository.store;this.processingEnabled=processingEnabled===true;this.clock=clock;}
+ async publicationExists(video){if(!video)return false;if(projectReel(video).publication.available)return true;return preservedContentAvailable((await this.store.get('reels_legacy_content/'+video.id))?.data,video.id);}
  async preview(selection,type='start'){if(!processingTypes.has(type))throw fail('INVALID_COMMAND','Tipo de prévia inválido.');const selected=await this.select(selection,type);const id=hash({type:'preview',commandType:type,...selected});await ensure(this.store,'reels_commands/'+id,{id,type:'preview',commandType:type,status:'preview',...selected,createdAt:nowISO(this.clock)});return {...selected,selectionToken:id};}
  async command(input,actor='authorized-user'){
   key(input.idempotencyKey);const type=input.type;if(!['start','retry','complement','pause','resume','capacity','resume_operation'].includes(type))throw fail('INVALID_COMMAND','Comando inválido.');
@@ -100,7 +102,7 @@ export class ReelsService {
      let admitted=false;await cas(this.store,'videos/'+reelId,async video=>{admitted=false;const current=video.reels_v2??{},item=projectReel(video);
       if(item.importHeld)return null;
       if(current.operationId===id){admitted=true;return null;}
-      {const eligible=type==='start'?eligibility(item)===null:type==='retry'?retryable(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
+      {const eligible=type==='start'?eligibility(item)===null&&!await this.publicationExists(video):type==='retry'?retryable(video)&&!await this.publicationExists(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
       admitted=true;return {reels_v2:{...current,status:'queued',stage:selectedStage,operationId:id,executionId:jobId,updatedAt:nowISO(this.clock)}};});
      if(!admitted){excluded.push({id:reelId,reason:'concurrent_admission_or_not_eligible'});continue;}
      queued=await ensure(this.store,jobPath,{id:jobId,operationId:id,reelId,stage:selectedStage,status:'queued',attempt:1,predecessorId:null,createdAt:nowISO(this.clock)});
@@ -154,7 +156,7 @@ export class ReelsService {
   if(!['retry','complement'].includes(type))throw fail('INVALID_COMMAND','Comando inválido.');
   if(!selection||(!Array.isArray(selection.ids)&&selection.all!==true))throw fail('INVALID_SELECTION','Seleção inválida.');
   let ids;if(selection.all===true){ids=[];let cursor;do{const page=await this.repository.list({...selection.filters,workspace:'all',limit:100,cursor});ids.push(...page.items.map(i=>i.id));cursor=page.nextCursor;}while(cursor);}else ids=[...new Set(selection.ids.map(id=>identifier(id)))];
-  const accepted=[],excluded=[];for(const id of ids){const raw=await this.repository.raw(id),item=raw?projectReel(raw):null;const allowed=item&&!item.importHeld&&(type==='retry'?retryable(raw)&&await this.retryProof(raw):item.publication.available&&item.status==='completed');if(allowed)accepted.push(id);else excluded.push({id,reason:item?.status==='uncertain'?'requires_reconciliation':item?'not_eligible':'not_found'});}
+  const accepted=[],excluded=[];for(const id of ids){const raw=await this.repository.raw(id),item=raw?projectReel(raw):null;const published=item?await this.publicationExists(raw):false,allowed=item&&!item.importHeld&&(type==='retry'?!published&&retryable(raw)&&await this.retryProof(raw):item.publication.available&&item.status==='completed');if(allowed)accepted.push(id);else excluded.push({id,reason:type==='retry'&&published?'already_completed':item?.status==='uncertain'?'requires_reconciliation':item?'not_eligible':'not_found'});}
   return {ids:accepted,eligible:accepted.length,total:ids.length,excluded};
  }
  async operation(id){identifier(id);const saved=await this.store.get('reels_commands/'+id);if(!saved||saved.data.type==='preview')throw fail('NOT_FOUND','Comando não encontrado.',404);return {operation:saved.data};}

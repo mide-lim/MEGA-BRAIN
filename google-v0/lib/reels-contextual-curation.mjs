@@ -1,5 +1,6 @@
 import {projectContextualPublication,contextualHash,contextualRuleHash} from './reels-contextual-projection.mjs';
 import {buildContextualIndex,filterContextualEntries,parseContextualQuery,contextualListItem} from './reels-contextual-index.mjs';
+import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
 import {publicationAvailable,reelIdPattern} from './reels-model.mjs';
 const bad=()=>Object.assign(Error('Consulta contextual inválida.'),{status:400,code:'INVALID_CONTEXTUAL_QUERY'});
 async function mapLimited(items,limit,fn){
@@ -28,7 +29,12 @@ export class ReelsContextualCurator{
      raw=await this.repository.raw(item.id)??{};
      if(!publicationAvailable(raw))legacy=(await this.repository.store.get('reels_legacy_content/'+item.id))?.data;
     }
-    return projectContextualPublication({video:raw,legacy,item});
+    let qualityVerification=null;
+    if(raw.analysis?.contextualSignals?.version===2&&qualityReceiptIdPattern.test(raw.publication?.qualityReceipt?.receiptId??'')){
+     const receipt=(await this.repository.store.get('reels_quality_receipts/'+raw.publication.qualityReceipt.receiptId))?.data;
+     qualityVerification=verifyPublicationQualityReceipt({video:raw,receipt});
+    }
+    return projectContextualPublication({video:raw,legacy,item,qualityVerification});
    });
    const categories=typeof this.repository.categories==='function'?await this.repository.categories():{nodes:[]};
    const observations=this.repository.observation?.()??{};

@@ -31,7 +31,7 @@
       "sections": [
         "Ocorrência e destino"
       ],
-      "max_chars": 1500
+      "max_chars": 1000
     },
     {
       "path": "google-v0/web-google/app/reels/operations.jsx",
@@ -40,7 +40,7 @@
         "LiveActivity",
         "Finance"
       ],
-      "max_chars": 4000
+      "max_chars": 2500
     },
     {
       "path": "google-v0/web-google/app/reels/preserved.jsx",
@@ -48,7 +48,7 @@
       "sections": [
         "HistoricalActivity"
       ],
-      "max_chars": 1500
+      "max_chars": 1000
     },
     {
       "path": "google-v0/lib/reels-finance.mjs",
@@ -56,7 +56,7 @@
       "sections": [
         "read return coverage"
       ],
-      "max_chars": 1500
+      "max_chars": 1000
     },
     {
       "path": "google-v0/qa/reels-browser-check.mjs",
@@ -67,7 +67,7 @@
         "activity",
         "preserved"
       ],
-      "max_chars": 3000
+      "max_chars": 2500
     },
     {
       "path": "google-v0/web-google/app/reels/detail.jsx",
@@ -76,7 +76,7 @@
         "Detail occurrence notice in detail-video",
         "Knowledge fields and SavedSources"
       ],
-      "max_chars": 8000
+      "max_chars": 3000
     }
   ],
   "validation_commands": [

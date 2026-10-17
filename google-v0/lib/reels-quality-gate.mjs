@@ -74,6 +74,7 @@ function evaluateClaim(path,value,evidence,record,manifest,reportHash,manifestHa
   if(support==='literal')literal=true;
   if(support==='negated_context')negated=true;
  }
+ if(literal&&['caption','transcript'].some(source=>literalClaimSupport(value,sourceText(record,source))==='negated_context'))negated=true;
  if(invalid)return check('CLAIM_EVIDENCE_INVALID','invalid','Referência inválida, tempo contraditório ou identidade incompatível com a fonte salva.',{fieldPath:path});
  if(negated)return check('CLAIM_NEGATED_CONTEXT','inconclusive','O valor foi extraído de contexto negativo; citação parcial não confirma afirmação positiva.',{fieldPath:path});
  if(literal&&!temporalUnknown&&!visual)return check('LITERAL_CLAIM_SUPPORTED','supported','Afirmação integral ancorada como texto da fonte identificada; não comprova alegação externa ou fidelidade do STT.',{fieldPath:path,verificationLevel:'literal_anchor_verified'});
@@ -129,6 +130,7 @@ export function evaluateQualityGateV2({record={},report,mediaInspection=null,tra
   if(report.knowledge){const reviewed=reviewKnowledge(report.knowledge,record);if(reviewed.omitted)throw Error('omitted');}
   else throw Error('missing_knowledge');
  }catch{checks.push(check('REPORT_CONTRACT_INVALID','invalid','Estrutura principal ou campo de conhecimento inválido sob o contrato tipado.'));}
+ if(present(record.source_caption?.text)&&present(record.transcript)&&normalize(record.source_caption.text)!==normalize(record.transcript))gaps.push(check('SOURCE_EQUIVALENCE_UNMEASURED','unknown','Legenda e transcrição distintas preservadas. Diferenças não são automaticamente contradição; equivalência semântica não foi medida.'));
  const q=report.qualityEvidenceV2;
  if(q?.version!==2)checks.push(check('NARRATIVE_EVIDENCE_MISSING','inconclusive','Contrato versionado de evidência para título e resumo ausente.'));
  for(const path of ['title','summary'])checks.push(evaluateClaim(path,report[path],q?.[path],record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));

@@ -16,7 +16,7 @@ export function contextualPropositionEntries(report={}){
 // negated clause does not certify a positive statement or an ingredient role.
 export function literalClaimSupport(value,excerpt){
  const norm=v=>String(v??'').normalize('NFC').replace(/\s+/g,' ').trim();
- const claim=norm(value),source=norm(excerpt),index=source.indexOf(claim);
+ const claim=norm(value).toLocaleLowerCase('pt-BR'),source=norm(excerpt).toLocaleLowerCase('pt-BR'),index=source.indexOf(claim);
  if(!claim||index<0)return 'unverified';
  const prefix=source.slice(0,index).split(/[.!?;:\n]/u).at(-1).trim().split(/\s+/u).slice(-5).join(' ');
  if(/\b(?:não|nunca|sem|evite|not|without|never|no)\b/iu.test(prefix))return 'negated_context';

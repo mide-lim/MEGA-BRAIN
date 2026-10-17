@@ -95,3 +95,41 @@ test('invalid saved usage and missing artifact proof remain unknown; coverage in
 test('malformed and repeated target identities are rejected before a view is declared valid',()=>{
  assert.throws(()=>projectMigrationHistory(),/Snapshots/);const input=base();input.targetVideos.push({...input.targetVideos[0]});assert.throws(()=>projectMigrationHistory(input),/Identidade/);
 });
+
+test('explicit execution correlation wins over document aliases for usage, quote and accounting deduplication',()=>{
+ const input=base(),usage=measured(1000),row={video_id:'Reel_001',stage:'analysis',status:'completed',actual_cents:100,completed_at:at,created_at:at,rawResult:{finance:{measurement:usage,estimate:{amount:0.25,currency:'BRL'}}}};
+ input.googleSnapshot.records.push(document('jobs/OldJob',row),document('reels_executions/NewRecord',{...row,executionId:'OldJob'}));
+ const result=projectMigrationHistory(input),entries=result.financeView.entries;
+ assert.equal(entries.filter(r=>r.kind==='provider_usage').length,1);assert.equal(entries.filter(r=>r.kind==='estimate').length,1);assert.equal(entries.filter(r=>r.kind==='accounting').length,1);
+ assert.equal(entries.find(r=>r.kind==='provider_usage').amount,0.001);assert.equal(entries.find(r=>r.kind==='estimate').amount,0.25);assert.equal(entries.find(r=>r.kind==='accounting').amount,1);
+});
+
+test('object controls normalize full paths and settings IDs; missing versions are visible and malformed controls fail closed',()=>{
+ const input=base(),row={video_id:'Reel_001',stage:'analysis',status:'completed',actual_cents:100};
+ input.googleSnapshot.controls={financial:{jobs:{Execution_001:row}},'control_chunks/financial_part':{data:{owner:'settings/financial',entries:{Execution_001:row}}}};
+ const result=projectMigrationHistory(input);assert.equal(result.coverage.inputControlRows,2);assert.equal(result.coverage.googleRowsWithoutSourceVersion,2);assert.equal(result.proof.allInputRowsAccounted,true);
+ assert.equal(result.financeView.entries.filter(r=>r.kind==='accounting').length,1);assert.equal(result.financeView.entries[0].amount,1);
+ assert.throws(()=>projectMigrationHistory({...input,googleSnapshot:{...input.googleSnapshot,controls:{financial:42}}}),/Controle objeto/);
+ assert.throws(()=>projectMigrationHistory({...input,googleSnapshot:{...input.googleSnapshot,controls:'invalid'}}),/Controles históricos/);
+});
+
+test('COPY reserved-second strings are schema-normalized without interpreting unrelated money strings',()=>{
+ const input=base();input.legacySnapshot.histories.stt_reservations=[{seconds:'30',created_at:at},{seconds:'0',created_at:at},{seconds:'-1',created_at:at},{seconds:'9007199254740992',created_at:at},{seconds:null,created_at:at}];
+ input.googleSnapshot.controls.push(document('settings/financial',{jobs:{Execution_001:{video_id:'Reel_001',stage:'analysis',status:'completed',actual_cents:'125'}}}));
+ const result=projectMigrationHistory(input),reserves=result.financeView.entries.filter(r=>r.kind==='reservation');
+ assert.equal(reserves.length,5);assert.ok(reserves.some(r=>r.reservedSeconds===30));assert.ok(reserves.some(r=>r.reservedSeconds===0));assert.equal(reserves.filter(r=>r.reservedSeconds===null).length,3);
+ assert.equal(result.financeView.entries.find(r=>r.kind==='accounting').amount,null);
+});
+
+test('worker identity is never fabricated from stage and consumed/authorized remain safe historical enums',()=>{
+ const input=base();input.googleSnapshot.records.push(document('execution_stops/Stop_001',{video_id:'Reel_001',stage:'analysis',status:'consumed'}),document('execution_stops/Stop_002',{video_id:'Reel_001',stage:'transcription',status:'authorized',worker:'reels-transcription'}));
+ const result=projectMigrationHistory(input),derived=result.historyView.find(r=>r.sourceStatus==='consumed'),explicit=result.historyView.find(r=>r.sourceStatus==='authorized');
+ assert.equal(derived.worker,null);assert.equal(derived.workerLabelDerived,'Análise');assert.equal(explicit.worker,'reels-transcription');assert.equal(explicit.workerLabelDerived,null);
+});
+
+test('conflicting ledger dates retain the known amount globally without assigning it to an arbitrary day',()=>{
+ const input=base(),row={video_id:'Reel_001',stage:'analysis',status:'completed',actual_cents:100,completed_at:'2026-10-11T12:00:00Z'};
+ input.googleSnapshot.controls.push(document('settings/financial',{jobs:{Execution_001:row}}),document('control_chunks/financial_part',{owner:'settings/financial',entries:{Execution_001:{...row,completed_at:'2026-10-12T12:00:00Z'}}}));
+ const result=projectMigrationHistory(input),cost=result.financeView.entries.find(r=>r.kind==='accounting');
+ assert.equal(cost.amount,1);assert.equal(cost.recordedAt,null);assert.equal(cost.day,null);assert.equal(cost.reason,'CONFLICTING_LEDGER_SETTLEMENT_DATES');assert.ok(result.financeView.unallocated.includes(cost.id));assert.equal(result.financeView.days.length,0);assert.equal(result.coverage.temporalConflicts,1);
+});

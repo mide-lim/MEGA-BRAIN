@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {qualityPublicationRevision,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
+import {qualityPublicationRevision,qualitySourceStateHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
 export const STAGES=['acquisition','transcription','analysis'];
@@ -108,7 +108,7 @@ export class ReelsPipeline {
    if(result.valid!==true||qualityProposal?.policyVersion!=='gate_v2'||!qualityProposal.qualityReceipt?.receiptId)return this.rejectCandidate(job,result,{state:result.quality?.state==='invalid'?'invalid':'inconclusive'});
    qualityReceipt=(await this.store.get('reels_quality_receipts/'+qualityProposal.qualityReceipt.receiptId))?.data;
    const proposed={...video,...result.changes,publication:{...(video.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
-   if(!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)return this.rejectCandidate(job,result,{reason:'QUALITY_RECEIPT_UNVERIFIED',state:'inconclusive'});
+   if(qualitySourceStateHash(video)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)return this.rejectCandidate(job,result,{reason:'QUALITY_RECEIPT_UNVERIFIED',state:'inconclusive'});
   }
   if(job.stage==='analysis'&&result.valid!==true)return this.rejectCandidate(job,result,{state:result.quality?.state==='inconclusive'?'inconclusive':'invalid'});
   // Publication fields require explicit valid proof. A candidate never replaces them.
@@ -121,7 +121,7 @@ export class ReelsPipeline {
    if(qualityProposal){
     const proposed={...current,...changes,publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
     const already=current.analysis_key===qualityProposal.publicationIdentity?.key&&String(current.analysis_generation)===String(qualityProposal.publicationIdentity?.generation)&&current.publication?.qualityReceipt?.receiptId===qualityProposal.qualityReceipt.receiptId&&verifyPublicationQualityReceipt({video:current,receipt:qualityReceipt}).trusted;
-    if(!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
+    if(qualitySourceStateHash(current)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
    }
    const video=current;
    return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}};

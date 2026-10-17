@@ -196,6 +196,9 @@ export async function prepareQualityCandidateV2({record,report,rawResponse,ports
  if(savedReceipt?.id!==receipt.id||savedReceipt?.receiptHash!==receiptIdentity.receiptHash)throw Error('Recibo precisa de confirmação durável antes da publicação.');
  return {...gate,candidateIdentity,receiptIdentity,publicationIdentity:{...candidateIdentity,reportHash:gate.reportHash},expectedPublicationRevision,publicationChanged:false};
 }
+export function qualitySourceStateHash(record={}){
+ return qualityDigest({sourceManifest:qualitySourceManifest(record),mediaInspection:record.media_inspection_receipt??null,transcriptionReceipt:record.transcription_receipt??null});
+}
 export function qualityPublicationRevision(record={}){
  return qualityDigest({analysisKey:record.analysis_key??null,analysisGeneration:record.analysis_generation??null,analysisContentHash:record.analysis?qualityCandidateHash(record.analysis):null,publication:record.publication??null});
 }

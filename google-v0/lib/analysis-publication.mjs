@@ -69,3 +69,12 @@ export function consolidatePublication(reviewed,record,candidate){
   publication_review:{rule:publicationRule,candidate:diagnostics,narrative_support:unsafeNarrative?'source_fallback_after_identifier_conflict':'candidate_narrative_not_independently_verified',missing_information_status:'candidate_not_independently_verified',inference_replayed:false}
  };
 }
+
+// The v2 path attaches a complete source copy without filtering or rewriting
+// candidate facts. Validation decides the original fields before publication.
+export function preservePublicationSourcesV2(candidate,record){
+ const sources=[];
+ if(typeof record.source_caption?.text==='string'&&record.source_caption.text.trim()&&record.source_caption.capture_id)sources.push({source:'caption',text:record.source_caption.text,capture_id:record.source_caption.capture_id});
+ if(typeof record.transcript==='string'&&record.transcript.trim())sources.push({source:'transcript',text:record.transcript});
+ return {...candidate,source_consolidation:{rule:'gate_v2_exact_sources',sources,coverage:'complete_saved_text_not_semantic_verification'}};
+}

@@ -1,4 +1,4 @@
-import {consolidatePublication} from './analysis-publication.mjs';
+import {consolidatePublication,preservePublicationSourcesV2} from './analysis-publication.mjs';
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 import {qualitySourceManifest,evaluateQualityGateV2} from './reels-quality-gate.mjs';
@@ -56,7 +56,7 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...(taxonomySignalsEnabled?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...((taxonomySignalsEnabled||qualityGateV2Enabled)?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[],transcript_segments:Array.isArray(record.transcript_segments)?record.transcript_segments:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
@@ -132,11 +132,11 @@ export function analysisOutcome(response,record,{requireKnowledge=false,sourceGr
  try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
  catch{return {accepted:false,reasons:['invalid_json']};}
  const categories=normalizedCategoryIds(parsed?.categories);
- if(categories!==parsed?.categories)parsed={...parsed,categories,limitations:Array.isArray(parsed.limitations)?[...parsed.limitations,'Categoria geral de tecnologia redundante omitida; a resposta original foi preservada.']:parsed.limitations};
+ if(qualityGateV2===null&&categories!==parsed?.categories)parsed={...parsed,categories,limitations:Array.isArray(parsed.limitations)?[...parsed.limitations,'Categoria geral de tecnologia redundante omitida; a resposta original foi preservada.']:parsed.limitations};
  try{validateCategoryIds(parsed?.categories);}
  catch{return {accepted:false,reasons:['invalid_categories']};}
  let report;
- try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true,sourceGroundedPublication:sourceGroundedPublication||qualityGateV2!==null});}
+ try{if(qualityGateV2!==null){validateAnalysis(parsed,record,{requireCategoryIds:true});report=preservePublicationSourcesV2(parsed,record);}else report=reviewAnalysis(parsed,record,{requireCategoryIds:true,sourceGroundedPublication});}
  catch{return {accepted:false,reasons:['invalid_report']};}
  if(requireKnowledge&&!report.knowledge)return {accepted:false,reasons:['missing_knowledge']};
  const publication=analysisPublication(report,record);

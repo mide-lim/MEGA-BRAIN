@@ -98,11 +98,15 @@ export class ReelsService {
     if(!STAGES.includes(selectedStage)){excluded.push({id:reelId,reason:'invalid_stage'});continue;}
     const jobId=executionId(id,reelId,selectedStage),jobPath='reels_executions/'+jobId;
     let queued=await this.store.get(jobPath);
+    // A durable retry may be replayed after admission or after a crash before
+    // job creation. A later publication protects both windows from redispatch.
+    if(['start','retry'].includes(type)&&(!queued||queued.data.status==='queued')&&await this.publicationExists(await this.repository.raw(reelId))){excluded.push({id:reelId,reason:'already_completed'});continue;}
     if(!queued){
      let admitted=false;await cas(this.store,'videos/'+reelId,async video=>{admitted=false;const current=video.reels_v2??{},item=projectReel(video);
       if(item.importHeld)return null;
+      if(['start','retry'].includes(type)&&await this.publicationExists(video))return null;
       if(current.operationId===id){admitted=true;return null;}
-      {const eligible=type==='start'?eligibility(item)===null&&!await this.publicationExists(video):type==='retry'?retryable(video)&&!await this.publicationExists(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
+      {const eligible=type==='start'?eligibility(item)===null:type==='retry'?retryable(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
       admitted=true;return {reels_v2:{...current,status:'queued',stage:selectedStage,operationId:id,executionId:jobId,updatedAt:nowISO(this.clock)}};});
      if(!admitted){excluded.push({id:reelId,reason:'concurrent_admission_or_not_eligible'});continue;}
      queued=await ensure(this.store,jobPath,{id:jobId,operationId:id,reelId,stage:selectedStage,status:'queued',attempt:1,predecessorId:null,createdAt:nowISO(this.clock)});

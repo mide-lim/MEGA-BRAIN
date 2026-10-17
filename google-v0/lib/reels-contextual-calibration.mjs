@@ -179,7 +179,12 @@ export async function withFiniteContextualProofs(items,taxonomy,{loadSource,read
   while(cursor<items.length){
    const index=cursor++,item=items[index],copy={...item};output[index]=copy;
    if(taxonomy?.pendingOperationId||!candidates.has(item.id)||item.publication?.available!==true||item.categoryOverride?.manual===true||item.categoryResolution?.mode==='manual')continue;
-   const source=await loadSource(item.id),entry=source?projectContextualPublication({...source,item}):null;
+   const source=await loadSource(item.id);
+   // A cached catalogue row cannot override a newer human edit in the fresh source.
+   if(source?.video?.taxonomy_override?.manual===true)continue;
+   // Projection rechecks current native/preserved publication eligibility, rather
+   // than trusting the cached item's publication flag.
+   const entry=source?projectContextualPublication({...source,item}):null;
    if(entry)Object.defineProperty(copy,'contextualSourceProof',{value:{sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash},enumerable:false});
   }
  }));

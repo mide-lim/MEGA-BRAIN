@@ -1,7 +1,9 @@
 import {createHash} from 'node:crypto';
+import {withFiniteContextualProofs} from './reels-contextual-calibration.mjs';
+import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
 import {parseReelLinks} from './links.mjs';
 import {buildQueueCuration} from './reels-quality-diagnostics.mjs';
-import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,categoryNavigation} from './reels-model.mjs';
+import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,publicationAvailable,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,categoryNavigation} from './reels-model.mjs';
 import {LEGACY_LIST_FIELDS,withPreservedSummary,preservedDetail,preservedRecordAvailable,HISTORICAL_FIELDS,historicalActivity,HISTORICAL_FINANCE_FIELDS,historicalFinance} from './reels-preserved-content.mjs';
 const invalid=message=>Object.assign(Error(message),{status:400,code:'INVALID_QUERY'});
 const hasContextualFilters=query=>{let facets=[];if(query.facets!==undefined&&query.facets!==''){try{facets=JSON.parse(query.facets);}catch{throw invalid('Facetas inválidas.');}if(!Array.isArray(facets)||facets.length>8)throw invalid('Facetas inválidas.');}return facets.length>0||['context','dimension','value'].some(field=>query[field]!==undefined&&query[field]!==null&&query[field]!=='');};
@@ -11,7 +13,20 @@ export class ReelsRepository{
  constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
- async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);const legacy=v?(await this.store.get('reels_legacy_content/'+id))?.data:null;return v?categoryNavigation([withPreservedSummary(projectReel(v),legacy)],(await this.store.get('settings/reels_v2_taxonomy'))?.data).items[0]:null;}
+ async navigation(items,saved){
+  const proved=await withFiniteContextualProofs(items,saved,{loadSource:async id=>{
+   const video=await this.raw(id);if(!video)return null;
+   const legacy=publicationAvailable(video)?null:(await this.store.get('reels_legacy_content/'+id))?.data??null;
+   let qualityVerification=null;
+   if(video.analysis?.contextualSignals?.version===2&&qualityReceiptIdPattern.test(video.publication?.qualityReceipt?.receiptId??'')){
+    const receipt=(await this.store.get('reels_quality_receipts/'+video.publication.qualityReceipt.receiptId))?.data;
+    qualityVerification=verifyPublicationQualityReceipt({video,receipt});
+   }
+   return {video,legacy,qualityVerification};
+  }});
+  return categoryNavigation(proved,saved);
+ }
+ async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);const legacy=v?(await this.store.get('reels_legacy_content/'+id))?.data:null;return v?(await this.navigation([withPreservedSummary(projectReel(v),legacy)],(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items[0]:null;}
  observation(){return {observedAt:this.snapshot?.observedAt??null,cache:{ttlMs:this.cacheTtlMs,stale:this.snapshot?.stale??false}};}
  async executionHistory(id){
   if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');
@@ -22,7 +37,7 @@ export class ReelsRepository{
   }while(cursor);
   return {items:items.sort(executionOrder),cursor:lastCursor,observedAt:this.now()};
  }
- async detail(id){const v=await this.raw(id);if(!v)return null;const legacy=(await this.store.get('reels_legacy_content/'+id))?.data,saved=preservedDetail(legacy,id),base=withPreservedSummary(reelDetail(v),legacy);if(saved){if(base.publication.source==='legacy_preserved'){base.analysis=saved;}else base.preservedAnalysis=saved;}if(preservedRecordAvailable(legacy,id)&&base.transcript.state==='missing'&&typeof legacy.transcript==='string')base.transcript={state:legacy.transcript.trim()?'present':'empty',text:legacy.transcript,segments:null,source:'legacy_preserved'};const detail=categoryNavigation([base],(await this.store.get('settings/reels_v2_taxonomy'))?.data).items[0],history=await this.executionHistory(id),hasNew=history.items.length>0,inlineLegacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:inlineLegacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':inlineLegacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:inlineLegacy&&!hasNew?null:true}};}
+ async detail(id){const v=await this.raw(id);if(!v)return null;const legacy=(await this.store.get('reels_legacy_content/'+id))?.data,saved=preservedDetail(legacy,id),base=withPreservedSummary(reelDetail(v),legacy);if(saved){if(base.publication.source==='legacy_preserved'){base.analysis=saved;}else base.preservedAnalysis=saved;}if(preservedRecordAvailable(legacy,id)&&base.transcript.state==='missing'&&typeof legacy.transcript==='string')base.transcript={state:legacy.transcript.trim()?'present':'empty',text:legacy.transcript,segments:null,source:'legacy_preserved'};const detail=(await this.navigation([base],(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items[0],history=await this.executionHistory(id),hasNew=history.items.length>0,inlineLegacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:inlineLegacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':inlineLegacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:inlineLegacy&&!hasNew?null:true}};}
  async scan(collection,select){
   if(typeof this.store.query!=='function')throw Error('Store requer consulta projetada; leitura integral não permitida.');
   const records=[];let cursor;const seen=new Set();
@@ -33,7 +48,7 @@ export class ReelsRepository{
   if(this.snapshot&&this.snapshot.expiresAt>this.clock())return this.snapshot.items;
   if(this.pending)return this.pending;
   const epoch=this.cacheEpoch;
-  this.pending=(async()=>{try{const [records,legacyRecords]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS)]),legacy=new Map(legacyRecords.map(({data,path})=>[path.split('/')[1],data])),items=categoryNavigation(records.map(({data,path})=>{const id=data.id??path.split('/')[1];return withPreservedSummary(projectReel({...data,id}),legacy.get(id));}),(await this.store.get('settings/reels_v2_taxonomy'))?.data).items;const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
+  this.pending=(async()=>{try{const [records,legacyRecords]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS)]),legacy=new Map(legacyRecords.map(({data,path})=>[path.split('/')[1],data])),items=(await this.navigation(records.map(({data,path})=>{const id=data.id??path.split('/')[1];return withPreservedSummary(projectReel({...data,id}),legacy.get(id));}),(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items;const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
   return this.pending;
  }
  validateQuery(q){

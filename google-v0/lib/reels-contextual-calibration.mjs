@@ -168,3 +168,20 @@ export function prepareContextualCategoryPlan(input){
  const plan={schemaVersion:1,kind:'finite_contextual_category_plan',status:groups.length?'ready_for_independent_review':'no_eligible_group',scope:'finite_corpus_only',automaticUnseen:false,policyVersion:report.version,policyHash:report.policyHash,calibrationReportHash:report.reportHash,sourceCorpusHash:report.corpus.sourceCorpusHash,annotationsHash:report.annotationsHash,splitHash:report.splitHash,preconditions:{taxonomyRevision:t.revision,taxonomyUpdateTime:wrapper.updateTime,taxonomyContentHash:contextualHash(t),catalogHash:report.corpus.catalogHash,pendingOperationAbsent:true,sourceBindings:report.sourceBindings},groups,suppressed,affectedIds:[...new Set(groups.flatMap(g=>g.members.map(m=>m.id)))].sort(),operations:'additive_metadata_only',sourceAnalysisWrites:false,providerCalls:false,processingStarted:false,approvedForApply:false};
  plan.planHash=contextualHash(plan);return {calibration:report,plan};
 }
+
+/** Fresh proof reads only for nominal finite members; no full-library body scan. */
+export async function withFiniteContextualProofs(items,taxonomy,{loadSource,readConcurrency=4}={}){
+ if(!Array.isArray(items)||typeof loadSource!=='function'||!Number.isInteger(readConcurrency)||readConcurrency<1||readConcurrency>8)throw Error('Invalid finite proof loader.');
+ const activeRules=list(taxonomy?.rules).filter(r=>r.kind==='calibrated_ingredient_any'&&r.enabled===true&&r.scope==='finite_corpus_only'&&r.generalizationAllowed===false);
+ const candidates=new Set(list(taxonomy?.assignments).filter(a=>a.manual===false&&list(a.ruleIds).some(id=>activeRules.some(r=>r.id===id&&r.calibrationPlanHash===a.calibrationPlanHash))).map(a=>a.reelId));
+ let cursor=0;const output=new Array(items.length);
+ await Promise.all(Array.from({length:Math.min(readConcurrency,items.length)},async()=>{
+  while(cursor<items.length){
+   const index=cursor++,item=items[index],copy={...item};output[index]=copy;
+   if(taxonomy?.pendingOperationId||!candidates.has(item.id)||item.publication?.available!==true||item.categoryOverride?.manual===true||item.categoryResolution?.mode==='manual')continue;
+   const source=await loadSource(item.id),entry=source?projectContextualPublication({...source,item}):null;
+   if(entry)Object.defineProperty(copy,'contextualSourceProof',{value:{sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash},enumerable:false});
+  }
+ }));
+ return output;
+}

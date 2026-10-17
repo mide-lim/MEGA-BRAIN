@@ -3,8 +3,8 @@ path=pathlib.Path(__file__).with_name('apply-reels-curation.py');spec=importlib.
 H='a'*64
 def package():
  current={'revision':7,'nodes':[{'id':'receitas','name':'Receitas','parentId':None,'manual':False}],'rules':[],'assignments':[],'appliedCommands':[],'pendingOperationId':None}
- after=copy.deepcopy(current);after['revision']=8;after['nodes'].append({'id':'ctx_one','name':'Receitas com Frango','parentId':'receitas','manual':False,'calibrationPlanHash':H});after['assignments']=[{'reelId':'reel01','categoryIds':['receitas','ctx_one'],'manual':False,'revision':8}];after['rules']=[{'id':'r','kind':'calibrated_ingredient_any','categoryId':'ctx_one','enabled':True,'scope':'finite_corpus_only','generalizationAllowed':False}];after['appliedCommands']=[{'id':H,'fingerprint':H}]
- cal={'planHash':H,'appliedOperationId':H,'newContentAutomatic':False,'processingStarted':False,'report':{'groups':[{'appliedCategoryId':'ctx_one','members':[{'id':'reel01','priorCategoryIds':['receitas']}]}]}}
+ after=copy.deepcopy(current);after['revision']=8;after['nodes'].append({'id':'ctx_one','name':'Receitas com Frango','parentId':'receitas','manual':False,'calibrationPlanHash':H});after['assignments']=[{'reelId':'reel01','categoryIds':['receitas','ctx_one'],'manual':False,'revision':8,'ruleIds':['r'],'calibrationPlanHash':H}];after['rules']=[{'id':'r','kind':'calibrated_ingredient_any','categoryId':'ctx_one','enabled':True,'scope':'finite_corpus_only','generalizationAllowed':False,'calibrationPlanHash':H,'memberIds':['reel01'],'members':[{'id':'reel01','sourceIdentity':{'kind':'native','analysisKey':'analysis/a.json','analysisGeneration':'1'},'publicationProofHash':H}]}];after['appliedCommands']=[{'id':H,'fingerprint':H}]
+ cal={'planHash':H,'appliedOperationId':H,'newContentAutomatic':False,'processingStarted':False,'report':{'groups':[{'appliedCategoryId':'ctx_one','members':[{'id':'reel01','priorCategoryIds':['receitas'],'sourceIdentity':{'kind':'native','analysisKey':'analysis/a.json','analysisGeneration':'1'},'publicationProofHash':H}]}]}}
  p={'schemaVersion':1,'kind':'reviewed_additive_curation_metadata','operationId':H,'sourceCommit':'b'*40,'planHash':H,'sourceAnalysisWrites':False,'newReels':False,'providers':False,'deletions':False,'groupIds':['ctx_one'],'affectedIds':['reel01'],'preconditions':{'taxonomyRevision':7,'sourceBindings':[{'reelId':'reel01','sourceUpdateTime':{'video':'2026-10-17T22:00:00Z'}}]},'writes':[{'path':module.PATHS[0],'data':after},{'path':module.PATHS[1],'data':cal}]}
  return current,p
 class CurationOwnerGuards(unittest.TestCase):
@@ -38,6 +38,10 @@ class CurationOwnerGuards(unittest.TestCase):
   with self.assertRaises(ValueError):module.validate_additive(before,p)
   before,p=package();before['appliedCommands']=[{'id':'old','fingerprint':'prior'}]
   with self.assertRaises(ValueError):module.validate_additive(before,p)
+ def test_unbound_rule_source_proof_or_assignment_is_rejected(self):
+  for mutate in [lambda p:p['writes'][0]['data']['rules'][0]['members'][0].update(publicationProofHash='f'*64),lambda p:p['writes'][0]['data']['rules'][0]['memberIds'].append('hidden01'),lambda p:p['writes'][0]['data']['assignments'][0].update(ruleIds=[])]:
+   before,p=package();mutate(p)
+   with self.assertRaises(ValueError):module.validate_additive(before,p)
  def test_automatic_rule_cannot_be_generalized(self):
   before,p=package();p['writes'][0]['data']['rules'][0]['generalizationAllowed']=True
   with self.assertRaises(ValueError):module.validate_additive(before,p)

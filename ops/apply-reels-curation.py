@@ -65,6 +65,14 @@ def validate_additive(current,p):
    if a.get('reelId')==reelId and not set(a.get('categoryIds',[]))<=expected:raise ValueError('Existing category removed.')
  for rule in after.get('rules',[]):
   if rule not in current.get('rules',[]) and (rule.get('kind')!='calibrated_ingredient_any' or rule.get('categoryId')not in groups or rule.get('enabled')is not True or rule.get('scope')!='finite_corpus_only' or rule.get('generalizationAllowed')is not False):raise ValueError('Unbounded automatic rule.')
+ for rule in after.get('rules',[]):
+  if rule in current.get('rules',[]):continue
+  report=[g for g in p['writes'][-1]['data']['report']['groups']if g.get('appliedCategoryId')==rule.get('categoryId')]
+  expected=[{'id':m['id'],'sourceIdentity':m['sourceIdentity'],'publicationProofHash':m['publicationProofHash']}for g in report for m in g.get('members',[])]
+  if len(report)!=1 or rule.get('calibrationPlanHash')!=p['planHash']or rule.get('members')!=expected or set(rule.get('memberIds',[]))!={m['id']for m in expected}:raise ValueError('Rule is not bound to exact audited source proofs.')
+  for member in expected:
+   assignment=next(a for a in after['assignments']if a.get('reelId')==member['id'])
+   if rule['id']not in assignment.get('ruleIds',[])or assignment.get('calibrationPlanHash')!=p['planHash']:raise ValueError('Assignment lacks exact finite rule binding.')
  for id in groups:
   node=newnodes.get(id)
   if not node or node.get('manual')is not False or node.get('calibrationPlanHash')!=p['planHash']or node.get('parentId')!='receitas':raise ValueError('Group is not finite recipe curation.')

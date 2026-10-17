@@ -27,6 +27,16 @@ export function reelsFixture(now=new Date()) {
  food.analysis.insights.push({claim:'<img src=x onerror=alert(1)>',classification:'__proto__',evidence:[{source:'constructor',excerpt:'<b>Trecho preservado como texto.</b>'}]});
  food.analysis.source_consolidation={rule:'saved-source-publication-v1',sources:[{source:'caption',capture_id:'qa-complete-caption',text:'1 colher de chá dos temperos: páprica defumada e cominho.\nFinalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>'}]};
  food.source_caption={text:food.analysis.source_consolidation.sources[0].text,source:'instagram',capture_id:'qa-complete-caption'};
+
+ // Saved source + typed fields exercise the contextual projection through the real API.
+ // No verified independent recipe unit is supplied: SAME_UNIT must remain unknown.
+ food.source_caption.text+='\n300g de frango. Air fryer é somente uma referência; não é usada neste preparo.';
+ food.analysis.source_consolidation.sources[0].text=food.source_caption.text;
+ food.analysis.knowledge.fields.push(
+  {kind:'ingredient',name:'Frango',value:'300g',role:'supporting',evidence:[{source:'caption',excerpt:'300g de frango',start_seconds:0,end_seconds:0}]},
+  {kind:'tool',name:'Air fryer',value:'Air fryer',role:'mentioned',polarity:'positive',evidence:[{source:'caption',excerpt:'Air fryer',start_seconds:0,end_seconds:0}]}
+ );
+
  videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
  const failed=videos.find(video=>video.id==='QaFail_01'),failedOperation='qa-failed-operation',failedId=executionId(failedOperation,failed.id,'acquisition');
  failed.reels_v2={status:'failed',stage:'acquisition',operationId:failedOperation,executionId:failedId,error:{...failed.error,stage:'acquisition',uncertain:false}};

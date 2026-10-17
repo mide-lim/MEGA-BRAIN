@@ -147,7 +147,8 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   if(d.id==='format')return {...format};
   const a=attributes.filter(x=>x.dimensionId===d.id);
   const state=coverageStates.find(s=>a.some(x=>x.state===s));
-  return emptyDimension(d.id,state??(context.value===null?'unknown':'not_recorded'),a.length?'SAVED_TYPED_ATTRIBUTE':modern?'ATTRIBUTE_NOT_RECORDED':'LEGACY_STRUCTURED_ATTRIBUTE_UNAVAILABLE');
+  const recordedKind={ingredient:'ingredient',tool:'tool',method:'procedure'}[d.id],unmapped=recordedKind&&list(k?.fields).some(f=>f?.kind===recordedKind);
+  return emptyDimension(d.id,state??(context.value===null||unmapped?'unknown':'not_recorded'),a.length?'SAVED_TYPED_ATTRIBUTE':unmapped?'CONTROLLED_VALUE_NOT_MAPPED':modern?'ATTRIBUTE_NOT_RECORDED':'LEGACY_STRUCTURED_ATTRIBUTE_UNAVAILABLE');
  });
  const proofContentHash=contextualHash({context,format,units:validUnits,attributes,contextualSignals:modern?raw.analysis.contextualSignals??null:null,legacy:modern?null:{claims:legacy.analysis.claims,topics:legacy.analysis.topics,references:legacy.analysis.candidate_relations}});
  return {id,title:text(item.title??analysis.title??raw.title,300),categoryIds:list(item.categoryIds).filter(x=>typeof x==='string'),sourceIdentity:identity,context,format,units:validUnits,independentUnitCount:unitCount,attributes,coverage,contextualSignals:v2?{version:2,receiptTrusted:v2.receiptTrusted,unitCandidates:v2.unitCandidates}:null,legacyEvidence:modern?null:{claims:list(legacy.analysis.claims).length,references:list(legacy.analysis.candidate_relations).length,topics:list(legacy.analysis.topics).length,state:'present_unverified'},proofContentHash,indexVersion:contextualVersion,ruleHash:contextualRuleHash,fingerprint:contextualHash({identity,proofContentHash,ruleHash:contextualRuleHash,categories:item.categoryIds,manual:item.categoryOverride??null})};

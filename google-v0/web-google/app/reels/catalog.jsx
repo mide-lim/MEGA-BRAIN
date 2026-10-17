@@ -15,6 +15,7 @@ export default function Catalog({workspace,revision,onOpen,onRefresh,categories=
  useEffect(()=>{const remember=()=>{scrollPosition.current=window.scrollY;snapshot.current.scroll=window.scrollY;};window.addEventListener('scroll',remember,{passive:true});return()=>{window.removeEventListener('scroll',remember);save.current?.(snapshot.current);};},[]);
  useEffect(()=>{const id=setTimeout(()=>setFilters(f=>({...f,q:search})),250);return()=>clearTimeout(id);},[search]);
  useEffect(()=>{if(preset.stage)setFilters(f=>({...f,stage:preset.stage}));},[preset.stage]);
+ useEffect(()=>{if(Object.hasOwn(preset,'q')){setSearch(preset.q);setFilters(f=>({...f,q:preset.q}));setPagination({signature:'',cursor:'',history:[]});}},[preset.q]);
  useEffect(()=>{if(Object.hasOwn(preset,'category')&&(!preset.category||categories.length)&&appliedPreset.current!==preset.category){appliedPreset.current=preset.category;setFilters(f=>({...f,category:preset.category}));setExpanded(s=>[...new Set([...s,...categoryPath(categories,preset.category).map(n=>n.id)])]);}},[preset.category,categories]);
  useEffect(()=>{if(preset.facets){setFacetSelection(preset.facets);setFacetMode(preset.facetMode||'supported');}},[preset.facets,preset.facetMode]);
  const fixedStatus=workspace==='queues'?(queueTab==='registered'?'registered':queueTab==='done'?'completed':'queued,running,waiting'):'';

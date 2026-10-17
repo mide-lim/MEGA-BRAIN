@@ -36,7 +36,7 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
  }
  for(const duplicate of duplicateIds)proofs.set(duplicate,{...proofs.get(duplicate),state:'invalid',reason:'DUPLICATE_EVIDENCE_REFERENCE'});
  const refs=input=>list(input).slice(0,8).map(ref=>proofs.get(ref)??{id:typeof ref==='string'?ref:'unknown',source:'unknown',excerpt:'',state:'invalid',reason:'EVIDENCE_REFERENCE_MISSING'});
- const propositionProofs=(input,reviewed)=>refs(input).map(p=>reviewed&&(p.anchorVerified||p.state==='supported')?{...p,state:'supported',reason:'EXACT_PROPOSITION_AND_SOURCE_ANCHOR_REVIEWED'}:p);
+ const propositionProofs=(input,reviewed)=>refs(input).map(p=>reviewed&&p.state!=='invalid'&&(p.anchorVerified||p.state==='supported')?{...p,state:'supported',reason:'EXACT_PROPOSITION_AND_SOURCE_ANCHOR_REVIEWED'}:p);
  const contextSignal=signal.primaryContext,definition=categoryDefinitions.find(c=>c.id===contextSignal?.categoryId),contextReviewed=contextSignal&&propositionReviewed(verification?.verifiedPrimaryContext,'contextualSignals.primaryContext',contextSignal),contextProof=propositionProofs(contextSignal?.evidenceRefs,contextReviewed);
  const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:contextProof.some(p=>p.state==='invalid')?'invalid':contextReviewed&&contextProof.length&&contextProof.every(p=>p.state==='supported')?'supported':contextProof.length?'present_unverified':'not_recorded',categoryId:definition.id,reason:contextReviewed?'EXACT_CONTEXT_PROPOSITION_REVIEWED':'CONTEXT_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:null;
  const units=list(signal.units).slice(0,64).map((u,index)=>{
@@ -49,7 +49,8 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
  // Reviewed complete units must remain independent in real saved timing.
  const duplicateUnitIds=new Set(units.filter((u,i)=>units.findIndex(v=>v.id===u.id)!==i).map(u=>u.id));
  const overlaps=(a,b)=>a.evidence.some(p=>p.source==='transcript'&&p.state==='supported'&&b.evidence.some(q=>q.source==='transcript'&&q.state==='supported'&&Math.max(p.startSeconds,q.startSeconds)<Math.min(p.endSeconds,q.endSeconds)));
- for(const u of units)if(duplicateUnitIds.has(u.id)||u.complete&&units.some(v=>v!==u&&v.complete&&overlaps(u,v))){u.complete=false;u.state='inconclusive';}
+ const nonIndependent=new Set(units.filter(u=>duplicateUnitIds.has(u.id)||u.complete&&units.some(v=>v!==u&&v.complete&&overlaps(u,v))).map(u=>u.id));
+ for(const u of units)if(nonIndependent.has(u.id)){u.complete=false;u.state='inconclusive';}
  const verifiedUnits=units.filter(u=>u.complete&&u.state==='supported');
  let independentUnitCount=null,format=null;
  const attributes=[];

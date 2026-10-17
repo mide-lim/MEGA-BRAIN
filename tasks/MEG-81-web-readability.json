@@ -3,8 +3,8 @@
   "id": "MEG-81",
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "34f37ccb3aefef464ef7f095ebd93ac934a07992",
-  "objective": "Entregar alinhamento completo da entrada A processar, limpeza de falhas antigas confirmadas sem novo backup de erros, Biblioteca em árvore, Categorias editorial e atualização silenciosa; preservar publicados e pagos inconclusivos, sem novos Reels.",
+  "base_commit": "5b1709d4156c09626fb120aba597a45d9296f28b",
+  "objective": "Correct only the reviewed confirmed-cleanup owner guard to the actual persisted closed-control schema: active is an empty array; effectiveConcurrency is configured capacity1 even when paused. Keep all runtime/queue/publication/uncertainty protections, no worker/control mutation or processing.",
   "risk": "high",
   "acceptance_criteria": [
     "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português tanto no catálogo quanto no painel de detalhe, sem sugerir nova chamada; erro original completo permanece em detalhes recolhidos.",
@@ -16,7 +16,8 @@
     "Biblioteca permite navegar árvore incluindo descendentes com expansão separada, busca contextual e preservação de filtros/scroll. Categorias permite organizar grupos e identificar padrões sem virar fila operacional.",
     "Refresh preserva última leitura, foco, filtros e posição; sem avisos montados repetidamente no fluxo e com respostas obsoletas descartadas.",
     "Limpeza exclui somente histórico/erro de falhas antigas positivamente confirmadas não publicadas; cadastro volta limpo; não criar novo backup técnico desses erros. Preservar originais válidos, publicados, operações pagas inconclusivas e seus controles. Manifesto metadata-only e precondições por versão; nenhum START ou provedor.",
-    "Toda suíte, preparação automatizada, build, smoke e conferência de código/migração/UI executam exclusivamente no GitHub Actions. Ambiente de desenvolvimento apenas edição/inspeção."
+    "Toda suíte, preparação automatizada, build, smoke e conferência de código/migração/UI executam exclusivamente no GitHub Actions. Ambiente de desenvolvimento apenas edição/inspeção.",
+    "GitHub CI proves actual raw REST control schema (pausedtrue, activearrayempty, desired/effective1) accepted and missing/nonempty/wrongtype/open state rejected; all tests/preparation exclusively GitHub."
   ],
   "allowed_paths": [
     "tasks/MEG-81-web-readability.json",

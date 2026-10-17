@@ -185,3 +185,11 @@ test('a later stale catalogue refresh is disclosed even while the contextual cac
  const curator=new ReelsContextualCurator({repository,clock:()=>now}),first=await curator.overview();assert.equal(first.sourceStale,false);
  now+=1000;stale=true;const later=await curator.overview();assert.equal(later.sourceStale,true);assert.equal(later.dataAsOf,original);assert.equal(rawReads,1);
 });
+
+test('independent source anchors cannot be spliced to assign an ingredient to a different recipe',()=>{
+ const raw=collection(false),ingredient=raw.video.analysis.knowledge.fields[0];
+ ingredient.unitIds=['u2'];ingredient.evidence.push({source:'caption',excerpt:'Peixe no forno.'});
+ const entry=projectContextualPublication(raw),projected=entry.attributes.find(a=>a.dimensionId==='ingredient');
+ assert.equal(projected.state,'unknown');assert.deepEqual(projected.unitIds,[]);assert.equal(projected.unitLink.reason,'DECLARED_UNIT_EVIDENCE_MISMATCH');
+ assert.equal(filterContextualEntries([entry],{facets:[{dimension:'ingredient',value:'frango',quantifier:'SAME_UNIT'},{dimension:'tool',value:'forno',quantifier:'ANY'}]}).length,0);
+});

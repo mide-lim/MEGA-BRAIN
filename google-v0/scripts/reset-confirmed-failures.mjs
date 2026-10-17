@@ -56,7 +56,12 @@ export function createResetOwnerStore(api,{assertRuntimeClosed}={}){
  async function assertClosed(){
   await assertRuntimeClosed();
   for(const stage of ['acquisition','transcription','analysis']){
-   const c=await firestore.get('reels_controls/'+stage);need(c?.data.paused===true&&(c.data.effectiveConcurrency??0)===0,'Stage is not closed.');
+   const url=firestore.root+'/reels_controls/'+stage+'?mask.fieldPaths=paused&mask.fieldPaths=active&mask.fieldPaths=desiredConcurrency&mask.fieldPaths=effectiveConcurrency',c=await api.request(url),fields=c.fields??{},active=fields.active,contents=active?.arrayValue;
+   // Inspect raw REST types here as well as the independent owner guard. An
+   // explicit empty array proves occupancy; effectiveConcurrency is capacity.
+   const empty=active&&typeof active==='object'&&!Array.isArray(active)&&Object.keys(active).length===1&&Object.hasOwn(active,'arrayValue')&&contents&&typeof contents==='object'&&!Array.isArray(contents)&&Object.keys(contents).every(k=>k==='values')&&(!Object.hasOwn(contents,'values')||Array.isArray(contents.values)&&contents.values.length===0);
+   const capacity=name=>fields[name]&&typeof fields[name]==='object'&&!Array.isArray(fields[name])&&Object.keys(fields[name]).length===1&&fields[name].integerValue==='1';
+   need(fields.paused?.booleanValue===true&&empty&&capacity('desiredConcurrency')&&capacity('effectiveConcurrency'),'Stage is not closed.');
    const q=await api.request(`https://cloudtasks.googleapis.com/v2/projects/${project}/locations/us-central1/queues/v0-${stage}`);
    need(q.state==='PAUSED','Queue is not paused.');
    const tasks=await api.request(`https://cloudtasks.googleapis.com/v2/projects/${project}/locations/us-central1/queues/v0-${stage}/tasks?pageSize=1`);need(!tasks.tasks?.length&&!tasks.nextPageToken,'Queue is not empty.');

@@ -103,3 +103,18 @@ test('transactional batchGet rejects empty, duplicate, mixed and outside-identit
   const api={project,request:async(url,options={})=>{if(url.endsWith(':runQuery'))return [];assert.ok(url.endsWith(':batchGet'));return response(options.json.documents[0]);}},store=createResetOwnerStore(api,{assertRuntimeClosed:async()=>{}});await assert.rejects(()=>store.inspectResetMetadata('Reel_001',{transaction:'exact-tx'}),/membership|identity/);
  }
 });
+
+function closedControlREST(active={arrayValue:{}}){return {fields:{paused:{booleanValue:true},active,desiredConcurrency:{integerValue:'1'},effectiveConcurrency:{integerValue:'1'}}};}
+function closedOwnerRESTStore(control,{runtimeGuard=async()=>{}}={}){
+ const calls=[],api={project,request:async(url,options={})=>{calls.push({url,options});if(url.includes('/reels_controls/'))return structuredClone(control);if(url.includes('cloudtasks.googleapis.com/')&&new URL(url).pathname.endsWith('/tasks'))return {};if(url.includes('cloudtasks.googleapis.com/'))return {state:'PAUSED'};throw Error('unexpected endpoint');}};return {store:createResetOwnerStore(api,{assertRuntimeClosed:runtimeGuard}),calls};
+}
+test('owner guard accepts persisted raw REST empty arrays with configured desired/effective capacity one',async()=>{
+ for(const active of [{arrayValue:{}},{arrayValue:{values:[]}}]){let runtimeChecks=0;const {store,calls}=closedOwnerRESTStore(closedControlREST(active),{runtimeGuard:async()=>{runtimeChecks++;}});await store.assertClosed();assert.equal(runtimeChecks,1);assert.equal(calls.filter(c=>c.url.includes('/reels_controls/')).length,3);assert.equal(calls.filter(c=>new URL(c.url).pathname.endsWith('/tasks')).length,4);assert.ok(calls.every(c=>!c.options.method||c.options.method==='GET'));assert.ok(calls.every(c=>!c.options.json));}
+});
+test('owner guard refuses missing/nonempty/malformed occupancy and configured capacity drift',async()=>{
+ const cases=[];for(const active of [undefined,null,{nullValue:null},{mapValue:{}},{arrayValue:{values:[{stringValue:'busy'}]}},{arrayValue:{values:{}}},{arrayValue:{values:false}},{arrayValue:[]},{booleanValue:false},{arrayValue:{},mapValue:{}}]){const control=closedControlREST();if(active===undefined)delete control.fields.active;else control.fields.active=active;cases.push(control);}
+ for(const name of ['desiredConcurrency','effectiveConcurrency'])for(const value of [undefined,{integerValue:'0'},{integerValue:'2'},{integerValue:1},{booleanValue:true}]){const control=closedControlREST();if(value===undefined)delete control.fields[name];else control.fields[name]=value;cases.push(control);}
+ for(const value of [undefined,{booleanValue:false},{booleanValue:1},{integerValue:'1'}]){const control=closedControlREST();if(value===undefined)delete control.fields.paused;else control.fields.paused=value;cases.push(control);}
+ for(const control of cases){const {store,calls}=closedOwnerRESTStore(control);await assert.rejects(()=>store.assertClosed(),/Stage is not closed/);assert.ok(calls.every(c=>!c.options.method||c.options.method==='GET'));}
+ const {store,calls}=closedOwnerRESTStore(closedControlREST(),{runtimeGuard:async()=>{throw Error('closed release drift');}});await assert.rejects(()=>store.assertClosed(),/release drift/);assert.equal(calls.length,0);
+});

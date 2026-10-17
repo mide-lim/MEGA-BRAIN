@@ -27,7 +27,7 @@ def inspect(get):
         targets["queue:" + s] = QUEUES + s
         targets["tasks:" + s] = QUEUES + s + "/tasks?pageSize=1&responseView=BASIC&fields=tasks(name),nextPageToken"
     for s in STAGES:
-        targets["control:" + s] = DOCS + "reels_controls/" + s + "?mask.fieldPaths=paused&mask.fieldPaths=active&mask.fieldPaths=desiredConcurrency"
+        targets["control:" + s] = DOCS + "reels_controls/" + s + "?mask.fieldPaths=paused&mask.fieldPaths=active&mask.fieldPaths=desiredConcurrency&mask.fieldPaths=effectiveConcurrency"
     for s in ("admission", "automation"):
         targets["writer:" + s] = DOCS + "settings/" + s + "?mask.fieldPaths=enabled"
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
@@ -58,10 +58,20 @@ def inspect(get):
         require(not tasks.get("tasks") and not tasks.get("nextPageToken"))
     for s in STAGES:
         fields = observations["control:" + s].get("fields", {})
-        require(fields.get("paused", {}).get("booleanValue") is True)
+        paused = fields.get("paused")
+        require(isinstance(paused, dict) and paused.get("booleanValue") is True)
+        # Pipeline.acquire persists active as an array of execution IDs. Empty
+        # Firestore arrays may omit values in REST; a missing field or map is
+        # not evidence that no work remains. Effective concurrency is capacity,
+        # not occupancy, and release intentionally retains its configured value.
         active = fields.get("active")
-        require(isinstance(active, dict) and set(active) == {"mapValue"} and not active["mapValue"].get("fields", {}))
-        require(fields.get("desiredConcurrency", {}).get("integerValue") == "1")
+        require(isinstance(active, dict) and set(active) == {"arrayValue"})
+        contents = active["arrayValue"]
+        require(isinstance(contents, dict) and set(contents).issubset({"values"}))
+        values = contents.get("values", [])
+        require(isinstance(values, list) and not values)
+        for field in ("desiredConcurrency", "effectiveConcurrency"):
+            require(fields.get(field) == {"integerValue": "1"})
     for s in ("admission", "automation"):
         require(observations["writer:" + s].get("fields", {}).get("enabled", {}).get("booleanValue") is False)
     return {"project": PROJECT, "closed": True, "fourServicesClosed": True, "fourQueuesClosed": True, "legacyPreserved": True, "observedAt": dt.datetime.now(dt.timezone.utc).isoformat(), "readOnly": True}

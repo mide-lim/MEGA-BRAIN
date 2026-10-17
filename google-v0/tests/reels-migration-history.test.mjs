@@ -44,6 +44,11 @@ test('unknown money stays null while explicit zero is retained; unproven ledger 
  const amounts=entries.map(r=>r.amount);assert.ok(amounts.includes(null));assert.ok(amounts.includes(0));assert.ok(entries.every(r=>r.recordedAt===null&&r.day===null&&r.billed===null));
 });
 
+test('a legacy job without its ledger preserves explicit accounting without promoting it to measured usage',()=>{
+ const input=base();input.googleSnapshot.records.push(document('jobs/Execution_001',{video_id:'Reel_001',stage:'upload',status:'completed',actual_cents:125,completed_at:at}));
+ const result=projectMigrationHistory(input);assert.equal(result.financeView.entries.length,1);assert.equal(result.financeView.entries[0].kind,'accounting');assert.equal(result.financeView.entries[0].amount,1.25);assert.equal(result.financeView.entries[0].currency,'BRL');assert.equal(result.financeView.entries[0].billed,null);
+});
+
 test('saved provider usage is counted once across execution and verified artifact at its original rate and BRT day',()=>{
  const input=base(),usage=measured(15000),job=document('reels_executions/Execution_001',{reelId:'Reel_001',stage:'analysis',status:'completed',resultSavedAt:at,completedAt:at,rawResult:{finance:{measurement:usage,estimate:{amount:0.25,currency:'BRL'}}}});
  input.googleSnapshot.records.push(job,structuredClone(job));input.artifactProofs=[{executionId:'Execution_001',reelId:'Reel_001',stage:'analysis',key:'saved/synthetic-analysis.json',generation:'2',sha256:'a'.repeat(64),sourceVerified:true,recordedAt:at,usage_cost:usage}];

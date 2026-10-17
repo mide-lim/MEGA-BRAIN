@@ -26,7 +26,7 @@ export function projectMigrationHistory({googleSnapshot,legacySnapshot,targetVid
  const input={googleSnapshot,legacySnapshot,targetVideos,coverage,artifactProofs},inputHash=hash(input),targets=new Map();
  for(const video of targetVideos){if(!id(video?.id)||targets.has(video.id))throw Error('Identidade alvo inválida ou repetida.');targets.set(video.id,video);}
  const sourceVideos=new Map(array(googleSnapshot.records).filter(r=>r?.path?.startsWith('videos/')).map(r=>[id(r.data?.id??r.path.slice(7)),r.data]));
- const historyView=[],unlinkedHistory=[],accounting=[],selection=[],ledger=new Map(),usages=new Map(),seen=new Set();
+ const historyView=[],unlinkedHistory=[],accounting=[],selection=[],ledger=new Map(),jobAccountingFallbacks=new Map(),usages=new Map(),seen=new Set();
  let duplicates=0,ledgerDuplicates=0;
  function link(reelId){
   if(!reelId)return {linked:false,reason:'EXPLICIT_REEL_ID_UNAVAILABLE'};
@@ -73,6 +73,7 @@ export function projectMigrationHistory({googleSnapshot,legacySnapshot,targetVid
    if(['jobs','reels_executions'].includes(collection)){
     const financeData=data.rawResult?.finance,measurement=financeData?.measurement;
     const execution=record.path.slice(collection.length+1),identity=usageIdentity({...data,executionId:execution},null);
+    if(collection==='jobs'&&(Object.hasOwn(data,'actual_cents')||Object.hasOwn(data,'maximum_cents'))){const rows=jobAccountingFallbacks.get(execution)??[];rows.push({data,p});jobAccountingFallbacks.set(execution,rows);}
     if(measurement!=null||['transcription','analysis'].includes(data.stage))usage(identity,measurement??null,p,{reelId:id(data.reelId??data.video_id),s:stage(data.stage),at:timestamp(data.resultSavedAt??data.result_saved_at??data.completedAt??data.completed_at)});
     const estimate=financeData?.estimate;
     if(object(estimate)&&['BRL','USD'].includes(estimate.currency)&&Number.isFinite(estimate.amount)&&estimate.amount>=0)accounting.push(finance('estimate',id(data.reelId??data.video_id),stage(data.stage),estimate.amount,estimate.currency,timestamp(data.createdAt??data.created_at),[p],{reason:'SAVED_QUOTE_NOT_MEASURED_OR_BILLED'}));
@@ -114,6 +115,9 @@ export function projectMigrationHistory({googleSnapshot,legacySnapshot,targetVid
   selection.push({sourceRef:p.sourceRef,disposition:'finance',reason:verified?null:'ARTIFACT_PROVENANCE_UNVERIFIED'});
  }
  let conflicts=0;
+ // The ledger is the accounting source when both snapshots represent the same
+ // job. Preserve a job's own explicit accounting only if its ledger is absent.
+ for(const [execution,rows]of jobAccountingFallbacks)if(!ledger.has(hash({system:'google',ledgerJob:execution})))for(const row of rows)ledgerRow(execution,row.data,row.p);
  for(const rows of ledger.values()){
   const signatures=new Set(rows.map(({data})=>hash({video:id(data.video_id??data.reelId),stage:stage(data.stage),status:status(data.status),actual:money(data.actual_cents),maximum:money(data.maximum_cents)}))),provenances=rows.flatMap(r=>r.provenances),data=rows[0].data,reelId=id(data.video_id??data.reelId),s=stage(data.stage);
   if(signatures.size>1){conflicts++;accounting.push(finance('unknown',reelId,s,null,null,null,provenances,{reason:'CONFLICTING_LEDGER_VERSIONS'}));continue;}

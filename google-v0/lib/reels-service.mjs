@@ -26,13 +26,14 @@ export class ReelsService {
   if(processingTypes.has(type)){
    const accepted=[],excluded=[...(saved.data.excluded??[])];
    for(const reelId of saved.data.selected??saved.data.accepted){
-    const reel=await this.repository.raw(reelId);if(!reel){excluded.push({id:reelId,reason:'not_found'});continue;}
+    const reel=await this.repository.raw(reelId);if(!reel){excluded.push({id:reelId,reason:'not_found'});continue;}if(reel.import_hold?.active===true){excluded.push({id:reelId,reason:'migration_hold'});continue;}
     const selectedStage=saved.data.stagePlan?.[reelId]??stage??(type==='complement'?'analysis':type==='retry'?(reel.reels_v2?.stage??reel.stage??'acquisition'):'acquisition');
     if(!STAGES.includes(selectedStage)){excluded.push({id:reelId,reason:'invalid_stage'});continue;}
     const jobId=executionId(id,reelId,selectedStage),jobPath='reels_executions/'+jobId;
     let queued=await this.store.get(jobPath);
     if(!queued){
      let admitted=false;await cas(this.store,'videos/'+reelId,video=>{admitted=false;const current=video.reels_v2??{},item=projectReel(video);
+      if(item.importHeld)return null;
       if(current.operationId===id){admitted=true;return null;}
       {const eligible=type==='start'?item.status==='registered':type==='retry'?item.status==='failed'&&item.error?.uncertain!==true:item.publication.available&&item.status==='completed';if(!eligible)return null;}
       admitted=true;return {reels_v2:{...current,status:'queued',stage:selectedStage,operationId:id,executionId:jobId,updatedAt:nowISO(this.clock)}};});
@@ -58,7 +59,7 @@ export class ReelsService {
   if(!['retry','complement'].includes(type))throw fail('INVALID_COMMAND','Comando inválido.');
   if(!selection||(!Array.isArray(selection.ids)&&selection.all!==true))throw fail('INVALID_SELECTION','Seleção inválida.');
   let ids;if(selection.all===true){ids=[];let cursor;do{const page=await this.repository.list({...selection.filters,workspace:'all',limit:100,cursor});ids.push(...page.items.map(i=>i.id));cursor=page.nextCursor;}while(cursor);}else ids=[...new Set(selection.ids.map(id=>identifier(id)))];
-  const accepted=[],excluded=[];for(const id of ids){const raw=await this.repository.raw(id),item=raw?projectReel(raw):null;const allowed=item&&(type==='retry'?item.status==='failed'&&item.error?.uncertain!==true:item.publication.available&&item.status==='completed');if(allowed)accepted.push(id);else excluded.push({id,reason:item?.status==='uncertain'?'requires_reconciliation':item?'not_eligible':'not_found'});}
+  const accepted=[],excluded=[];for(const id of ids){const raw=await this.repository.raw(id),item=raw?projectReel(raw):null;const allowed=item&&!item.importHeld&&(type==='retry'?item.status==='failed'&&item.error?.uncertain!==true:item.publication.available&&item.status==='completed');if(allowed)accepted.push(id);else excluded.push({id,reason:item?.status==='uncertain'?'requires_reconciliation':item?'not_eligible':'not_found'});}
   return {ids:accepted,eligible:accepted.length,total:ids.length,excluded};
  }
  async operation(id){identifier(id);const saved=await this.store.get('reels_commands/'+id);if(!saved||saved.data.type==='preview')throw fail('NOT_FOUND','Comando não encontrado.',404);return {operation:saved.data};}

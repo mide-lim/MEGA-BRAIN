@@ -1,6 +1,6 @@
 import {migrationHash} from './reels-migration.mjs';
 import {restoreMigrationCopyBackup,buildMigrationCopyPlan} from './reels-migration-copy.mjs';
-import {assertImportJson,verifyBackupLinkManifest} from './reels-backup-links.mjs';
+import {assertImportJson,verifyBackupLinkManifest,buildBackupLinkManifest} from './reels-backup-links.mjs';
 import {projectMigrationHistory} from './reels-migration-history.mjs';
 
 // This module has no Store/transport/apply entry point. All documents below are
@@ -17,10 +17,13 @@ function validateProjection(h){
  const {proof,...body}=h;if(migrationHash(body)!==proof.outputHash)throw Error('Projeção histórica alterada.');
  for(const row of [...h.historyView,...h.unlinkedHistory,...h.financeView.entries])if(!sha.test(row.id??'')||row.executable!==false||row.historical!==true)throw Error('Linha histórica sem identidade inerte.');
 }
-function planPackage({copyBackup,backupLinks,historyProjection,historyInputs={coverage:null,artifactProofs:[]},sourceHashes}){
+function planPackage({copyBackup,backupLinks,linkInputs,historyProjection,historyInputs={coverage:null,artifactProofs:[]},sourceHashes}){
  const input=restoreMigrationCopyBackup(copyBackup),plan=buildMigrationCopyPlan(input),g=input.googleSnapshot,l=input.legacySnapshot;
  sources(sourceHashes);verifyBackupLinkManifest(backupLinks);
  if(backupLinks.sourceHashes.googleSnapshot!==migrationHash(g)||backupLinks.sourceHashes.legacySnapshot!==migrationHash(l))throw Error('Vínculos não correspondem aos snapshots.');
+ if(!object(linkInputs)||!object(linkInputs.physicalCopyReceipt)||Object.keys(linkInputs).some(k=>!['physicalCopyReceipt','originAliases','humanBackupAssertion'].includes(k)))throw Error('Entradas originais dos vínculos obrigatórias.');
+ const recomputedLinks=buildBackupLinkManifest({googleSnapshot:g,legacySnapshot:l,...linkInputs});
+ if(recomputedLinks.hash!==backupLinks.hash)throw Error('Vínculos não correspondem ao recibo e aliases fornecidos.');
  validateProjection(historyProjection);
  if(!object(historyInputs)||Object.keys(historyInputs).some(k=>!['coverage','artifactProofs'].includes(k)))throw Error('Entradas históricas fora do escopo.');
  const recomputedHistory=projectMigrationHistory({googleSnapshot:g,legacySnapshot:l,targetVideos:plan.targetCopy.videos,coverage:historyInputs.coverage??null,artifactProofs:historyInputs.artifactProofs??[]});
@@ -43,7 +46,7 @@ function planPackage({copyBackup,backupLinks,historyProjection,historyInputs={co
  const paths=new Set();for(const record of records){const [collection,id,...rest]=record.path.split('/');if(!allowedCollections.has(collection)||!id||rest.length||paths.has(record.path))throw Error('Documento duplicado ou coleção fora do escopo.');paths.add(record.path);}
  return {schemaVersion:1,kind:'reels_web_import_package',sourceHashes:clone(sourceHashes),sourceBackupHash:copyBackup.hash,migrationPlanHash:plan.hash,backupLinksHash:backupLinks.hash,historyInputHash:historyProjection.proof.inputHash,historyOutputHash:historyProjection.proof.outputHash,googlePreconditions:g.records.map(r=>({path:r.path,recordHash:migrationHash(r)})).sort((a,b)=>a.path.localeCompare(b.path)),records,protectedArchiveHash:migrationHash(plan.protectedArchive),counts:{targetReels:plan.counts.targetVideos,preservedGoogleReels:googleIds.size,newReelDocuments:plan.counts.targetVideos-googleIds.size,legacyContentDocuments:records.filter(r=>r.path.startsWith('reels_legacy_content/')).length,historyDocuments:records.filter(r=>r.path.startsWith('reels_historical_activity/')).length,financeDocuments:historyProjection.financeView.entries.length},execution:{mode:'copy_only',applySupported:false,newRuntimeAdmissionActivated:false,processingEnabled:false,sourceWrites:0,sourceDeletions:0},limitations:['Pacote privado de preparação: contém acervo e nunca deve ser publicado no repositório público.','Os documentos Google existentes não são reescritos; conteúdo legado é uma alternativa preservada, sem inventar publicação ou qualidade moderna.','Históricos e financeiro permanecem coleções inertes, separados de comandos, filas, execuções e controles ativos.','A materialização JSON não autoriza importação real, corte de escritor, processamento, exclusão nem publicação.']};
 }
-export function buildWebImportPackage(input){assertImportJson(input);if(!object(input)||Object.keys(input).some(k=>!['copyBackup','backupLinks','historyProjection','historyInputs','sourceHashes'].includes(k)))throw Error('Escopo do pacote inválido.');return seal(planPackage(input));}
+export function buildWebImportPackage(input){assertImportJson(input);if(!object(input)||Object.keys(input).some(k=>!['copyBackup','backupLinks','linkInputs','historyProjection','historyInputs','sourceHashes'].includes(k)))throw Error('Escopo do pacote inválido.');return seal(planPackage(input));}
 export function verifyWebImportPackage(pkg,input){assertImportJson(pkg);const {hash,...body}=pkg;if(body.schemaVersion!==1||body.kind!=='reels_web_import_package'||!sha.test(hash??'')||migrationHash(body)!==hash||buildWebImportPackage(input).hash!==hash)throw Error('Pacote ou suas origens divergiram.');return true;}
 export function materializeIntoCopy({package:pkg,targetCopy,expectedSourceHashes,...input}){
  assertImportJson({package:pkg,targetCopy,expectedSourceHashes,...input});

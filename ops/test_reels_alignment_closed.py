@@ -1,5 +1,10 @@
 import copy
 import importlib.util
+import io
+import socket
+import threading
+import time
+import urllib.error
 from pathlib import Path
 import unittest
 
@@ -80,3 +85,131 @@ class ClosedGuardTest(unittest.TestCase):
             if value is None: del data[url]["fields"]["paused"]
             else: data[url]["fields"]["paused"] = value
             with self.assertRaises(ValueError): guard.inspect(data.__getitem__)
+
+
+class SerialOwnerReadTest(unittest.TestCase):
+    def test_all_eighteen_observations_are_sequential_in_the_original_order(self):
+        rows = fixture()
+        lock = threading.Lock()
+        calls = []
+        active = 0
+        maximum = 0
+        def get(url):
+            nonlocal active, maximum
+            with lock:
+                calls.append(url)
+                active += 1
+                maximum = max(maximum, active)
+            # Synthetic body-consumption latency makes the former fan-out fail
+            # this assertion. This test performs no network or credential read.
+            time.sleep(0.002)
+            result = copy.deepcopy(rows[url])
+            with lock:
+                active -= 1
+            return result
+        self.assertTrue(guard.inspect(get)["closed"])
+        self.assertEqual(calls, list(rows))
+        self.assertEqual(len(calls), 18)
+        self.assertEqual(maximum, 1)
+        self.assertEqual(active, 0)
+
+    def test_first_read_failure_stops_without_pending_gets_or_retry(self):
+        rows = fixture()
+        calls = []
+        failure = RuntimeError("synthetic read failure")
+        def get(url):
+            calls.append(url)
+            if len(calls) == 4:
+                raise failure
+            return rows[url]
+        with self.assertRaises(RuntimeError) as result:
+            guard.inspect(get)
+        self.assertIs(result.exception, failure)
+        self.assertEqual(calls, list(rows)[:4])
+
+
+class TemporaryDNSReadTest(unittest.TestCase):
+    def transient(self):
+        return urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN, "synthetic DNS"))
+
+    def test_only_temporary_pre_response_dns_retries_the_same_get_at_most_three_times(self):
+        now = [0.0]; pauses = []; calls = []
+        def sleep(seconds):
+            pauses.append(seconds); now[0] += seconds
+        def opener(request, timeout):
+            calls.append((request.full_url, request.get_method(), timeout, request.get_header("Authorization")))
+            if len(calls) < 3:
+                raise self.transient()
+            return io.StringIO('{"closed":true}')
+        result = guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 90, opener=opener, clock=lambda: now[0], sleep=sleep)
+        self.assertEqual(result, {"closed": True})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(pauses, [2, 2])
+        self.assertTrue(all(row[0] == guard.BASE + "web" and row[1] == "GET" and row[2] == 30 and row[3] == "Bearer fixture-token" for row in calls))
+
+    def test_third_dns_failure_propagates_without_fourth_attempt(self):
+        calls = []; pauses = []
+        failure = self.transient()
+        def opener(request, timeout):
+            calls.append(request.full_url); raise failure
+        with self.assertRaises(urllib.error.URLError) as result:
+            guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 90, opener=opener, clock=lambda: 0, sleep=pauses.append)
+        self.assertIs(result.exception, failure)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(pauses, [2, 2])
+
+    def test_http_other_dns_timeout_and_unknown_errors_never_retry(self):
+        failures = [
+            urllib.error.HTTPError(guard.BASE + "web", 503, "synthetic HTTP", {}, None),
+            urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "synthetic permanent DNS")),
+            urllib.error.URLError(TimeoutError("synthetic timeout")),
+            TimeoutError("synthetic timeout"),
+            RuntimeError("synthetic unknown"),
+        ]
+        for failure in failures:
+            calls = []; pauses = []
+            def opener(request, timeout):
+                calls.append(request.full_url); raise failure
+            with self.assertRaises(Exception) as result:
+                guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 90, opener=opener, clock=lambda: 0, sleep=pauses.append)
+            self.assertIs(result.exception, failure)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(pauses, [])
+
+    def test_body_or_json_failure_never_replays_an_http_response(self):
+        failure = self.transient()
+        class FailedBody(io.StringIO):
+            def read(self, *args):
+                raise failure
+        for response in (FailedBody(""), io.StringIO("not JSON")):
+            calls = []; pauses = []
+            def opener(request, timeout):
+                calls.append(request.full_url); return response
+            with self.assertRaises(Exception):
+                guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 90, opener=opener, clock=lambda: 0, sleep=pauses.append)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(pauses, [])
+
+    def test_global_deadline_bounds_timeout_and_prevents_unfunded_backoff_or_attempt(self):
+        now = [0.0]; calls = []; pauses = []
+        def sleep(seconds):
+            pauses.append(seconds); now[0] += seconds
+        def opener(request, timeout):
+            calls.append(timeout); raise self.transient()
+        with self.assertRaises(ValueError):
+            guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 3, opener=opener, clock=lambda: now[0], sleep=sleep)
+        self.assertEqual(calls, [3, 1])
+        self.assertEqual(pauses, [2])
+        calls.clear()
+        with self.assertRaises(ValueError):
+            guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 0, opener=opener, clock=lambda: 0, sleep=pauses.append)
+        self.assertEqual(calls, [])
+
+    def test_a_response_returned_after_deadline_fails_closed_without_retry(self):
+        now = [0.0]; calls = []
+        def opener(request, timeout):
+            calls.append(timeout); now[0] = 91
+            return io.StringIO('{"closed":true}')
+        with self.assertRaises(ValueError):
+            guard.get_with_dns_retry(guard.BASE + "web", "fixture-token", 90, opener=opener, clock=lambda: now[0], sleep=lambda _: self.fail("must not retry"))
+        self.assertEqual(calls, [30])

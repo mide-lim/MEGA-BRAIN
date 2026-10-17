@@ -45,3 +45,11 @@ export function financeCoverageRows(coverage,referenceAt){
   return row;
  });
 }
+
+// Only explicit quantity placeholders in ingredient/quantity fields get this hint.
+// Do not infer whether a measure exists in any saved source or alter the raw field.
+export function knowledgeFieldDisplay(field){
+ const value=field?.value??field?.text??field?.description;
+ const quantityUnconsolidated=['ingredient','quantity'].includes(field?.kind)&&typeof value==='string'&&['Não especificado','Not specified'].includes(value.trim());
+ return {text:quantityUnconsolidated?'Quantidade não consolidada; consulte as fontes abaixo.':text(value),quantityUnconsolidated};
+}

@@ -18,13 +18,15 @@ export function reelsFixture(now=new Date()) {
  const food=videos.find(v=>v.id==='QaPub_food');food.transcript='Use 300 g de frango. Doure na frigideira por 8 minutos. Rende 2 porções.';
  food.analysis.knowledge={context:'recipe',keywords:[{term:'Frango'}],missing_information:[],fields:[
   {kind:'ingredient',name:'Ingrediente principal',value:'300 g de frango'},
+  {kind:'ingredient',name:'Páprica defumada',value:'Não especificado'},
   {kind:'procedure',name:'Modo de preparo',value:'Doure na frigideira por 8 minutos.'},
   {kind:'preparation_time',name:'Tempo informado',value:'8 minutos'},
   {kind:'serving_count',name:'Rendimento informado',value:'2 porções'}
  ].map(field=>({...field,evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}))};
  food.analysis.insights=[{claim:'O autor orienta dourar o frango na frigideira.',application:'Usar a sequência descrita como referência de preparo.',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]},{claim:'O preparo pode ser organizado antes de aquecer a frigideira.',application:'Separar os ingredientes antes de começar.',classification:'interpretation',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}];
  food.analysis.insights.push({claim:'<img src=x onerror=alert(1)>',classification:'__proto__',evidence:[{source:'constructor',excerpt:'<b>Trecho preservado como texto.</b>'}]});
- food.analysis.source_consolidation={rule:'saved-source-publication-v1',sources:[{source:'caption',capture_id:'qa-complete-caption',text:'Finalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>'}]};
+ food.analysis.source_consolidation={rule:'saved-source-publication-v1',sources:[{source:'caption',capture_id:'qa-complete-caption',text:'1 colher de chá dos temperos: páprica defumada e cominho.\nFinalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>'}]};
+ food.source_caption={text:food.analysis.source_consolidation.sources[0].text,source:'instagram',capture_id:'qa-complete-caption'};
  videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
  const failed=videos.find(video=>video.id==='QaFail_01'),failedOperation='qa-failed-operation',failedId=executionId(failedOperation,failed.id,'acquisition');
  failed.reels_v2={status:'failed',stage:'acquisition',operationId:failedOperation,executionId:failedId,error:{...failed.error,stage:'acquisition',uncertain:false}};

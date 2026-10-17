@@ -4,12 +4,13 @@
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "34f37ccb3aefef464ef7f095ebd93ac934a07992",
-  "objective": "Corrigir somente apresentação de ocorrências, cobertura financeira e atividade: linguagem clara, originais técnicos acessíveis e ausência de dados preservada.",
+  "objective": "Corrigir somente apresentação de ocorrências, cobertura financeira, atividade e quantidade não consolidada na Visão geral; preservar valores brutos e fontes salvas sem inferência.",
   "risk": "medium",
   "acceptance_criteria": [
     "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português tanto no catálogo quanto no painel de detalhe, sem sugerir nova chamada; erro original completo permanece em detalhes recolhidos.",
     "Cobertura mostra fontes, intervalos, observação, última medição e desconhecidos em português; moedas, estimativas e faturamento mantêm distinção.",
     "Atividade destaca mensagem, Reel, worker, etapa e data; IDs e evento original estão em Detalhes do evento; histórico tem estado humanizado e datas originais.",
+    "Valores integrais Não especificado e Not specified em campos ingredient/quantity orientam a consulta às fontes salvas; JSON original fica acessível no cartão. Outros textos, quantidades explícitas e fontes permanecem literais, sem declarar presença ou ausência de medida na fonte.",
     "Nenhum backend, contrato, worker, configuração, dado ou operação paga é alterado; testes e build somente GitHub Actions e revisão independente no head final."
   ],
   "allowed_paths": [
@@ -70,11 +71,12 @@
     },
     {
       "path": "google-v0/web-google/app/reels/detail.jsx",
-      "reason": "Ocorrência do painel de detalhe é o gatilho original do P3 e precisa da mesma apresentação do catálogo",
+      "reason": "Ocorrência do painel e apresentação do marcador de quantidade em campos estruturados",
       "sections": [
-        "Detail occurrence notice in detail-video"
+        "Detail occurrence notice in detail-video",
+        "Knowledge fields and SavedSources"
       ],
-      "max_chars": 500
+      "max_chars": 8000
     }
   ],
   "validation_commands": [
@@ -115,6 +117,15 @@
     "base_revision": 198,
     "protocol_read": "/srv/paperclip/data/megabrain-operations/v2/protocol.json; tracked checkout has only AGENTS.md and google-v0/AGENTS.md, no native protocol file.",
     "resume_revision": 200,
-    "correction_source": "Independent review /root/review_web_delivery on head350d322d5002e92d3e8f3994cc90b4b233321b16: original detail-panel occurrence remains. Same PR scope expansion authorized by Orchestrator."
+    "correction_source": "Independent review /root/review_web_delivery on head350d322d5002e92d3e8f3994cc90b4b233321b16: original detail-panel occurrence remains. Same PR scope expansion authorized by Orchestrator.",
+    "quantity_correction": {
+      "run_id": "/root/web_quantity_copy",
+      "session_id": "01a14320-f3bd-7821-9e1d-ddb263301b98",
+      "base_revision": 205,
+      "read_revision": 206,
+      "base_head": "efb3b4a1ee55d1c1d5b3ce6da2d934ba7ddbb8f9",
+      "scope": "Six existing allowed files: task packet, detail display helper/consumer, pure tests, synthetic fixture/browser assertions; no contract/backend/data/worker changes.",
+      "authorization": "Root delegated newly observed P3 under existing human authorization; same open PR65; fresh exact-head review required."
+    }
   }
 }

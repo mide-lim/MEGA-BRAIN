@@ -115,9 +115,15 @@ export class ReelsPipeline {
   const changes={...(job.providerChanges??{}),...(result.changes??{})};delete changes.reels_v2;
   if(job.stage!=='analysis'){for(const key of ['analysis','publication','published_analysis','analysis_revision'])delete changes[key];}
   let publicationConflict=false,ownershipConflict=false;
-  await cas(this.store,'videos/'+job.reelId,current=>{
+  await cas(this.store,'videos/'+job.reelId,async current=>{
    publicationConflict=false;ownershipConflict=false;
-   if(current.reels_v2?.operationId&&(current.reels_v2.operationId!==job.operationId||current.reels_v2.executionId!==job.id)){ownershipConflict=true;return null;}
+   if(current.reels_v2?.operationId&&(current.reels_v2.operationId!==job.operationId||current.reels_v2.executionId!==job.id)){
+    // A proved successor means the earlier stage already handed off. Resume
+    // its durable outbox without rewriting sources or regressing the pointer.
+    const ownership=await reconciliationOwnership(this.store,job,current);
+    if(!ownership.successor)ownershipConflict=true;
+    return null;
+   }
    if(qualityProposal){
     const proposed={...current,...changes,publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
     const already=current.analysis_key===qualityProposal.publicationIdentity?.key&&String(current.analysis_generation)===String(qualityProposal.publicationIdentity?.generation)&&current.publication?.qualityReceipt?.receiptId===qualityProposal.qualityReceipt.receiptId&&verifyPublicationQualityReceipt({video:current,receipt:qualityReceipt}).trusted;

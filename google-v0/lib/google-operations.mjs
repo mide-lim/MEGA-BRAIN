@@ -139,7 +139,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
       const audioPrepared=config.worker_stage==='upload'?await prepareAudio({...video,video_key:key,video_generation:object.generation},bytes):null;
-      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,video_sha256:object.sha256??sha256(bytes),...(qualityMode?{media_inspection_receipt:createMediaInspectionReceipt({video:{...video,video_key:key,video_generation:object.generation},media,bytes})}:{}),media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
+      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,...(qualityMode?{video_sha256:object.sha256??sha256(bytes),media_inspection_receipt:createMediaInspectionReceipt({video:{...video,video_key:key,video_generation:object.generation},media,bytes})}:{}),media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
     },
     async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();

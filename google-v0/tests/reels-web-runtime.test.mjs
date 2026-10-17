@@ -1,3 +1,6 @@
+import {prepareQualityCandidateV2,qualitySourceManifest,qualitySourceStateHash,qualityPublicationRevision} from '../lib/reels-quality-gate.mjs';
+import {createMediaInspectionReceipt} from '../lib/google-operations.mjs';
+import {sha256} from '../lib/storage.mjs';
 import {libraryAPI} from '../lib/library-api.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -60,14 +63,28 @@ test('existing worker arguments preserve legacy only when protected v2 selection
 test('web command flows through durable Tasks and three workers to LRO collection and publication without external providers',async()=>{
  const x=setup([reel('Reel_001'),reel('Reel_002')]),runtime=reelsWebRuntime({...x,config:enabled}),handle=apiFor(x.repository,runtime);
  const calls={upload:0,transcription:0,analysis:0,polls:0},pollsByReel=new Map();
- const operationsFactory=()=>({
-  upload:async input=>{calls.upload++;return {changes:{video_key:`originals/instagram/${input.videoId}/video.mp4`,video_generation:'1',video_bytes:10,media_verified:true,audio_status:'present',duration_seconds:20}};},
+ const savedCandidates=new Map();
+ const operationsFactory=options=>({
+  upload:async input=>{
+   calls.upload++;const bytes=Buffer.alloc(10,1),audio=Buffer.from('audio'),id=input.videoId;
+   const source={id,video_key:`originals/instagram/${id}/video.mp4`,video_generation:'1',video_bytes:bytes.length,video_sha256:sha256(bytes),media_verified:true,audio_status:'present',duration_seconds:20,audio_key:`results/instagram/${id}/${options.executionIds(id,'transcription')}/audio.flac`,audio_generation:'4',audio_bytes:audio.length,audio_sha256:sha256(audio),audio_source_key:`originals/instagram/${id}/video.mp4`,audio_source_generation:'1',source_caption:{text:'Resultado sintético publicado',capture_id:'fixture_'+id}};
+   source.media_inspection_receipt=createMediaInspectionReceipt({video:source,media:{hasVideo:true,hasAudio:true,audio_status:'present',duration_seconds:20},bytes});
+   return {changes:source};
+  },
   transcription:async input=>{calls.transcription++;return {operation_name:`projects/${project}/locations/us/operations/synthetic_${input.videoId}`};},
   pollTranscription:async input=>{
    calls.polls++;assert.equal(input.operationName,`projects/${project}/locations/us/operations/synthetic_${input.videoId}`);
-   const count=(pollsByReel.get(input.videoId)??0)+1;pollsByReel.set(input.videoId,count);return count===1?{pending:true}:{changes:{transcript:'Conhecimento sintético preservado',transcript_status:'recognized',transcript_key:`results/instagram/${input.videoId}/${input.executionId}/transcription.json`,transcript_generation:'2'}};
+   const count=(pollsByReel.get(input.videoId)??0)+1;pollsByReel.set(input.videoId,count);if(count===1)return {pending:true};
+   const key=`results/instagram/${input.videoId}/${input.executionId}/transcription.json`,words=[{word:'Conhecimento sintético preservado',start_seconds:0,end_seconds:2}];
+   return {changes:{transcript:'Conhecimento sintético preservado',transcript_words:words,transcript_status:'recognized',transcript_key:key,transcript_generation:'2',transcription_receipt:{operationIdentity:input.operationName,operationKind:'provider_batch_operation',sourceAudioIdentity:qualitySourceManifest(input.video).audio,resultIdentity:{key,generation:'2'},rawResultIdentity:{key,generation:'2'},words}}};
   },
-  analysis:async input=>{calls.analysis++;return {changes:{analysis:{summary:'Resultado sintético publicado',categories:[],knowledge:{context:'technology',fields:[{kind:'concept',value:'Conhecimento sintético preservado',evidence:[{source:'transcript',excerpt:'Conhecimento sintético preservado'}]}],missing_information:[]}},analysis_key:`results/instagram/${input.videoId}/${input.executionId}/analysis.json`,analysis_generation:'3',analysis_quality_status:'accepted'}};}
+  analysis:async input=>{
+   calls.analysis++;const video=input.video,m=qualitySourceManifest(video),caption={source:'caption',sourceIdentity:m.caption,excerpt:video.source_caption.text},proof={source:'transcript',sourceIdentity:m.transcript,excerpt:video.transcript,start_seconds:0,end_seconds:2};
+   const report={title:video.source_caption.text,summary:video.source_caption.text,categories:['a-organizar'],useful_information:[],visual_observations:[],limitations:[],transcript_quality:{assessment:'Fonte sintética, sem medição de acurácia.',uncertain_segments:[]},knowledge:{context:'general',fields:[{kind:'other',name:'Informação',value:video.transcript,evidence:[proof]}],keywords:[],missing_information:[]},qualityEvidenceV2:{version:2,title:[caption],summary:[caption]}};
+   const q=await prepareQualityCandidateV2({record:video,report,rawResponse:{fixture:true,report},mediaInspection:video.media_inspection_receipt,transcriptionReceipt:video.transcription_receipt,expectedPublicationRevision:qualityPublicationRevision(video),ports:{saveCandidate:async value=>{const key=`results/instagram/${input.videoId}/${input.executionId}/quality-candidate.json`;savedCandidates.set(key,structuredClone(value));return {key,generation:'3',candidateContentHash:value.candidateContentHash};},saveReceipt:options.saveQualityReceipt}});
+   assert.equal(q.accepted,true);
+   return {qualityGate:q,qualityPublication:{policyVersion:'gate_v2',expectedSourceStateHash:qualitySourceStateHash(video),expectedPublicationRevision:q.expectedPublicationRevision,publicationIdentity:q.publicationIdentity,qualityReceipt:q.receiptIdentity},changes:{analysis:report,analysis_key:q.candidateIdentity.key,analysis_generation:q.candidateIdentity.generation,analysis_quality_status:'accepted'}};
+  }
  });
  const workers=Object.fromEntries(['acquisition','transcription','analysis'].map(stage=>[stage,reelsGoogleRuntime({...enabled,worker_origin:routes[stage==='acquisition'?'upload':stage].workerOrigin},{version:'synthetic'},{stage,authorize:()=>true,dependencies:{api:x.api,store:x.store,repository:x.repository,storage:{metadata:async()=>null},tools:{},operationsFactory}})]));
  const input={type:'start',selection:{ids:['Reel_001','Reel_002']},idempotencyKey:'end-to-end-web-command'};
@@ -94,7 +111,7 @@ test('web command flows through durable Tasks and three workers to LRO collectio
  }
  assert.ok(backpressure>0,'capacity one must retain a queued second STT delivery until the first poll completes');
  assert.ok([...attempts.values()].some(count=>count>1));
- assert.deepEqual(calls,{upload:2,transcription:2,analysis:2,polls:4});
+ assert.deepEqual(calls,{upload:2,transcription:2,analysis:2,polls:4});assert.equal(savedCandidates.size,2);
  const receipt=await (await handle(get('commands/'+operation.id))).json();assert.equal(receipt.operation.status,'completed');assert.equal(receipt.operation.progress.processed,2);
  for(const id of ['Reel_001','Reel_002']){
   const detail=await (await handle(get('items/'+id))).json();assert.equal(detail.item.status,'completed');assert.equal(detail.item.publication.available,true);assert.equal(detail.item.analysis.summary,'Resultado sintético publicado');assert.equal(detail.item.transcript.text,'Conhecimento sintético preservado');

@@ -34,7 +34,10 @@ export function reelStatus(v){
 export function projectReel(v){
  const available=publicationAvailable(v),status=reelStatus(v),a=available?v.analysis:null;
  v={...v,...(v.reels_v2??{}),updated_at:v.reels_v2?.updatedAt??v.updated_at};
- const categoryIds=available?[...new Set(arr(v.categoryIds??v.category_ids??a?.categories).filter(x=>typeof x==='string'))]:[];
+ // Retain explicit manual metadata for a separately verified preserved web
+ // analysis. categoryNavigation still removes categories without a web result;
+ // publicationAvailable remains the unchanged worker publication gate.
+ const categoryIds=available||v.taxonomy_override?.manual===true?[...new Set(arr(v.categoryIds??v.category_ids??a?.categories).filter(x=>typeof x==='string'))]:[];
  // Provider diagnostics remain private. Arbitrary text cannot safely be redacted
  // into a public UI message (JSON credentials and alternate auth schemes vary).
  const error=status==='failed'||status==='uncertain'?{code:/^[A-Z0-9_]{1,64}$/.test(v.error?.code??v.error_code??'')?(v.error?.code??v.error_code):(status==='uncertain'?'RECONCILIATION_REQUIRED':'CONFIRMED_FAILURE'),message:status==='uncertain'?'Resultado não confirmado; requer conciliação.':'Falha confirmada; confira a ação disponível.',destination:status==='uncertain'?'reconcile':str(v.error?.destination)??'retry',stage:stageName(v.error?.stage??v.stage),worker:str(v.error?.worker??v.worker),retryable:status==='failed'&&v.error?.retryable!==false,uncertain:status==='uncertain'}:null;

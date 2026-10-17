@@ -151,7 +151,11 @@ try {
   assert.equal((await server.store.get('videos/QaNew_001')).data.status,'registered');await closeDialog(page);
  });
  await record('loading_empty_errors_stale_preservation_and_old_response_isolation',async()=>{
-  await navigate(page,'Todos os Reels');await search(page,'Entrada 000');await page.getByRole('button',{name:/Entrada 000/}).waitFor();
+  await navigate(page,'Todos os Reels');
+  // The capacity journey reloads the app, whose intended initial scope is ready.
+  // This scenario searches both registered and published records explicitly.
+  const inventory=responseFor(page,'/api/reels/items',url=>url.searchParams.get('workspace')==='all');await page.getByRole('button',{name:'Acervo completo',exact:true}).click();await inventory;
+  await search(page,'Entrada 000');await page.getByRole('button',{name:/Entrada 000/}).waitFor();
   const held=server.holdNext(url=>url.pathname==='/api/reels/items'&&url.searchParams.get('q')==='Modelo');await page.getByLabel('Buscar no acervo').fill('Modelo');await held.started;
   await page.locator('.catalog .initial-loading').waitFor();assert.equal(await page.getByText('Atualizando dados…',{exact:true}).count(),0);assert.equal(await page.locator('.catalog tbody tr').count(),0);
   await search(page,'Receita');await page.getByRole('button',{name:/Receita publicada/}).waitFor();held.release();await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(await page.getByRole('button',{name:/Modelo publicado/}).count(),0);
@@ -160,6 +164,7 @@ try {
   const recovered=responseFor(page,'/api/reels/items',(_,r)=>r.status()===200);await page.locator('.catalog').getByRole('button',{name:'Tentar novamente',exact:true}).click();await recovered;
  });
  await record('background_refresh_keeps_rows_focus_scroll_and_layout_without_banners',async()=>{
+  const ready=responseFor(page,'/api/reels/items',url=>url.searchParams.get('workspace')==='ready');await page.getByRole('button',{name:'A processar',exact:true}).click();await ready;
   await search(page,'Entrada 001');await page.getByRole('button',{name:/Entrada 001/}).waitFor();await page.getByLabel('Buscar no acervo').focus();const top=await page.locator('.catalog table').evaluate(el=>el.getBoundingClientRect().top),scroll=await page.evaluate(()=>window.scrollY);
   const held=server.holdNext(url=>url.pathname==='/api/reels/items'&&url.searchParams.get('q')==='Entrada 001');const response=responseFor(page,'/api/reels/items',url=>url.searchParams.get('q')==='Entrada 001');await page.getByRole('button',{name:'↻ Atualizar',exact:true}).evaluate(el=>el.click());await held.started;
   assert.equal(await page.getByText('Atualizando dados…',{exact:true}).count(),0);assert.equal(await page.locator('.catalog .initial-loading').count(),0);await page.getByRole('button',{name:/Entrada 001/}).waitFor();assert.equal(await page.getByLabel('Buscar no acervo').evaluate(el=>document.activeElement===el),true);assert.equal(await page.evaluate(()=>window.scrollY),scroll);assert.equal(await page.locator('.catalog table').evaluate(el=>el.getBoundingClientRect().top),top);

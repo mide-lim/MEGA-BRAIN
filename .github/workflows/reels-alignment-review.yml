@@ -92,6 +92,28 @@ jobs:
         run: node --test google-v0/tests/reels-confirmed-failure-reset.test.mjs
       - name: Prepare the reviewed metadata-only deletion manifest
         run: node google-v0/scripts/reset-confirmed-failures.mjs prepare --input "$RUNNER_TEMP/reset-input.json" --output "$RUNNER_TEMP/reset-review/confirmed-failure-plan.json"
+      - name: Package exact committed owner operation sources
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, os, pathlib, zipfile
+          sources = [
+              'google-v0/scripts/reset-confirmed-failures.mjs',
+              'google-v0/lib/reels-confirmed-failure-reset.mjs',
+              'google-v0/lib/google-rest.mjs',
+              'google-v0/lib/firestore.mjs',
+              'google-v0/lib/control-fragments.mjs',
+              'google-v0/lib/reels-runtime.mjs',
+              'ops/assert-reels-alignment-closed.py'
+          ]
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'reset-review' / 'owner-sources.zip'
+          manifest = {'sourceCommit': os.environ['GITHUB_SHA'], 'files': {}}
+          with zipfile.ZipFile(destination, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
+              for name in sources:
+                  payload = pathlib.Path(name).read_bytes()
+                  manifest['files'][name] = {'sha256': hashlib.sha256(payload).hexdigest(), 'bytes': len(payload)}
+                  archive.writestr(name, payload)
+              archive.writestr('source-manifest.json', json.dumps(manifest, indent=2) + '\n')
+          PYTHON
       - name: Save preparation manifest without source bodies
         uses: actions/upload-artifact@v4
         with:

@@ -51,6 +51,7 @@ function evidence(raw,input,identity){
  const proofs=[];
  for(const p of list(input).slice(0,8)){
   if(!plain(p)||!['caption','transcript','video'].includes(p.source)||!text(p.excerpt).trim())continue;
+  if(typeof p.excerpt!=='string'||p.excerpt.length>2000){proofs.push({source:p.source,sourceKind:p.source,excerpt:'',startSeconds:null,endSeconds:null,state:'invalid',reason:'EVIDENCE_EXCERPT_TOO_LONG',id:contextualHash({identity,reason:'EVIDENCE_EXCERPT_TOO_LONG'})});continue;}
   const excerpt=text(p.excerpt),start=p.start_seconds,end=p.end_seconds;
   let state='invalid',reason='SOURCE_EVIDENCE_MISMATCH';
   if(p.source==='caption'){
@@ -118,16 +119,23 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   // contain the mapped ingredient/tool/method alias, otherwise keep it unverified.
   let state=attributeState(proofs);
   if(state==='supported'&&!proofs.some(p=>p.state==='supported'&&aliases.some(a=>quoteHas(p.excerpt,a))))state='present_unverified';
-  const pol=polarity(f,proofs),role=pol==='negated'?'excluded':safeRole(f.role,'supporting');
+  const pol=polarity(f,proofs),requestedRole=safeRole(f.role,'supporting'),role=pol==='negated'?'excluded':requestedRole==='central'?'supporting':requestedRole;
   const requestedUnits=list(f.unit_ids??f.unitIds),unitIds=requestedUnits.filter(x=>validUnits.some(u=>u.id===x));
+  if(requestedUnits.length!==unitIds.length){state='unknown';unitIds.splice(0);}
   // Only one independently verified unit makes a field's recipe association
   // unambiguous. Multi-unit association always requires explicit unit IDs.
   if(!requestedUnits.length&&unitCount===1)unitIds.push(validUnits[0].id);
-  attributes.push({id:contextualHash({identity,dimension,valueId,field:f}),dimensionId:dimension,dimension,valueId,label,state,role,polarity:pol,unitIds:[...new Set(unitIds)],evidence:proofs});
+  attributes.push({id:contextualHash({identity,dimension,valueId,field:f}),dimensionId:dimension,dimension,valueId,label,state,role,claimedRole:requestedRole,polarity:pol,unitIds:[...new Set(unitIds)],evidence:proofs});
  }
  const v2=modern?normalizeContextualSignalsV2({raw,identity,verification:qualityVerification,makeEvidence:evidence}):null;
  if(v2){
-  if(v2.context&&(v2.context.state==='supported'||context.state!=='supported'))Object.assign(context,v2.context);
+  if(v2.context&&(v2.context.state==='supported'||context.state!=='supported')){
+   const prior=context.value;Object.assign(context,v2.context);
+   if(prior&&prior!==context.value){
+    for(const a of attributes)if(['ingredient','method','format'].includes(a.dimensionId)){a.state='inconclusive';a.reason='CONTEXTUAL_SOURCE_CONTEXT_CONFLICT';a.unitIds=[];}
+    validUnits.splice(0);unitCount=null;Object.assign(format,{value:null,label:null,state:context.value==='recipe'?'unknown':'not_applicable',reason:'CONTEXTUAL_SOURCE_CONTEXT_CONFLICT'});
+   }
+  }
   if(v2.format){Object.assign(format,v2.format);unitCount=v2.independentUnitCount;validUnits.splice(0,validUnits.length,...v2.units);}
   for(const a of v2.attributes)attributes.push({...a,id:contextualHash({identity,attribute:a})});
   if(qualityVerification?.trusted===true&&qualityVerification.policyVersion==='gate_v2')identity.qualityPolicyVersion='gate_v2';

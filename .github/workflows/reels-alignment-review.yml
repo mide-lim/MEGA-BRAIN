@@ -46,6 +46,16 @@ jobs:
           CI: 'true'
           FIREBASE_CLI_DISABLE_UPDATE_CHECK: '1'
         run: npx --yes firebase-tools@15.34.0 emulators:exec --only firestore --project demo-megabrain --config google-v0/tests/fixtures/firestore-emulator.json "node --test google-v0/tests/reels-confirmed-failure-reset-emulator.test.mjs"
+      - name: Retain failed synthetic emulator diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-firestore-contract-diagnostics
+          path: |
+            firestore-debug.log
+            firebase-debug.log
+          retention-days: 3
+          if-no-files-found: ignore
   prepare:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest

@@ -26,10 +26,10 @@ test('apple and lemon source quantities survive without publishing contradictory
  assert.equal(result.publication_review.candidate.missing_information[0],raw.knowledge.missing_information[0]);
 });
 test('unsupported product identity cannot leak through title summary or invented STT correction',()=>{
- const raw=report([field('Modelo','BV9300','Blackview BV9300'),field('Bateria','15080 mAh','15080 mAh')]);raw.title='Review BV9300';raw.summary='BV9300 com 15080 mAh';raw.knowledge.context='technology';raw.categories=['hardware-setup'];
+ const raw=report([field('Modelo','BV9300','Blackview BV9300'),field('Bateria','15080 mAh','15080 mAh')]);raw.title='Review BV9300';raw.summary='BV9300 com 15080 mAh';raw.knowledge.keywords=[{term:'BV9300',evidence:[quote('transcript','O novo Blackview BV9900')]}];raw.useful_information=[{claim:'O BV9300 é resistente.',application:'Conhecer o BV9300.',classification:'author_claim',evidence:[quote('transcript','O novo Blackview BV9900')]}];raw.knowledge.context='technology';raw.categories=['hardware-setup'];
  const result=review(raw,{duration_seconds:60,transcript:'O novo Blackview BV9900 tem uma bateria de 15.000 mAh.'}).report;
  for(const value of [result.title,result.summary,JSON.stringify(result.transcript_quality)])assert.doesNotMatch(value,/BV9300|15080|Áudio errado/);
- assert.match(result.source_consolidation.sources[0].text,/BV9900/);assert.equal(result.publication_review.candidate.title,raw.title);assert.equal(result.knowledge.fields.length,0);
+ assert.match(result.source_consolidation.sources[0].text,/BV9900/);assert.equal(result.publication_review.candidate.title,raw.title);assert.equal(result.knowledge.fields.length,0);assert.equal(result.knowledge.keywords.length,0);assert.equal(result.useful_information.length,0);const publicView=reelDetail({id:'Device01',title:'BV9300',analysis_key:'raw',analysis_generation:'1',analysis_quality_status:'accepted',analysis:result});assert.doesNotMatch(JSON.stringify(publicView),/BV9300|15080|Áudio errado/);
 });
 test('no literal recovery, absent captures, and hostile HTML never become synthetic supporting evidence',()=>{
  const raw=report([field('Forno','999 graus','Forno 999 graus')]);
@@ -39,7 +39,7 @@ test('no literal recovery, absent captures, and hostile HTML never become synthe
 });
 test('repair uses the same publication function and binds original generation/version without changing execution proof',()=>{
  const id='Recipe01',key=`results/instagram/${id}/${'a'.repeat(64)}/analysis.json`,raw=report([field('Limão','meio limão','meio limão espremido')]);
- const video={id,status:'completed',duration_seconds:30,transcript:'Vai colocar meio limão espremido.',analysis:raw,analysis_key:key,analysis_generation:'123',reels_v2:{operationId:'original'},resultEvidence:{resultHash:'unchanged'}};
+ const video={id,status:'completed',analysis_quality_status:'accepted',duration_seconds:30,transcript:'Vai colocar meio limão espremido.',analysis:raw,analysis_key:key,analysis_generation:'123',reels_v2:{operationId:'original'},resultEvidence:{resultHash:'unchanged'}};
  const snapshot={rows:{[id]:{version:'original-version',video,objectMetadata:{bucket:'megabrain-v0-1017370021431-media',name:key,generation:'123'},savedAnalysis:{response:response(raw)}}}};const before=structuredClone(snapshot),opts={ids:[id],sourceSHA256:'b'.repeat(64)};
  const plan=prepareSavedPublicationRepairs(snapshot,opts),row=plan.rows[0];assert.deepEqual(snapshot,before);assert.equal(row.expectedUpdateTime,'original-version');assert.equal(row.overlay.raw.generation,'123');assert.equal(row.changes['analysis.knowledge'].fields.length,1);assert.equal(row.updateMask.some(k=>/reels_v2|execution|ledger|analysis_key|analysis_generation/.test(k)),false);
  assert.deepEqual(row.afterAnalysis.knowledge,review(raw,video).report.knowledge);assert.deepEqual(row.afterAnalysis.source_consolidation,review(raw,video).report.source_consolidation);assert.equal(plan.approved,false);

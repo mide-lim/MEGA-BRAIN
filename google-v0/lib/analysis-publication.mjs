@@ -41,7 +41,13 @@ export function consolidatePublication(reviewed,record,candidate){
   sources.push({source:'caption',text:record.source_caption.text,capture_id:record.source_caption.capture_id});
  if(typeof record.transcript==='string'&&record.transcript.trim())sources.push({source:'transcript',text:record.transcript});
  const contains=text=>!!string(text).trim()&&sources.some(s=>normal(s.text).includes(normal(text)));
- const fields=reviewed.knowledge?.fields??[];
+ const conflict=value=>{
+  if(typeof value==='string')return (value.match(/\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9-]{3,}\b/giu)??[]).some(token=>!contains(token));
+  if(Array.isArray(value))return value.some(conflict);
+  return !!value&&typeof value==='object'&&Object.values(value).some(conflict);
+ };
+ const fields=(reviewed.knowledge?.fields??[]).filter(f=>!conflict(f));
+ const grounded={...reviewed,useful_information:reviewed.useful_information.filter(x=>!conflict(x)),visual_observations:reviewed.visual_observations.filter(x=>!conflict(x)),...(reviewed.knowledge?{knowledge:{...reviewed.knowledge,fields,keywords:reviewed.knowledge.keywords.filter(x=>!conflict(x))}}:{})};
  const names=fields.filter(f=>contains(f.name)).map(f=>f.name);
  const recipe=fields.find(f=>f.kind==='recipe_name'&&contains(f.value));
  const context=contextLabels[reviewed.knowledge?.context]??'Conhecimento do Reel';
@@ -54,12 +60,12 @@ export function consolidatePublication(reviewed,record,candidate){
  const excerpts=fields.filter(f=>contains(f.value)&&contains(f.name)).slice(0,3).map(f=>f.name+': '+f.value);
  const gapSummary=/quantidades?\s+ausentes?|n[aã]o\s+(?:informa|especific|mencion)|not specified|unspecified|missing information/iu.test(string(candidate.summary));
  const fallbackSummary=excerpts.length?'Segundo as fontes salvas: '+excerpts.join('; ')+'.':'Conteúdo organizado a partir das fontes salvas do autor. Os trechos completos abaixo preservam detalhes que a extração estruturada pode não cobrir.';
- const diagnostics=candidate.publication_review?.rule===publicationRule?candidate.publication_review.candidate:{title:candidate.title,summary:candidate.summary,limitations:structuredClone(candidate.limitations),transcript_quality:structuredClone(candidate.transcript_quality),missing_information:structuredClone(candidate.knowledge?.missing_information??[])};
- return {...reviewed,title:unsafeNarrative?fallbackTitle:candidate.title,summary:unsafeNarrative||gapSummary?fallbackSummary:candidate.summary,
+ const diagnostics=candidate.publication_review?.rule===publicationRule?candidate.publication_review.candidate:{title:candidate.title,summary:candidate.summary,limitations:structuredClone(candidate.limitations),useful_information:structuredClone(candidate.useful_information),keywords:structuredClone(candidate.knowledge?.keywords??[]),transcript_quality:structuredClone(candidate.transcript_quality),missing_information:structuredClone(candidate.knowledge?.missing_information??[])};
+ return {...grounded,title:unsafeNarrative?fallbackTitle:candidate.title,summary:unsafeNarrative||gapSummary?fallbackSummary:candidate.summary,
   limitations:[...reviewed.limitations.filter(x=>!candidate.limitations.includes(x)), 'As fontes registram o que foi publicado ou reconhecido no áudio; não comprovam as alegações nem a exatidão da transcrição.'],
   transcript_quality:{assessment:'Transcrição preservada sem correção automática nem verificação independente do áudio.',uncertain_segments:[]},
-  ...(reviewed.knowledge?{knowledge:{...reviewed.knowledge,missing_information:[]}}:{}),
-  source_consolidation:{rule:publicationRule,sources,recipe_fields:recipeSourceFields(sources,reviewed,record),coverage:'complete_saved_text_not_semantic_verification'},
+  ...(reviewed.knowledge?{knowledge:{...grounded.knowledge,missing_information:[]}}:{}),
+  source_consolidation:{rule:publicationRule,sources,recipe_fields:recipeSourceFields(sources,grounded,record),coverage:'complete_saved_text_not_semantic_verification'},
   publication_review:{rule:publicationRule,candidate:diagnostics,narrative_support:unsafeNarrative?'source_fallback_after_identifier_conflict':'candidate_narrative_not_independently_verified',missing_information_status:'candidate_not_independently_verified',inference_replayed:false}
  };
 }

@@ -23,9 +23,28 @@
     "google-v0/qa/reels-fixture.mjs",
     "google-v0/qa/reels-browser-check.mjs",
     "google-v0/scripts/reconsolidate-saved-analysis.mjs",
-    "google-v0/docs/saved-publication-reconciliation.md"
+    "google-v0/docs/saved-publication-reconciliation.md",
+    "google-v0/Dockerfile.worker"
   ],
-  "context": [],
+  "context": [
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Publicacao e validacao de resposta salva; sem inferencia nova",
+      "sections": [
+        "reviewAnalysis",
+        "analysisOutcome"
+      ],
+      "max_chars": 12000
+    },
+    {
+      "path": "google-v0/web-google/app/reels/detail.jsx",
+      "reason": "Visao geral e fontes atribuidas legiveis",
+      "sections": [
+        "Knowledge"
+      ],
+      "max_chars": 6000
+    }
+  ],
   "validation_commands": [
     "python3 scripts/check_task_packets.py",
     "node --test google-v0/tests/*.test.mjs",

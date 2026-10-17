@@ -1,0 +1,19 @@
+# Publicação a partir de fontes salvas
+
+A publicação v2 preserva campos estruturados aceitos pelo filtro literal. Não faz correspondência aproximada nem reescreve citações do modelo. Uma citação que junta linhas separadas continua rejeitada. A Visão geral oferece, como complemento expansível, a legenda capturada e a transcrição completas, sem tradução, para conservar medidas e etapas que os cartões podem não cobrir. Texto de música permanece atribuído à transcrição, sem ser apresentado como receita.
+
+O candidato pode propor narrativa, mas uma rejeição de produto vinculada à narrativa ou um identificador alfanumérico ausente das fontes exige título/resumo conservadores: nome literal da receita, nomes presentes nas fontes e contexto. Os demais títulos são preservados; esta regra não promete avaliar toda a semântica da prosa. Resumos que afirmam lacunas não verificadas também usam o fallback. Avaliações de STT, limitações e lacunas livres ficam no diagnóstico `publication_review`, além do RAW original imutável, sem declarar inexistência de informação. A política não declara validação semântica ou audiovisual, nem altera sinais de confiança. Uma fonte do autor também pode estar errada; não há consulta externa nem nova inferência.
+
+Nas receitas, seções explícitas de ingredientes/preparo da legenda são recuperadas como blocos literais sequenciais na Visão geral. Na ausência de seção de preparo (mesmo quando há uma lista de ingredientes), usam-se blocos curtos e ordenados da transcrição, atribuídos ao áudio. Cada valor é um trecho contíguo da fonte. Não se inventam intervalos temporais nem se aceita automaticamente o campo parafraseado do modelo. Fontes integrais continuam expansíveis e os cartões estruturados válidos permanecem disponíveis.
+
+A política é acionada por `executionAuthorization` no runtime v2. O consumidor legado permanece no comportamento anterior. Para publicar o código, revisar e publicar web e três etapas com fences fechadas; não incluir o worker legado. Baselines de operadores operacionais precisam ser atualizados por revisão independente após a publicação.
+
+## Reconsolidação limitada
+
+O preparador `scripts/reconsolidate-saved-analysis.mjs` usa `analysisOutcome` com a mesma política. Recebe um snapshot selecionado e uma lista explícita revisada de até dez IDs; exige igualdade de membership, versões originais, duração verificada, chave e geração da análise original. Executa apenas sobre arquivos locais e recusa sobrescrever a saída. Não possui adaptador de nuvem ou provedor.
+
+O plano contém a publicação antiga, seu hash, nova projeção, máscara de folhas e overlay versionado com chave/geração/hash RAW e hashes das duas análises. O executor operacional separado deve fixar exatamente dez IDs, hash do plano/código/revisão, criar backups e artefatos derivados antes da publicação e usar CAS por `updateTime` original. Criar artefato derivado usa `ifGenerationMatch=0`; uma chave ocupada não pode ser sobrescrita. O `analysis_key` e a geração originais continuam apontando ao resultado pago; o overlay identifica a derivação. Ledger, execuções, `rawResult`, `resultEvidence`, mídia e transcrição não são reescritos.
+
+Cada PATCH de folhas precisa de intenção durável anterior ao envio, leitura anterior exata e confirmação posterior. Dez PATCH não são uma transação: conflito, timeout ou confirmação ambígua exige STOP e conciliação somente de leitura. Não repetir automaticamente nem rebasear CAS. Uma restauração requer comparar a versão atual e aplicar exclusivamente as folhas antigas de uma beforeimage revisada; nunca restaurar o documento inteiro sobre alterações posteriores. Nenhum desses passos exige repetir STT ou Gemini.
+
+Testes e builds são executados no GitHub Actions, com fontes sintéticas e sem credenciais. A revisão dos dez casos reais permanece privada; o aceite de conteúdo exige conferir os derivados e a experiência publicada.

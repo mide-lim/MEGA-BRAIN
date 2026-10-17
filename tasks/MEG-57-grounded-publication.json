@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "id": "MEG-57",
+  "paperclip_issue_id": "5371a189-3f50-4784-89ba-5621377c3e1e",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "db37b0eedc706193060fea6a1e9a62dcd5aa480c",
+  "objective": "Publicacao v2 conservadora e completa a partir de fontes ja salvas; preservar candidato, RAW, grounding literal e reconsolidar somente dez publicacoes C0 sem nova inferencia.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Fontes completas atribuidas aparecem na Visao geral; citações nao literais continuam rejeitadas.",
+    "Titulos/resumos/qualidade/lacunas livres do modelo nao sao fatos publicados sem apoio verificavel; candidato original e confidence permanecem preservados.",
+    "Casos receita incompleta, quantidades contraditorias e modelo de produto inventado passam com adversariais em Actions.",
+    "Pacote offline reconsolida somente dez IDs/referencias congelados, beforeimages, create-only e CAS leaf; sem provedores, ledger, execucoes ou Google writes pelo agente.",
+    "Texto de capacidade descreve desiredConcurrency limitado pela configuração técnica; não promete ampliar servidores/quotas ou verificar condições não implementadas."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-57-grounded-publication.json",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/analysis-publication.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/reels-model.mjs",
+    "google-v0/web-google/app/reels/detail.jsx",
+    "google-v0/tests/analysis-publication.test.mjs",
+    "google-v0/qa/reels-fixture.mjs",
+    "google-v0/qa/reels-browser-check.mjs",
+    "google-v0/scripts/reconsolidate-saved-analysis.mjs",
+    "google-v0/docs/saved-publication-reconciliation.md",
+    "google-v0/Dockerfile.worker",
+    "google-v0/web-google/app/reels/operations.jsx"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Publicacao e validacao de resposta salva; sem inferencia nova",
+      "sections": [
+        "reviewAnalysis",
+        "analysisOutcome"
+      ],
+      "max_chars": 6500
+    },
+    {
+      "path": "google-v0/web-google/app/reels/detail.jsx",
+      "reason": "Visao geral e fontes atribuidas legiveis",
+      "sections": [
+        "Knowledge"
+      ],
+      "max_chars": 5000
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py",
+    "node --test google-v0/tests/*.test.mjs",
+    "node google-v0/qa/reels-browser-check.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "None by developer; root separately executes reviewed pilot. This change only renders saved response.",
+    "merge_deploy": "Root integrates reviewed concrete package under current user product_pending_closure authorization; developer does not merge/deploy.",
+    "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
+    "ownership": {
+      "developer": "Somente caminhos permitidos nesta branch isolada; pacote privado limitado a dez publicacoes",
+      "reviewer": "Fresh independent read-only exact-head review",
+      "root": "Canonical state, Actions integration, merge/publication and real acceptance"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json"
+  }
+}

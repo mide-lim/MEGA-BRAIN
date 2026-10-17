@@ -24,6 +24,7 @@ export function reelsFixture(now=new Date()) {
  ].map(field=>({...field,evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}))};
  food.analysis.insights=[{claim:'O autor orienta dourar o frango na frigideira.',application:'Usar a sequência descrita como referência de preparo.',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]},{claim:'O preparo pode ser organizado antes de aquecer a frigideira.',application:'Separar os ingredientes antes de começar.',classification:'interpretation',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}];
  food.analysis.insights.push({claim:'<img src=x onerror=alert(1)>',classification:'__proto__',evidence:[{source:'constructor',excerpt:'<b>Trecho preservado como texto.</b>'}]});
+ food.analysis.source_consolidation={rule:'saved-source-publication-v1',sources:[{source:'caption',capture_id:'qa-complete-caption',text:'Finalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>'}]};
  videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
  const failed=videos.find(video=>video.id==='QaFail_01'),failedOperation='qa-failed-operation',failedId=executionId(failedOperation,failed.id,'acquisition');
  failed.reels_v2={status:'failed',stage:'acquisition',operationId:failedOperation,executionId:failedId,error:{...failed.error,stage:'acquisition',uncertain:false}};

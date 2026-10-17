@@ -98,7 +98,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       if(saved.preset_version!==preset.version||saved.model!==config.gemini_model||!saved.response)throw Error('Resposta salva diverge da revisão atual.');
       let caption=video.source_caption?.text?{source_caption:video.source_caption,caption_status:'captured'}:{caption_status:'unavailable'};
       if(!video.source_caption?.text){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
-      const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
+      const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
       return {...result(video.id,'analysis',{...caption,...changes},budget('analysis'),saved.usage_cost),artifact:{key,generation:object.generation}};
     },
@@ -177,7 +177,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const usage=measureGeminiUsage(response,{model:config.gemini_model,location:'global'});
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage}));
-      const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version)});
+      const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost,usage);
     }

@@ -52,3 +52,14 @@ O publicador manual aceita `services=web`, mantendo `all` como padrão compatív
 A web lê o formato atual sem exigir migração. Publicar a interface não executa reset, corte de escritor nem habilita processamento. Após autorização específica de publicação, conferir login da conta permitida, lista/detalhe e reprodução autenticada com dados existentes, somente leitura. Contagens sintéticas e testes de navegador não são inventário real.
 
 O módulo de migração atual oferece manifesto, backup e restauração de registros em memória, ensaio puro e planos de corte/reversão. O pacote real ainda exige coletor somente leitura revisado, inventário por ID/versão, provas de artefatos por chave/geração/SHA256 e ensaio da restauração abrangente sobre cópia privada. Não executar limpeza, importação, corte ou ativação de workers antes dessa conferência. O custo confirmado por fatura permanece desconhecido até integração da fonte oficial; o financeiro explicita cobertura e nunca bloqueia o fluxo.
+
+
+## Importação preparada e consultas preservadas
+
+O pacote privado de migração é ensaiado apenas em cópia. Novos cadastros recebem `import_hold.active=true`; prévia, seleção, retomada, complemento e admissão com concorrência recusam esses registros até uma ativação revisada. Os documentos Google existentes não são reescritos.
+
+`reels_legacy_content` preserva a análise e a transcrição antiga separadas. A biblioteca e a árvore de categorias admitem somente análises de origem `analyzed`, estruturadas e com resumo legível, identificadas como `legacy_preserved`. Essa leitura web não altera `publicationAvailable` dos workers nem fabrica aceitação de qualidade moderna. A publicação Google atual tem prioridade; a alternativa antiga continua consultável. Transcrições sem análise permanecem disponíveis no detalhe sem entrar na Biblioteca. Estados e erros operacionais Google continuam visíveis mesmo quando existe conhecimento antigo.
+
+`GET /api/reels/historical-activity` consulta o arquivo inerte com filtros por Reel, etapa, worker observado e estado de origem, limite de até 100 e cursor estável. Atividade separa operação atual de histórico; registros desacoplados não voltam ao percurso operacional de um cadastro novo. `GET /api/reels/historical-finance` agrupa as entradas preservadas por dia, natureza e moeda, distinguindo contabilidade, reservas, estimativas, uso e incerteza. Valores ou datas ausentes ficam desconhecidos. Nenhum desses endpoints aceita comandos ou transforma estados antigos em trabalhos executáveis.
+
+Listagens selecionam somente folhas de metadados do legado. Análise completa e transcrição são lidas somente no detalhe. Proveniência bruta, caminhos de backup, chaves de artefatos e diagnósticos não entram nas respostas públicas autenticadas. Históricos e financeiro não são importados nas coleções de execução, eventos, comandos ou controles ativos.

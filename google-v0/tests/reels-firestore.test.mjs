@@ -2,6 +2,12 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Fir
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 const prefix='projects/test-project/databases/(default)/documents/';
 
+test('import archive queries use projected fields in permitted inert collections through Firestore codec',async()=>{
+ const calls=[],id='a'.repeat(64),db=new Firestore({project:'test-project',request:async(url,options)=>{calls.push(options.json.structuredQuery);const collection=options.json.structuredQuery.from[0].collectionId;return collection==='reels_historical_activity'?[{document:{name:prefix+collection+'/'+id,fields:encodeFields({id,kind:'execution',reelId:'Reel_001',stage:'analysis',sourceStatus:'waiting',historical:true,executable:false})}}]:[];}}),repository=new ReelsRepository({store:db});
+ const result=await repository.historicalActivity({reelId:'Reel_001'});assert.equal(result.items[0].executable,false);assert.equal(result.items[0].sourceStatus,'waiting');assert.equal(calls[0].where.fieldFilter.field.fieldPath,'reelId');assert.ok(calls[0].select.fields.every(f=>!f.fieldPath.includes('provenance')&&!f.fieldPath.includes('raw')));
+ await repository.historicalFinance();assert.equal(calls[1].from[0].collectionId,'reels_historical_finance');assert.ok(calls[1].select.fields.some(f=>f.fieldPath==='amount'));
+});
+
 test('stage plan accepts real Reel identities at its explicit map boundary only',()=>{
  const plan=Object.fromEntries([['0reel01','acquisition'],['_reel01','analysis'],['__proto__','transcription']]);const encoded=encodeFields({stagePlan:plan});assert.equal(encoded.stagePlan.mapValue.fields['0reel01'].stringValue,'acquisition');assert.equal(Object.hasOwn(encoded.stagePlan.mapValue.fields,'__proto__'),true);
  assert.throws(()=>encodeFields({other:plan}),/schema/);assert.throws(()=>encodeFields({stagePlan:{Reel_001:'budget'}}),/Plano/);

@@ -12,7 +12,7 @@ test('selection deduplicates and excludes active, unknown, published and missing
 test('category descendants count unique IDs only in final published set',async()=>{const pub={status:'analyzed',analysis_key:'a',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{categories:['child','parent']}};const r=new ReelsRepository({store:storeOf([{...pub,id:'Reel_001'},{...pub,id:'Reel_002',analysis_key:null},{...pub,id:'Reel_003',categoryIds:['child']}],{'settings/reels_v2_taxonomy':{revision:2,nodes:[{id:'parent',parentId:null},{id:'child',parentId:'parent'}]}})});const c=await r.categories();assert.equal(c.total,2);assert.equal(c.nodes[0].count,2);assert.equal(c.nodes[0].directCount,1);assert.equal(c.nodes[1].count,2);});
 test('register creates only, never schedules and absent finance values remain unknown',async()=>{const store=storeOf([]),r=new ReelsRepository({store});const text='https://www.instagram.com/reel/Reel_001/';assert.equal((await r.registerLinks(text)).created,1);assert.equal((await r.registerLinks(text)).alreadyPresent,1);assert.equal(store.docs.get('videos/Reel_001').status,'registered');assert.equal((await r.finance()).budget.amount,null);assert.deepEqual((await r.finance()).days,[]);});
 test('parallel readers share one dated snapshot, TTL expires, failures retain dated data, refresh invalidates, instances are isolated',async()=>{
- let time=100000,fail=false,release;const store=storeOf([{id:'Reel_001',status:'registered'}]),query=store.query;let calls=0;store.query=async(...args)=>{calls++;if(release)await release;if(fail)throw Error('offline');return query(...args);};
+ let time=100000,fail=false,release;const store=storeOf([{id:'Reel_001',status:'registered'}]),query=store.query;let calls=0;store.query=async(...args)=>{if(args[0]==='videos')calls++;if(release)await release;if(fail)throw Error('offline');return query(...args);};
  const r=new ReelsRepository({store,clock:()=>time,cacheTtlMs:1000});let unlock;release=new Promise(resolve=>{unlock=resolve;});const pending=Promise.all([r.list(),r.summary(),r.queues(),r.categories(),r.select({all:true})]);await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);unlock();const values=await pending;release=null;assert.equal(values[0].observedAt,new Date(100000).toISOString());assert.equal(values[1].observedAt,values[0].observedAt);assert.equal(values[0].cache.ttlMs,1000);
  time+=500;await r.list();assert.equal(calls,1);time+=600;await r.summary();assert.equal(calls,2);const observed=(await r.list()).observedAt;time+=1100;fail=true;const stale=await r.list();assert.equal(stale.cache.stale,true);assert.equal(stale.observedAt,observed);fail=false;store.docs.get('videos/Reel_001').status='queued';await r.refresh('Reel_001');assert.equal((await r.list()).items[0].status,'queued');assert.equal((await r.list()).cache.stale,false);const other=new ReelsRepository({store,clock:()=>time});const before=calls;await other.list();assert.equal(calls,before+1);
 });
@@ -35,5 +35,33 @@ test('trajectory follows stable metadata pages and preserves sanitized observed 
 });
 test('published keywords are light metadata independent from knowledge reads and original tags',async()=>{
  const store=storeOf([{id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',tags:['manual'],published_tags:['sopa','cozinha'],analysis:{summary:'Publicação',knowledge:{keywords:[{term:'DO_NOT_SCAN_KNOWLEDGE',evidence:['secret quote']}]}}}]);
- const repository=new ReelsRepository({store});assert.deepEqual((await repository.list({tag:'cozinha'})).items[0].tags,['manual','sopa','cozinha']);assert.equal((await repository.list({tag:'DO_NOT_SCAN_KNOWLEDGE'})).items.length,0);assert.ok(store.calls.every(c=>c.select.includes('published_tags')&&!c.select.some(f=>f.startsWith('analysis.knowledge'))));
+ const repository=new ReelsRepository({store});assert.deepEqual((await repository.list({tag:'cozinha'})).items[0].tags,['manual','sopa','cozinha']);assert.equal((await repository.list({tag:'DO_NOT_SCAN_KNOWLEDGE'})).items.length,0);assert.ok(store.calls.filter(c=>c.collection==='videos').every(c=>c.select.includes('published_tags')&&!c.select.some(f=>f.startsWith('analysis.knowledge'))));
+});
+
+test('contextual tree, parent filters, library and detail share unique primary destinations without writing sources',async()=>{
+ const pub={status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted'},videos=[
+  {...pub,id:'Reel_001',analysis:{categories:['Receitas','Culinária','Nutrição','Tema não coberto'],references:[{name:'Livro preservado'}]}},
+  {...pub,id:'Reel_002',analysis:{categories:['Culinária japonesa','receitas']}},
+  {...pub,id:'Reel_003',analysis:{categories:['Gadgets','Hardware']}},
+  {...pub,id:'Reel_004',analysis:{categories:['Tema não coberto']}},
+  {...pub,id:'Reel_005',analysis_key:null,analysis:{categories:['Receitas']}}
+ ],store=storeOf(videos),before=JSON.stringify([...store.docs]),repository=new ReelsRepository({store});
+ const c=await repository.categories();assert.equal(c.total,4);
+ assert.equal(c.nodes.find(n=>n.id==='group-alimentacao').count,2);assert.equal(c.nodes.find(n=>n.id==='receitas').count,2);
+ assert.equal(c.nodes.find(n=>n.id==='group-outros').count,1);assert.equal(c.nodes.some(n=>n.id==='nutricao'),false);
+ const filtered=await repository.list({workspace:'library',category:'group-alimentacao'});assert.equal(filtered.total,2);assert.deepEqual(filtered.items.map(i=>i.categoryIds),[['receitas'],['receitas']]);
+ assert.equal((await repository.list({workspace:'library',category:'receitas'})).total,2);
+ assert.deepEqual((await repository.detail('Reel_001')).categoryIds,['receitas']);assert.equal((await repository.list({category:'group-tecnologia'})).total,1);
+ assert.equal(JSON.stringify([...store.docs]),before);assert.equal(store.docs.has('settings/reels_v2_taxonomy'),false);
+});
+test('saved flat taxonomy without actions projects contextual groups while stored revision and source labels remain intact',async()=>{
+ const video={id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{categories:['Receitas','Culinária']}},flat={revision:0,nodes:[{id:'Receitas',name:'Receitas',parentId:null,manual:false},{id:'Culinária',name:'Culinária',parentId:null,manual:false}],assignments:[],rules:[],appliedCommands:[]},store=storeOf([video],{'settings/reels_v2_taxonomy':flat}),before=structuredClone(flat),repository=new ReelsRepository({store});
+ const tree=await repository.categories();assert.equal(tree.total,1);assert.equal(tree.nodes.filter(n=>n.parentId===null).length,1);assert.equal(tree.nodes.find(n=>n.id==='group-alimentacao').count,1);
+ assert.equal((await repository.list({category:'receitas'})).total,1);assert.deepEqual(store.docs.get('settings/reels_v2_taxonomy'),before);
+});
+test('manual custom classification is included by projected reads and never replaced by raw official categories',async()=>{
+ const video={id:'Reel_001',status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',categoryIds:['custom'],taxonomy_override:{manual:true,revision:3},analysis:{categories:['Receitas','Culinária']}},saved={revision:3,nodes:[{id:'my-root',name:'Meu grupo',parentId:null,manual:true},{id:'custom',name:'Meu recorte',parentId:'my-root',manual:true}],assignments:[],rules:[],appliedCommands:[]},store=storeOf([video],{'settings/reels_v2_taxonomy':saved}),repository=new ReelsRepository({store});
+ const tree=await repository.categories();assert.equal(tree.nodes.find(n=>n.id==='my-root').count,1);assert.equal(tree.compatibility.requiresCopyReconciliation,true);
+ assert.deepEqual((await repository.list({category:'my-root'})).items[0].categoryIds,['custom']);assert.deepEqual((await repository.detail('Reel_001')).categoryIds,['custom']);
+ assert.ok(store.calls.filter(c=>c.collection==='videos').every(c=>c.select.includes('taxonomy_override.manual')));assert.deepEqual(store.docs.get('videos/Reel_001'),video);
 });

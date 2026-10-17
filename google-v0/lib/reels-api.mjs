@@ -22,6 +22,8 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}
     if(path==='queues')return response({...await repository.queues(),...controls});
     if(path==='events')return response(await repository.events(q));
+    if(path==='historical-activity')return response(await repository.historicalActivity(q));
+    if(path==='historical-finance')return response(await repository.historicalFinance());
     if(path==='categories')return response({...await repository.categories(),discovery:await taxonomy.coverage()});
     if(path==='finance')return response(await finance.read(q));
     if(parts[0]==='commands'&&parts.length===2)return response(await service.operation(decodeURIComponent(parts[1])));

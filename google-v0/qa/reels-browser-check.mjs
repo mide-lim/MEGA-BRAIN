@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {chromium} from 'playwright';
 import {startReelsFixtureServer} from './reels-server.mjs';
 import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {calibrationReportView} from '../lib/reels-curation-calibration.mjs';
 import {makeContextualCalibrationFixture} from '../tests/reels-contextual-calibration-fixture.mjs';
 
 const output=process.env.MEGABRAIN_REELS_QA_OUTPUT??join(tmpdir(),'megabrain-reels-qa-results');
@@ -204,7 +205,7 @@ try {
   const sources=input.records.map(r=>JSON.parse(r.sourceJson)),ids=sources.map(source=>source.item.id),calibrationPage=await context.newPage();
   for(const source of sources)assert.equal((await server.store.create('videos/'+source.item.id,source.video)).created,true);
   const taxonomyRecord=await server.store.get(taxonomyPath);await server.store.patch(taxonomyPath,{nodes:[...beforeTaxonomy.nodes,...input.taxonomy.data.nodes.filter(node=>!beforeTaxonomy.nodes.some(existing=>existing.id===node.id))]},{updateTime:taxonomyRecord.updateTime});
-  await server.store.create(path,{schemaVersion:1,planHash:plan.planHash,sourceHash:plan.sourceCorpusHash,report:calibration});
+  await server.store.create(path,{schemaVersion:1,planHash:plan.planHash,sourceHash:plan.sourceCorpusHash,report:calibrationReportView(calibration,plan)});
   const beforeCommands=server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length;
   try {
    const read=responseFor(calibrationPage,'/api/reels/curation/calibration');await calibrationPage.goto(server.origin);await navigate(calibrationPage,'Categorias');const data=await (await read).json();

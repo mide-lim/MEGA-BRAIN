@@ -33,6 +33,11 @@ class CurationOwnerGuards(unittest.TestCase):
   with self.assertRaises(ValueError):module.validate_additive(before,p)
   before,p=package();p['writes'][0]['data']['assignments'][0]['categoryIds'].append('hidden')
   with self.assertRaises(ValueError):module.validate_additive(before,p)
+ def test_assignment_outside_finite_membership_and_prior_history_cannot_change(self):
+  before,p=package();p['writes'][0]['data']['assignments'].append({'reelId':'other01','categoryIds':['ctx_one'],'manual':False})
+  with self.assertRaises(ValueError):module.validate_additive(before,p)
+  before,p=package();before['appliedCommands']=[{'id':'old','fingerprint':'prior'}]
+  with self.assertRaises(ValueError):module.validate_additive(before,p)
  def test_automatic_rule_cannot_be_generalized(self):
   before,p=package();p['writes'][0]['data']['rules'][0]['generalizationAllowed']=True
   with self.assertRaises(ValueError):module.validate_additive(before,p)

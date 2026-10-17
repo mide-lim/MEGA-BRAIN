@@ -34,6 +34,6 @@ test('quality q and source filter before source reads; no report or source text 
  const f=fixture(),r=await f.service.savedQuality({q:'Preservado',source:'legacy_preserved'});assert.equal(r.total,1);assert.deepEqual(f.rawReads,['reel02']);assert.equal(r.items[0].reelId,'reel02');assert.equal('raw' in r.items[0],false);assert.equal('report' in r.items[0],false);
 });
 test('calibration view maps exact report metrics without turning unavailable measurements into zero',()=>{
- const r=calibrationReportView({version:'finite',corpus:{evaluatedCount:8,unevaluatedCount:491},rules:[{ruleId:'r',label:'Receitas com Frango',status:'calibrated',members:[],train:{tp:2,fp:0,precision:1},holdout:{tp:2,fp:0,precision:1}}]});
- assert.equal(r.evaluatedCount,8);assert.equal(r.unknownCount,491);assert.equal(r.groups[0].metrics.holdout.precision,1);assert.equal(r.groups[0].metrics.holdout.total,null);assert.equal(r.groups[0].appliedCategoryId,null);
+ const r=calibrationReportView({version:'finite',corpus:{inventoryCount:499,evaluatedCount:8,unevaluatedCount:491},rules:[{ruleId:'r',label:'Receitas com Frango',status:'calibrated',members:[],train:{tp:2,fp:0,precision:1},holdout:{tp:2,fp:0,precision:1}}]});
+ assert.equal(r.inventoryCount,499);assert.equal(r.evaluatedCount,8);assert.equal(r.unknownCount,491);assert.equal(r.groups[0].metrics.holdout.precision,1);assert.equal(r.groups[0].metrics.holdout.total,null);assert.equal(r.groups[0].appliedCategoryId,null);
 });

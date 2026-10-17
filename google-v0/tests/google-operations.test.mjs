@@ -60,7 +60,8 @@ for(const signalStop of [false,true])test(`upload closure requires downloader ca
  let starts=0,stops=0;
  const api={project:'megabrain-v0-1017370021431'};
  const operations=googleOperations({api,storage:{bucket:api.project+'-media',async writeImmutable(){return {generation:'1',size:5};}},tools:{async download(received,options){assert.equal(received,video);assert.equal(options.withMetadata,true);assert.equal(typeof options.onExecutionStopped,'function');assert.equal(starts,1);if(signalStop)options.onExecutionStopped();return Buffer.from('media');}},preset:{},config:{enabled:true,uploads_enabled:true,quotes:{upload:100}},gate:async()=>({maximum_cents:100}),inspect:async()=>({audio_status:'present',duration_seconds:1})});
- await operations.upload({video,executionId:'synthetic',recordAcquisitionExtraction(){starts++;return ()=>stops++;}});
+ const result=await operations.upload({video,executionId:'synthetic',recordAcquisitionExtraction(){starts++;return ()=>stops++;}});
+ assert.equal(Object.hasOwn(result.changes,'video_sha256'),false);assert.equal(Object.hasOwn(result.changes,'media_inspection_receipt'),false);
  assert.equal(starts,1);assert.equal(stops,signalStop?1:0);
 });
 test('upload forwards closure on proven download rejection without changing the failure',async()=>{

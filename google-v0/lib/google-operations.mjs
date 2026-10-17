@@ -7,7 +7,7 @@ import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry,maximumAnalysisAttempts} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
-import {qualitySourceManifest,qualityDigest,qualityCandidateHash,qualityPublicationRevision,evaluateQualityGateV2,prepareQualityCandidateV2} from './reels-quality-gate.mjs';
+import {qualitySourceManifest,qualityDigest,qualityCandidateHash,qualityPublicationRevision,qualitySourceStateHash,evaluateQualityGateV2,prepareQualityCandidateV2} from './reels-quality-gate.mjs';
 import {speechWordEvidence} from './reels-speech-evidence.mjs';
 
 // Legacy callers retain the reservation gate. The v2 caller supplies a
@@ -49,7 +49,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
    }});
    const accepted=outcome.accepted&&prepared.accepted;
    const changes=accepted?{analysis:report,analysis_key:prepared.candidateIdentity.key,analysis_generation:prepared.candidateIdentity.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:video.analysis_quality_status??'review_required',analysis_review_reasons:outcome.reasons?.length?outcome.reasons:['quality_gate_v2_not_accepted'],analysis_candidate:outcome.report??null,candidate_analysis_key:prepared.candidateIdentity.key,candidate_analysis_generation:prepared.candidateIdentity.generation,candidate_quality_receipt:prepared.receiptIdentity};
-   return {changes,qualityGate:prepared,qualityPublication:accepted?{policyVersion:'gate_v2',expectedPublicationRevision:prepared.expectedPublicationRevision,publicationIdentity:prepared.publicationIdentity,qualityReceipt:prepared.receiptIdentity}:null};
+   return {changes,qualityGate:prepared,qualityPublication:accepted?{policyVersion:'gate_v2',expectedSourceStateHash:qualitySourceStateHash(video),expectedPublicationRevision:prepared.expectedPublicationRevision,publicationIdentity:prepared.publicationIdentity,qualityReceipt:prepared.receiptIdentity}:null};
   }
   function sourcePreflight(video){
    const evaluated=evaluateQualityGateV2({record:video,report:{},...qualityContext(video)});
@@ -121,7 +121,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const saved=JSON.parse(await storage.read(key,{generation:object.generation}));
       if(saved.preset_version!==preset.version||saved.model!==config.gemini_model||!saved.response)throw Error('Resposta salva diverge da revisão atual.');
       let caption=video.source_caption?.text?{source_caption:video.source_caption,caption_status:'captured'}:{caption_status:'unavailable'};
-      if(!video.source_caption?.text){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
+      if(!video.source_caption?.text&&!qualityMode){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
       if(qualityMode){const prepared=await qualityChanges(saved.response,{...video,...caption},{key,generation:object.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},budget('analysis'),saved.usage_cost),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication,artifact:{key,generation:object.generation}};}
       const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
@@ -139,7 +139,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
       const audioPrepared=config.worker_stage==='upload'?await prepareAudio({...video,video_key:key,video_generation:object.generation},bytes):null;
-      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,video_sha256:object.sha256??sha256(bytes),...(qualityMode?{media_inspection_receipt:createMediaInspectionReceipt({video:{...video,video_key:key,video_generation:object.generation},media,bytes})}:{}),media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
+      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,...(qualityMode?{video_sha256:object.sha256??sha256(bytes),media_inspection_receipt:createMediaInspectionReceipt({video:{...video,video_key:key,video_generation:object.generation},media,bytes})}:{}),media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
     },
     async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();

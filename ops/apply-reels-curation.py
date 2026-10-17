@@ -46,6 +46,10 @@ def validate_additive(current,p):
   if id not in newnodes or (id not in groups and newnodes[id]!=node):raise ValueError('Existing editorial node changed.')
  for node in current.get('nodes',[]):
   if node.get('manual') and newnodes[node['id']]!=node:raise ValueError('Manual node changed.')
+ outside=lambda rows:[a for a in rows if a.get('reelId')not in affected]
+ if outside(after.get('assignments',[]))!=outside(current.get('assignments',[])):raise ValueError('Assignment outside the finite reviewed cohort changed.')
+ previous=current.get('appliedCommands',[]);commands=after.get('appliedCommands',[])
+ if commands[:len(previous)]!=previous or len(commands)!=len(previous)+1 or commands[-1].get('id')!=p['operationId']:raise ValueError('Prior operation history changed.')
  for assignment in current.get('assignments',[]):
   if assignment.get('manual') or assignment.get('reelId')not in affected:
    if assignment not in after.get('assignments',[]):raise ValueError('Existing editorial assignment changed.')
@@ -78,7 +82,7 @@ def main():
  from megabrain_google_auth import load_scoped_adc
  import google.auth
  from google.auth.transport.requests import AuthorizedSession
- credentials,_=google.auth.load_credentials_from_dict(load_scoped_adc('write'if args.apply else'read'),scopes=['https://www.googleapis.com/auth/cloud-platform'])
+ credentials,_=google.auth.load_credentials_from_dict(load_scoped_adc('deploy'if args.apply else'read'),scopes=['https://www.googleapis.com/auth/cloud-platform'])
  session=AuthorizedSession(credentials,max_refresh_attempts=0);base='https://firestore.googleapis.com/v1/'+ROOT.rstrip('/')
  def get(url,params=None,missing=False):
   response=session.get(url,params=params,timeout=30)

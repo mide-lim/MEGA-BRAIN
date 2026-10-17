@@ -29,15 +29,15 @@ export function prepareCalibrationArtifacts(rawInput,{sourceCommit=null}={}){
  for(const group of plan.groups){
   if(!after.nodes.some(n=>n.id===group.categoryId))after.nodes.push({id:group.categoryId,name:group.label,parentId:group.parentCategoryId,manual:false,evidenceCount:group.members.length,calibrationPlanHash:plan.planHash,calibrationReportHash:calibration.reportHash});
   else{const node=after.nodes.find(n=>n.id===group.categoryId);if(node.manual===true)throw Error('Manual node is protected.');node.calibrationPlanHash=plan.planHash;node.evidenceCount=group.members.length;}
-  after.rules=(after.rules??[]).filter(rule=>rule.id!==group.rule.id);after.rules.push({...group.rule,calibrationPlanHash:plan.planHash});
+  after.rules=(after.rules??[]).filter(rule=>rule.id!==group.rule.id);after.rules.push({...group.rule,members:group.members.map(({id,sourceIdentity,publicationProofHash})=>({id,sourceIdentity,publicationProofHash})),calibrationPlanHash:plan.planHash});
  }
  const additions=new Map();
  for(const group of plan.groups)for(const member of group.members){const prior=additions.get(member.id)??new Set(member.priorCategoryIds);prior.add(group.categoryId);additions.set(member.id,prior);}
  after.assignments=(after.assignments??[]).filter(a=>!affected.has(a.reelId));
- for(const [reelId,categories]of additions)after.assignments.push({reelId,categoryIds:[...categories],manual:false,revision:nextRevision,calibrationPlanHash:plan.planHash});
+ for(const [reelId,categories]of additions)after.assignments.push({reelId,categoryIds:[...categories],manual:false,revision:nextRevision,ruleIds:plan.groups.filter(group=>group.members.some(member=>member.id===reelId)).map(group=>group.rule.id),calibrationPlanHash:plan.planHash});
  if(plan.groups.length){after.revision=nextRevision;after.appliedCommands=[...(after.appliedCommands??[]),{id:operationId,fingerprint:plan.planHash,kind:'finite_contextual_calibration'}];}
  const view=calibrationReportView(calibration,plan),calibrationDocument={schemaVersion:1,planHash:plan.planHash,sourceHash:calibration.corpus.sourceCorpusHash,policyVersion:calibration.version,observedAt:input.observedAt,preparedAt:new Date().toISOString(),sourceCommit,report:view,sourceBindings:calibration.sourceBindings,appliedOperationId:operationId,scope:'finite_corpus_only',newContentAutomatic:false,processingStarted:false};
- const quality=buildSavedQualityDiagnostics({candidates:(input.qualityRecords??[]).map(record=>({record,report:record.analysis,mediaInspection:record.media_inspection??null,transcriptionReceipt:record.transcription_receipt??null,trustedReviews:[],historical:true})),observedAt:input.observedAt});
+ const quality=buildSavedQualityDiagnostics({candidates:(input.qualityRecords??[]).map(record=>({record,report:record.analysis,mediaInspection:record.media_inspection_receipt??null,transcriptionReceipt:record.transcription_receipt??null,trustedReviews:[],historical:true})),observedAt:input.observedAt});
  const owner={schemaVersion:1,kind:'reviewed_additive_curation_metadata',operationId,sourceCommit,observedAt:input.observedAt,planHash:plan.planHash,calibrationReportHash:calibration.reportHash,sourceInputSHA256:null,preconditions:{taxonomyUpdateTime:input.taxonomy.updateTime,taxonomyRevision:before.revision,calibrationAbsent:true,sourceBindings:plan.preconditions.sourceBindings},writes:[...(plan.groups.length?[{path:'settings/reels_v2_taxonomy',data:after}]:[]),{path:'settings/reels_v2_contextual_calibration',data:calibrationDocument}],affectedIds:plan.affectedIds,groupIds:plan.groups.map(g=>g.categoryId),sourceAnalysisWrites:false,newReels:false,providers:false,deletions:false,approvedForApply:false};
  return {input,calibration,plan,view,quality,owner};
 }

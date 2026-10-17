@@ -31,7 +31,8 @@
     "ops/prepare-reels-curation.test.mjs",
     "ops/apply-reels-curation.py",
     "ops/test_apply_reels_curation.py",
-    ".github/workflows/reels-alignment-review.yml"
+    ".github/workflows/reels-alignment-review.yml",
+    "google-v0/Dockerfile.worker"
   ],
   "context": [
     {

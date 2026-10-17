@@ -1,4 +1,3 @@
-import {recipeRecurrence} from './reels-taxonomy.mjs';
 import {categoryDefinitions} from './category-taxonomy.mjs';
 const states=new Set(['supported','present_unverified','not_recorded','not_applicable','unknown','inconclusive','invalid']);
 const roles=new Set(['central','supporting','mentioned','excluded','unknown']);
@@ -36,31 +35,25 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
  const refs=input=>list(input).slice(0,8).map(ref=>proofs.get(ref)??{id:typeof ref==='string'?ref:'unknown',source:'unknown',excerpt:'',state:'invalid',reason:'EVIDENCE_REFERENCE_MISSING'});
  const completeEvidence=ev=>ev.length>0&&ev.every(p=>p.state==='supported');
  const contextSignal=signal.primaryContext,definition=categoryDefinitions.find(c=>c.id===contextSignal?.categoryId),contextProof=refs(contextSignal?.evidenceRefs);
- const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:completeEvidence(contextProof)?'supported':'present_unverified',categoryId:definition.id,reason:completeEvidence(contextProof)?'INDEPENDENT_CONTEXT_SUPPORT_REVIEWED':'PUBLISHED_CONTEXT_CANDIDATE'}:null;
+ const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:contextProof.length?'present_unverified':'not_recorded',categoryId:definition.id,reason:'CONTEXT_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:null;
  const units=list(signal.units).slice(0,64).filter(u=>object(u)&&id(u.unitId)).map(u=>({id:u.unitId,kind:u.type,title:u.unitId,state:'present_unverified',complete:false,claimedCompleteness:u.completeness,evidence:refs(u.evidenceRefs)}));
  let verifiedUnits=[],independentUnitCount=null,format=null;
- // Recipe unit independence remains the existing temporal contract, augmented
- // with independent evidence review. A model's complete/state flags alone never
- // make an enumeration known.
- if(context?.value==='recipe'&&units.length&&new Set(units.map(u=>u.id)).size===units.length&&units.every(u=>u.kind==='recipe'&&u.claimedCompleteness==='complete'&&completeEvidence(u.evidence))){
-  const adapted={...raw,analysis:{...raw.analysis,knowledge:{...(raw.analysis.knowledge??{}),context:'recipe'},taxonomySignals:{version:1,parentCategoryId:context.categoryId,complete:true,confidence:1,units:units.map(u=>({id:u.id,kind:'recipe',title:u.id,evidence:u.evidence.map(p=>({source:p.source,excerpt:p.excerpt,start_seconds:p.startSeconds,end_seconds:p.endSeconds}))}))}}};
-  const recurrence=recipeRecurrence(adapted);
-  if(recurrence.state==='supported'){
-   verifiedUnits=units.map(u=>({...u,state:'supported',complete:true}));independentUnitCount=verifiedUnits.length;format={dimensionId:'format',value:recurrence.value,label:recurrence.label,state:'supported',reason:'INDEPENDENT_REVIEW_AND_RECIPE_TEMPORAL_PROOF'};
-  }
- }
+ // A review of an evidence excerpt is not a review of the proposition that
+ // an entire recipe unit is complete/independent. Existing v1 temporal recipe
+ // proof remains available separately; v2 never manufactures known enumeration
+ // from an evidence-level review. A future proposition-bound policy is required.
  const attributes=[];
  for(const a of list(signal.attributes).slice(0,64)){
   if(!object(a)||!dimensions.has(a.dimension)||!id(a.valueId))continue;
-  const ev=refs(a.evidenceRefs),semantic=trusted&&completeEvidence(ev),scope=['video','unit'].includes(a.scope)?a.scope:null;
+  const ev=refs(a.evidenceRefs),scope=['video','unit'].includes(a.scope)?a.scope:null;
   let state=states.has(a.state)?a.state:'invalid',reason=states.has(a.state)?'SAVED_CONTEXTUAL_ATTRIBUTE':'INVALID_COVERAGE_STATE';
-  if(state==='supported'&&!semantic)state=ev.some(p=>p.state==='invalid')?'invalid':'present_unverified',reason='INDEPENDENT_ATTRIBUTE_SUPPORT_NOT_VERIFIED';
+  if(state==='supported')state=ev.some(p=>p.state==='invalid')?'invalid':'present_unverified',reason='ATTRIBUTE_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED';
   const requestedUnits=list(a.unitIds),unitIds=[...new Set(requestedUnits.filter(unit=>verifiedUnits.some(u=>u.id===unit)))];
   if(!scope||scope==='unit'&&(!requestedUnits.length||unitIds.length!==requestedUnits.length))state=state==='invalid'?'invalid':'unknown',reason='UNIT_SCOPE_NOT_PROVEN';
   const pol=['positive','negated','unknown'].includes(a.polarity)?a.polarity:'unknown',role=roles.has(a.role)?a.role:'unknown';
   if(!roles.has(a.role)||!['positive','negated','unknown'].includes(a.polarity))state='invalid',reason='INVALID_ROLE_OR_POLARITY';
   if(a.dimension==='format'&&state==='supported'&&(!format||format.value!==a.valueId))state='unknown',reason='FORMAT_ENUMERATION_NOT_PROVEN';
-  attributes.push({dimensionId:a.dimension,dimension:a.dimension,valueId:a.valueId,label:a.valueId.replace(/[_-]+/g,' '),scope,unitIds,role:pol==='negated'?'excluded':role==='central'&&!semantic?'unknown':role,claimedRole:role,polarity:pol,state,reason,evidence:ev});
+  attributes.push({dimensionId:a.dimension,dimension:a.dimension,valueId:a.valueId,label:a.valueId.replace(/[_-]+/g,' '),scope,unitIds,role:pol==='negated'?'excluded':'unknown',claimedRole:role,polarity:pol,state,reason,evidence:ev});
  }
  return {context,units:verifiedUnits,unitCandidates:units,independentUnitCount,format,attributes,evidence:[...proofs.values()],receiptTrusted:trusted};
 }

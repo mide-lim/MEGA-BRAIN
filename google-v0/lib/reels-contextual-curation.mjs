@@ -19,7 +19,13 @@ export class ReelsContextualCurator{
  async snapshotData(){
   const all=await this.repository.items(),items=all.filter(i=>i.publication?.available);
   const metadataHash=contextualHash({rule:contextualRuleHash,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
-  if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock())return this.snapshot;
+  if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock()){
+   // An unchanged catalogue signature does not make a failed source refresh
+   // fresh. Preserve original source observation time and disclose staleness now.
+   const observation=this.repository.observation?.()??{};
+   this.snapshot.sourceStale=this.snapshot.sourceStale||observation.cache?.stale===true;
+   return this.snapshot;
+  }
   if(this.pending){await this.pending;return this.snapshotData();}
   this.pending=(async()=>{
    const started=this.clock(),entries=await mapLimited(items,this.readConcurrency,async item=>{

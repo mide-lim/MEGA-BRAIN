@@ -15,7 +15,19 @@ export function createResetOwnerStore(api,{assertRuntimeClosed}={}){
  need(typeof assertRuntimeClosed==='function','Independent four-service runtime guard required.');
  const firestore=new Firestore(api);
  async function getRecord(path,transaction){
-  let r;try{r=await api.request(firestore.root+'/'+path+(transaction?'?transaction='+encodeURIComponent(transaction):''));}catch(error){if(error.status===404)return null;throw error;}
+  let r;
+  if(transaction){
+   // batchGet binds both found and missing documents to this exact read/write
+   // transaction. Missing legacy publications are guarded reads, not an HTTP
+   // 404 interpreted outside the transaction or an untracked absence check.
+   const name=`projects/${project}/databases/(default)/documents/${path}`,rows=await api.request(firestore.root+':batchGet',{method:'POST',json:{documents:[name],transaction}});
+   need(Array.isArray(rows),'Transactional document response must be streamed rows.');
+   const documents=rows.filter(row=>row.found||row.missing);need(documents.length===1,'Transactional document membership differs.');
+   const row=documents[0];if(row.missing){need(row.missing===name&&!row.found,'Missing document outside requested identity.');return null;}
+   need(!Object.hasOwn(row,'missing')&&row.found?.name===name,'Found document outside requested identity.');r=row.found;
+  }else{
+   try{r=await api.request(firestore.root+'/'+path);}catch(error){if(error.status===404)return null;throw error;}
+  }
   return resetMetadataRecord({path,data:decodeFields(r.fields??{}),updateTime:r.updateTime});
  }
  async function globalGuards(transaction){return parallelReads([()=>getRecord('settings/capacity',transaction),()=>getRecord('settings/financial',transaction),()=>scan('control_chunks',resetSnapshotFields.control_chunks,[],transaction)]);}

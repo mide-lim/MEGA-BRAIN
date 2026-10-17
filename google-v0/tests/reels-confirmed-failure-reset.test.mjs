@@ -67,10 +67,10 @@ test('a claim arriving immediately before atomic commit prevents all writes and 
 });
 
 test('wire adapter uses official Firestore transaction fields for GET, query, commit and rollback',async()=>{
- const calls=[],api={project,request:async(url,options={})=>{calls.push({url,options});if(url.endsWith(':beginTransaction'))return {transaction:'opaque-read-write-tx'};if(url.includes(':runQuery'))return [];if(url.includes(':commit')||url.includes(':rollback'))return {};throw Object.assign(Error('not found'),{status:404});}};
+ const calls=[],api={project,request:async(url,options={})=>{calls.push({url,options});if(url.endsWith(':beginTransaction'))return {transaction:'opaque-read-write-tx'};if(url.includes(':runQuery'))return [];if(url.endsWith(':batchGet'))return options.json.documents.map(missing=>({missing,readTime:at}));if(url.includes(':commit')||url.includes(':rollback'))return {};throw Object.assign(Error('not found'),{status:404});}};
  assert.throws(()=>createResetOwnerStore(api),/runtime guard/);const store=createResetOwnerStore(api,{assertRuntimeClosed:async()=>{}}),transaction=await store.beginResetTransaction();
  await store.inspectResetMetadata('Reel_001',{transaction});const fixturePlan=prepareConfirmedFailureReset(fixture()),writes=resetWrites(fixturePlan.rows[0],fixturePlan.planSHA256,{project,at});await store.atomicResetCommit(writes,{transaction});await store.rollbackResetTransaction(transaction);
- assert.deepEqual(calls[0].options.json,{options:{readWrite:{}}});assert.ok(calls.filter(c=>c.url.includes(':runQuery')).every(c=>c.options.json.transaction===transaction));assert.ok(calls.filter(c=>!c.options.method).every(c=>new URL(c.url).searchParams.get('transaction')===transaction));
+ assert.deepEqual(calls[0].options.json,{options:{readWrite:{}}});assert.ok(calls.filter(c=>c.url.includes(':runQuery')).every(c=>c.options.json.transaction===transaction));const batchGets=calls.filter(c=>c.url.endsWith(':batchGet'));assert.equal(batchGets.length,4);assert.ok(batchGets.every(c=>c.options.json.transaction===transaction&&c.options.json.documents.length===1&&c.options.json.documents[0].startsWith(`projects/${project}/databases/(default)/documents/`)));assert.equal(calls.filter(c=>!c.options.method).length,0);
  const commit=calls.find(c=>c.url.endsWith(':commit')).options.json;assert.equal(commit.transaction,transaction);assert.ok(commit.writes.every(w=>!w.verify&&Object.keys(w).every(k=>['update','delete','updateMask','currentDocument'].includes(k))));assert.deepEqual(calls.at(-1).options.json,{transaction});
  await assert.rejects(()=>store.atomicResetCommit([{verify:'forbidden'}],{transaction}),/contract/);
 });
@@ -94,6 +94,12 @@ test('durable metadata intent precedes commit and acknowledgement follows verifi
 });
 
 test('owner metadata reads are bounded to eight concurrent requests and retain transaction identity',async()=>{
- let active=0,maxActive=0,count=0;const api={project,request:async(url,options={})=>{active++;maxActive=Math.max(maxActive,active);count++;await new Promise(resolve=>setImmediate(resolve));active--;if(url.endsWith(':runQuery')){assert.equal(options.json.transaction,'one-tx');return [];}assert.equal(new URL(url).searchParams.get('transaction'),'one-tx');throw Object.assign(Error('absent'),{status:404});}};
+ let active=0,maxActive=0,count=0;const api={project,request:async(url,options={})=>{active++;maxActive=Math.max(maxActive,active);count++;await new Promise(resolve=>setImmediate(resolve));active--;if(url.endsWith(':runQuery')){assert.equal(options.json.transaction,'one-tx');return [];}assert.ok(url.endsWith(':batchGet'));assert.equal(options.json.transaction,'one-tx');return options.json.documents.map(missing=>({missing,readTime:at}));}};
  const store=createResetOwnerStore(api,{assertRuntimeClosed:async()=>{}});await store.inspectResetMetadata('Reel_001',{transaction:'one-tx'});assert.ok(maxActive>1);assert.ok(maxActive<=8);assert.ok(count>=18);
+});
+
+test('transactional batchGet rejects empty, duplicate, mixed and outside-identity responses',async()=>{
+ for(const response of [()=>[],name=>[{missing:name},{missing:name}],name=>[{found:{name,fields:{},updateTime:at},missing:name}],name=>[{found:{name:name+'_other',fields:{},updateTime:at}}],name=>[{missing:name+'_other'}]]){
+  const api={project,request:async(url,options={})=>{if(url.endsWith(':runQuery'))return [];assert.ok(url.endsWith(':batchGet'));return response(options.json.documents[0]);}},store=createResetOwnerStore(api,{assertRuntimeClosed:async()=>{}});await assert.rejects(()=>store.inspectResetMetadata('Reel_001',{transaction:'exact-tx'}),/membership|identity/);
+ }
 });

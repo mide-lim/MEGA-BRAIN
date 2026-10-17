@@ -1,0 +1,11 @@
+{
+ "schemaVersion":1,"observationComplete":true,
+ "source":{"legacySnapshotSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","auditSHA256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","observedAt":"2026-10-17T00:00:00Z","synthetic":true},
+ "attestations":[{"id":"Reel_001","classification":"no_audio_no_stt_call","sourceStatus":"needs_attention","sourceRecordSHA256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","diagnosticSHA256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+ "records":[
+  {"path":"videos/Reel_001","updateTime":"2026-10-17T00:00:00Z","data":{"id":"Reel_001","status":"uncertain","importHeld":true,"legacyImportPlaceholder":true,"uncertain":true,"paidUncertain":false,"operationalStatus":null,"errorUncertain":true,"publicationProtected":false,"resetRule":null,"resetPlan":null}},
+  {"path":"reels_historical_activity/old_failure","updateTime":"2026-10-17T00:00:00Z","data":{"reelId":"Reel_001","status":null,"historical":true,"executable":false}},
+  {"path":"settings/capacity","updateTime":"2026-10-17T00:00:00Z","data":{"protectedReelIds":[]}},
+  {"path":"settings/financial","updateTime":"2026-10-17T00:00:00Z","data":{"protectedReelIds":[]}}
+ ]
+}

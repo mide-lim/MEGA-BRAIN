@@ -53,7 +53,12 @@
     "google-v0/tests/fixtures/confirmed-failure-reset-evidence.json",
     "google-v0/qa/reels-operations-browser-check.mjs",
     "google-v0/lib/reels-import.mjs",
-    "google-v0/tests/reels-import.test.mjs"
+    "google-v0/tests/reels-import.test.mjs",
+    "google-v0/tests/reels-confirmed-failure-reset-emulator.test.mjs",
+    "google-v0/tests/fixtures/firestore-emulator.json",
+    "google-v0/tests/reels-preserved-content.test.mjs",
+    "ops/assert-reels-alignment-closed.py",
+    "ops/test_reels_alignment_closed.py"
   ],
   "context": [
     {

@@ -33,7 +33,9 @@ function planPackage({copyBackup,backupLinks,linkInputs,historyProjection,histor
  const googleIds=new Set(g.records.filter(r=>r.path.startsWith('videos/')).map(r=>r.path.slice(7))),links=new Map(backupLinks.entries.map(r=>[r.reelId,r])),legacySnapshotHash=migrationHash(l);
  const records=[];
  for(const v of plan.targetCopy.videos)if(!googleIds.has(v.id))records.push({path:'videos/'+v.id,data:{...clone(v),import_hold:{active:true,reason:'migration_not_activated'}}});
+ const resetIds=new Set(plan.targetCopy.videos.filter(v=>v.operational_reset?.rule==='confirmed-legacy-failure-reset-v1').map(v=>v.id));
  for(const v of l.videos){
+  if(resetIds.has(v.id))continue;
   if(v.analysis===null||v.analysis===undefined){if(v.transcript===null||v.transcript===undefined)continue;}
   records.push({path:'reels_legacy_content/'+v.id,data:{schemaVersion:1,reelId:v.id,status:'legacy_preserved',analysis:clone(v.analysis??null),transcript:clone(v.transcript??null),originalStatus:typeof v.status==='string'?v.status:null,updatedAt:v.updated_at??null,provenance:{system:'postgresql',recordHash:migrationHash(v),sourceSnapshotHash:legacySnapshotHash},backupLink:clone(links.get(v.id)??null),...historical}});
  }
@@ -56,7 +58,8 @@ export function materializeIntoCopy({package:pkg,targetCopy,expectedSourceHashes
  for(const row of targetCopy.records){if(typeof row.path!=='string'||!object(row.data)||byPath.has(row.path))throw Error('Destino da cópia inválido ou duplicado.');byPath.set(row.path,row);}
  for(const required of pkg.googlePreconditions)if(!byPath.has(required.path)||migrationHash(byPath.get(required.path))!==required.recordHash)throw Error('Origem Google mudou; não sobrescrever.');
  let inserted=0,unchanged=0;
- for(const row of pkg.records){const existing=byPath.get(row.path);if(existing){if(migrationHash(existing)!==migrationHash(row))throw Error('Conflito no destino: '+row.path);unchanged++;}else{byPath.set(row.path,clone(row));inserted++;}}
+ const resetIds=new Set([...byPath.values()].filter(r=>r.path.startsWith('videos/')&&r.data?.operational_reset?.rule==='confirmed-legacy-failure-reset-v1').map(r=>r.path.slice(7)));
+ for(const row of pkg.records){if((row.path.startsWith('reels_legacy_content/')&&resetIds.has(row.path.split('/')[1]))||(row.path.startsWith('reels_historical_activity/')&&resetIds.has(row.data?.reelId)))throw Error('Pacote histórico anterior ao reset confirmado; não recriar histórico apagado.');const existing=byPath.get(row.path);if(existing){if(migrationHash(existing)!==migrationHash(row))throw Error('Conflito no destino: '+row.path);unchanged++;}else{byPath.set(row.path,clone(row));inserted++;}}
  const result={...clone(targetCopy),records:[...byPath.values()].map(clone)};
  if(migrationHash(targetCopy)!==before)throw Error('A origem da cópia foi alterada.');
  return {targetCopy:result,receipt:{schemaVersion:1,packageHash:pkg.hash,sourceHashes:clone(pkg.sourceHashes),inputCopyHash:before,outputCopyHash:migrationHash(result),inserted,unchanged,sourceUnchanged:true,googleRecordsPreserved:true,realMigrationApplied:false,processing:false,deletions:0}};

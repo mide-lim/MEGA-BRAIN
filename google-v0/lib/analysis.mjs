@@ -1,3 +1,4 @@
+import {consolidatePublication} from './analysis-publication.mjs';
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 import {taxonomySignalsSchema,taxonomySignalsInstruction} from './reels-analysis-contract.mjs';
@@ -80,7 +81,8 @@ export function validateAnalysis(report,record,{requireCategoryIds=false}={}) {
 
 // Keep the original model response intact. An unsupported useful-information
 // item is omitted from the published report, never rewritten into a quotation.
-export function reviewAnalysis(report,record,{requireCategoryIds=false}={}) {
+export function reviewAnalysis(report,record,{requireCategoryIds=false,sourceGroundedPublication=false}={}) {
+  if(sourceGroundedPublication&&(!Number.isFinite(record.duration_seconds)||record.duration_seconds<=0))throw Error('Duração verificada obrigatória para consolidar fontes salvas.');
   validateAnalysis({...report,useful_information:[]},record,{requireCategoryIds});
   if(!Array.isArray(report.useful_information))throw new Error('Informações úteis inválidas.');
   const accepted=[],rejected=[];
@@ -102,7 +104,7 @@ export function reviewAnalysis(report,record,{requireCategoryIds=false}={}) {
     if(result.omitted)reviewed.limitations.push(`${result.omitted} campo(s) ou palavra(s)-chave omitido(s) por evidência inválida. O resultado original foi preservado.`);
   }
   if(rejected.length)reviewed.limitations.push(`${rejected.length} informação(ões) útil(eis) omitida(s): evidência inválida ou citação não literal na transcrição. A resposta original foi preservada para revisão.`);
-  return validateAnalysis(reviewed,record,{requireCategoryIds});
+  return validateAnalysis(sourceGroundedPublication?consolidatePublication(reviewed,record,report):reviewed,record,{requireCategoryIds});
 }
 
 export function analysisPublication(report,record){
@@ -113,7 +115,7 @@ export function analysisPublication(report,record){
 
 // Only evaluates a response already received. Storage and provider failures are
 // deliberately outside this boundary and must retain operational uncertainty.
-export function analysisOutcome(response,record,{requireKnowledge=false}={}){
+export function analysisOutcome(response,record,{requireKnowledge=false,sourceGroundedPublication=false}={}){
  const candidate=response?.candidates?.[0];
  if(candidate?.finishReason!=='STOP')return {accepted:false,reasons:['incomplete_response']};
  let parsed;
@@ -124,7 +126,7 @@ export function analysisOutcome(response,record,{requireKnowledge=false}={}){
  try{validateCategoryIds(parsed?.categories);}
  catch{return {accepted:false,reasons:['invalid_categories']};}
  let report;
- try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true});}
+ try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true,sourceGroundedPublication});}
  catch{return {accepted:false,reasons:['invalid_report']};}
  if(requireKnowledge&&!report.knowledge)return {accepted:false,reasons:['missing_knowledge']};
  const publication=analysisPublication(report,record);

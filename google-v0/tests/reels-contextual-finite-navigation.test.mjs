@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {makeContextualCalibrationFixture} from './reels-contextual-calibration-fixture.mjs';
-import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {withFiniteContextualProofs,prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {projectReel,categoryNavigation} from '../lib/reels-model.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
-function fixture(){
+function fixture(cacheTtlMs=0){
  const input=makeContextualCalibrationFixture(),{plan}=prepareContextualCategoryPlan(input),docs=new Map(input.records.map(r=>{const s=JSON.parse(r.sourceJson);return ['videos/'+s.video.id,s.video];})),taxonomy=structuredClone(input.taxonomy.data),reads=[];
  const assignments=new Map();
  for(const group of plan.groups){
@@ -20,7 +21,7 @@ function fixture(){
   const rows=[...docs].filter(([p])=>p.startsWith(collection+'/')).filter(([,v])=>filters.every(f=>v[f.field]===f.value));
   return {records:rows.map(([path,value])=>{if(!select)return {path,data:structuredClone(value)};const data={};for(const field of select){let x=value;const parts=field.split('.');for(const p of parts)x=x?.[p];if(x===undefined)continue;let out=data;for(const p of parts.slice(0,-1))out=out[p]??={};out[parts.at(-1)]=structuredClone(x);}return {path,data};}),nextCursor:null};
  },create:async()=>{throw Error('Read-only navigation must not write');},set:async()=>{throw Error('Read-only navigation must not write');}};
- return {input,plan,docs,taxonomy,reads,repository:new ReelsRepository({store,cacheTtlMs:0})};
+ return {input,plan,docs,taxonomy,reads,repository:new ReelsRepository({store,cacheTtlMs})};
 }
 test('real Library and tree show exact audited finite members without changing saved sources',async()=>{
  const f=fixture(),before=JSON.stringify([...f.docs].filter(([p])=>p.startsWith('videos/')));
@@ -67,4 +68,38 @@ test('raw category pointer cannot bypass disabled finite rule, while explicit hu
  assert.equal((await f.repository.list({workspace:'library',category:g.categoryId})).total,0);
  f.taxonomy.assignments.push({reelId:id,categoryIds:[g.categoryId],manual:true,revision:99});
  const human=await f.repository.list({workspace:'library',category:g.categoryId});assert.deepEqual(human.items.map(i=>i.id),[id]);
+});
+
+test('a stale projected item never overrules a fresh manual source edit or withdrawn publication',async()=>{
+ const f=fixture(),group=f.plan.groups[0],id=group.members[0].id,video=structuredClone(f.docs.get('videos/'+id)),stale=projectReel(video);
+ assert.equal(stale.publication.available,true);assert.notEqual(stale.categoryOverride?.manual,true);
+ const baseline=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video})});
+ assert.ok(categoryNavigation(baseline,f.taxonomy).items[0].categoryIds.includes(group.categoryId));
+ const freshManual={...video,taxonomy_override:{manual:true,revision:99}};
+ const afterEdit=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video:freshManual})});
+ assert.equal(afterEdit[0].contextualSourceProof,undefined);
+ assert.equal(categoryNavigation(afterEdit,f.taxonomy).items[0].categoryIds.includes(group.categoryId),false);
+ const withdrawn={...video,analysis_generation:null,analysis_quality_status:'review_required',publication:{available:false}};
+ const afterWithdrawal=await withFiniteContextualProofs([stale],f.taxonomy,{loadSource:async()=>({video:withdrawn})});
+ assert.equal(afterWithdrawal[0].contextualSourceProof,undefined);
+ assert.equal(categoryNavigation(afterWithdrawal,f.taxonomy).items[0].categoryIds.includes(group.categoryId),false);
+});
+
+test('warm inventory cache cannot retain finite members after fresh raw or taxonomy edits without explicit refresh',async()=>{
+ for(const mutate of [
+  (f,g)=>{f.docs.get('videos/'+g.members[0].id).taxonomy_override={manual:true,revision:99};},
+  (f,g)=>{f.taxonomy.rules.find(r=>r.id===g.id).enabled=false;},
+  (f,g)=>{f.taxonomy.suppressed=[g.categoryId];},
+  (f,g)=>{f.taxonomy.assignments.push({reelId:g.members[0].id,categoryIds:['tecnologia'],manual:true,revision:99});}
+ ]){
+  const f=fixture(60000),g=f.plan.groups[0],first=await f.repository.list({workspace:'library',category:g.categoryId});
+  assert.equal(first.total,g.members.length);const cached=f.repository.snapshot;
+  mutate(f,g);
+  const current=await f.repository.list({workspace:'library',category:g.categoryId});
+  assert.equal(current.items.some(i=>i.id===g.members[0].id),false);
+  assert.equal(f.repository.snapshot,cached,'inventory cache remains warm; only finite source proofs refreshed');
+  const tree=await f.repository.categories();
+  assert.equal(tree.nodes.find(n=>n.id===g.categoryId).count,current.total);
+  assert.equal((await f.repository.list({workspace:'library'})).total,8);
+ }
 });

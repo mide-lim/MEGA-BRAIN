@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 concurrency:
   group: saved-corpus-calibration-${{ github.ref }}
   cancel-in-progress: true
@@ -23,12 +24,24 @@ jobs:
         run: node --test ops/prepare-reels-curation.test.mjs
       - name: Detect exact reviewed source manifest
         id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_PULL_REQUEST: '70'
+          TASK_BRANCH: codex/category-calibration-worker-quality
         run: |
-          if test -f google-v0/config/contextual-calibration-source.json; then
+          # This is a finite, reviewed corpus snapshot. Future unrelated commits
+          # must not depend on temporary source artifacts remaining available.
+          allowed=false
+          if [ "$GITHUB_HEAD_REF" = "$TASK_BRANCH" ] || [ "$GITHUB_REF_NAME" = "$TASK_BRANCH" ]; then
+            allowed=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            allowed="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 70 and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          if [ "$allowed" = true ] && test -f google-v0/config/contextual-calibration-source.json; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Saved-source calibration has not been staged; synthetic contract checks only."
+            echo "No finite calibration is scheduled for this commit; synthetic contracts remain active."
           fi
       - name: Assemble bounded private source artifacts
         if: steps.source.outputs.available == 'true'

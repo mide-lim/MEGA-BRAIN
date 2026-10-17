@@ -30,7 +30,8 @@
     "ops/prepare-reels-curation.mjs",
     "ops/prepare-reels-curation.test.mjs",
     "ops/apply-reels-curation.py",
-    "ops/test_apply_reels_curation.py"
+    "ops/test_apply_reels_curation.py",
+    ".github/workflows/reels-alignment-review.yml"
   ],
   "context": [
     {
@@ -118,6 +119,7 @@
       "review": "fresh native review_calibration; read-only static/CI/evidence"
     },
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
-    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json"
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies."
   }
 }

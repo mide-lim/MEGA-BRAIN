@@ -92,5 +92,5 @@ export function buildContextualIndex(entries,{nodes=[],query={}}={}){
  return {version:contextualVersion,ruleHash:contextualRuleHash,total:filtered.length,inventoryTotal:unique.length,nodes:[...contextNodes.values()].map(n=>({id:n.id,name:n.name,parentId:n.parentId,count:n.ids.size,supportCount:n.supported.size,filter:{context:n.id}})),facets:facetRows,patterns:candidates,candidates,coverage,entries:filtered};
 }
 export function contextualListItem(entry){
- return {id:entry.id,title:entry.title,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,context:entry.context,format:entry.format,independentUnitCount:entry.independentUnitCount,coverage:entry.coverage,attributes:entry.attributes.map(({evidence,...a})=>({...a,evidenceCount:evidence.length})),legacyEvidence:entry.legacyEvidence,fingerprint:entry.fingerprint};
+ return {id:entry.id,title:entry.title,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,sourceManifestHash:entry.sourceManifestHash,sourceProofHash:entry.sourceProofHash,curation:entry.curation,context:entry.context,format:entry.format,independentUnitCount:entry.independentUnitCount,coverage:entry.coverage,attributes:entry.attributes.map(({evidence,...a})=>({...a,evidenceCount:evidence.length})),legacyEvidence:entry.legacyEvidence,fingerprint:entry.fingerprint};
 }

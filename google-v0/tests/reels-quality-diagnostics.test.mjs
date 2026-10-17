@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildQueueCuration,qualityEvidenceStates} from '../lib/reels-quality-diagnostics.mjs';
+import {buildQueueCuration,qualityEvidenceStates,buildSavedQualityDiagnostics} from '../lib/reels-quality-diagnostics.mjs';
 const item=(id,extra={})=>({id,title:'Receita preservada',status:'registered',publication:{available:false},media:{available:false},...extra});
 const execution=(id,reelId,extra={})=>({id,reelId,stage:'analysis',worker:'analysis-worker',status:'completed',attempt:1,...extra});
 test('registered inventory stays ready and historical publications never become new failures',()=>{
@@ -41,4 +41,12 @@ test('a 3107 item inventory is paged completely and filters do not alter global 
 test('private provider text never reaches diagnostic rows',()=>{
  const r=buildQueueCuration({items:[item('reel_a',{status:'failed',error:{message:'Bearer PRIVATE',code:'TOKEN SECRET'}})],executions:[execution('attempt_a','reel_a',{status:'failed',error:{message:'PRIVATE',code:'SECRET WITH SPACES'}})]});
  assert.doesNotMatch(JSON.stringify(r),/PRIVATE|Bearer|SECRET/);
+});
+
+test('offline saved diagnostics keep historical results and unknown evidence separate without precision claims',()=>{
+ const saved={record:{id:'reel_saved'},report:{title:'Salvo',summary:'Salvo'},historical:true};
+ const before=structuredClone(saved),result=buildSavedQualityDiagnostics({candidates:[saved,saved,{record:{id:'reel_unknown'}}],observedAt:'2026-10-17T22:00:00Z'});
+ assert.equal(result.candidates.length,2);assert.equal(result.coverage.historical,1);assert.equal(result.candidates.find(r=>r.reelId==='reel_saved').state,'present_unverified');assert.equal(result.candidates.find(r=>r.reelId==='reel_unknown').state,'inconclusive');
+ assert.equal(result.coverage.precision,null);assert.equal(result.coverage.accuracy,null);assert.equal(result.coverage.semanticQualityMeasured,false);assert.equal(result.providerCalls,0);assert.equal(result.publicationChanged,false);assert.deepEqual(saved,before);
+ assert.ok(result.candidates.every(r=>r.replayAllowed===false&&r.checks.every(c=>c.policyVersion==='gate_v2'&&c.ruleVersion)));
 });

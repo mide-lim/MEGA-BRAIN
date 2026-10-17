@@ -3,6 +3,7 @@ import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ReelsFinance} from './reels-finance.mjs';
 import {ReelsReconciliation} from './reels-reconciliation.mjs';
 import {ReelsContextualCurator} from './reels-contextual-curation.mjs';
+import {ReelsCurationCalibration} from './reels-curation-calibration.mjs';
 import {fail,safeError} from './reels-runtime.mjs';
 const headers={'Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8'};
 const response=(data,status=200)=>Response.json(data,{status,headers});
@@ -13,6 +14,8 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
  let contextualCurator=contextual;
  const getContextual=()=>contextualCurator??=new ReelsContextualCurator({repository,clock});
  repository.contextualMatchingIds=async filters=>getContextual().matchingIds(filters);
+ let calibration;
+ const getCalibration=()=>calibration??=new ReelsCurationCalibration({repository,contextual:getContextual(),clock});
  const controls={processingAllowed:processingEnabled===true,processingReason:processingEnabled===true?null:'Processamento real desabilitado nesta entrega.'};
  return async function handle(request){
   try{
@@ -26,6 +29,8 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='items')return response(await repository.list(q));
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}
     if(path==='queues')return response({...await repository.queues(),...controls});
+     if(path==='curation/calibration')return response(await getCalibration().overview());
+     if(path==='quality/saved')return response(await getCalibration().savedQuality(q));
      if(path==='quality')return response({...await repository.quality(q),...controls});
      if(path==='contextual')return response(await getContextual().overview(q));
      if(parts[0]==='contextual'&&parts.length===2){const item=await getContextual().detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Conteúdo publicado não encontrado.',404);return response(item);}

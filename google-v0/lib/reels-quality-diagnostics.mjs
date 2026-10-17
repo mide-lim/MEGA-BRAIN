@@ -1,4 +1,6 @@
 import {createHash} from 'node:crypto';
+import {evaluateQualityGateV2,qualityPolicyVersion} from './reels-quality-gate.mjs';
+import {semanticQualityPolicyVersion} from './reels-quality-semantic-policy.mjs';
 import {normalizeSearch,projectExecution,stageName} from './reels-model.mjs';
 
 export const queueCurationVersion='queue-curation-v1';
@@ -76,4 +78,22 @@ export function buildQueueCuration({items=[],executions=[],observedAt=null,execu
  const remaining=rows.filter(r=>!after||r.reelId.localeCompare(after)>0),page=remaining.slice(0,Number(limit));
  const cohorts=[...new Set(trusted.map(e=>e.cohortId))].sort((a,b)=>String(a).localeCompare(String(b)));
  return {version:queueCurationVersion,observedAt,availability:{state:executionAvailability==='unavailable'?'partial':conflicts.size||executionAvailability==='partial'?'partial':'available',executions:executionAvailability,conflictingExecutionIdentities:conflicts.size},counts,coverage:{source:'saved_published_and_trusted_executions',qualityPolicyVersion:'historical_baseline_or_receipted_gate_v2',semanticQualityMeasured:false,currentFailureRate:null,reason:'Contagens de estoque não são taxas de falha. Tentativas e Reels únicos são separados por etapa e coorte; coorte ausente permanece desconhecida.'},stages:executionAvailability==='unavailable'?null:metrics(trusted),cohortMetrics:executionAvailability==='unavailable'?null:cohorts.map(cohortId=>({cohortId,known:cohortId!==null,stages:metrics(trusted.filter(e=>e.cohortId===cohortId))})),items:page,total:all.length,matched:rows.length,limit:Number(limit),nextCursor:remaining.length>page.length?Buffer.from(JSON.stringify({queryHash,after:page.at(-1).reelId})).toString('base64url'):null,processingAllowed:false};
+}
+
+// Offline evaluation of already saved candidates. It neither fetches sources nor
+// turns a failed proof into a provider failure or changes a historical pointer.
+export function buildSavedQualityDiagnostics({candidates=[],observedAt=null}={}){
+ const seen=new Set(),rows=[];
+ for(const item of list(candidates)){
+  const record=item?.record??{},reelId=safeId(record.id);
+  if(!reelId)continue;
+  const gate=evaluateQualityGateV2({record,report:item.report,mediaInspection:item.mediaInspection,transcriptionReceipt:item.transcriptionReceipt,trustedReviews:item.trustedReviews});
+  const key=reelId+':'+gate.reportHash+':'+gate.sourceManifestHash;
+  if(seen.has(key))continue;seen.add(key);
+  const historical=item.historical===true;
+  const propositions=gate.contextualPropositions??{},all=[...list(propositions.attributes),...list(propositions.units),...(propositions.primaryContext?[propositions.primaryContext]:[])];
+  rows.push({reelId,reportHash:gate.reportHash,sourceManifestHash:gate.sourceManifestHash,publicationClass:historical?'historical_baseline':'candidate',state:historical?'present_unverified':gate.state,gateWouldAccept:gate.accepted,publicationChanged:false,checks:gate.checks,gaps:gate.gaps,contextual:{total:all.length,states:Object.fromEntries(qualityEvidenceStates.map(state=>[state,all.filter(p=>p.state===state).length]))},sourceCoverage:{video:!!gate.sourceManifest?.video,audio:!!gate.sourceManifest?.audio,transcript:!!gate.sourceManifest?.transcript,caption:!!gate.sourceManifest?.caption,mediaInspectionRecorded:!!item.mediaInspection,transcriptionReceiptRecorded:!!item.transcriptionReceipt},replayAllowed:false});
+ }
+ rows.sort((a,b)=>a.reelId.localeCompare(b.reelId)||a.reportHash.localeCompare(b.reportHash));
+ return {version:'saved-quality-diagnostics-v1',policyVersion:qualityPolicyVersion,ruleVersion:semanticQualityPolicyVersion,observedAt,source:'provided_saved_artifacts_only',candidates:rows,coverage:{candidateCount:rows.length,uniqueReels:new Set(rows.map(r=>r.reelId)).size,historical:rows.filter(r=>r.publicationClass==='historical_baseline').length,byState:Object.fromEntries(qualityEvidenceStates.map(state=>[state,rows.filter(r=>r.state===state).length])),semanticQualityMeasured:false,accuracy:null,precision:null,reason:'Verificação de contratos e âncoras sobre fontes salvas. Ausência de prova, contradição e falha operacional são distintas; nenhuma precisão geral foi medida.'},processingAllowed:false,providerCalls:0,publicationChanged:false};
 }

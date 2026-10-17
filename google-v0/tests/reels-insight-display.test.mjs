@@ -21,3 +21,10 @@ test('invalid time ranges do not become timestamps and repeated prose is not dup
  const [card]=insightCards({claim:'Texto preservado.',application:'Texto preservado.',classification:'author_claim',evidence:[{source:'video',start_seconds:-2,end_seconds:1,excerpt:'Trecho.'},{source:'transcript',start_seconds:0,end_seconds:Infinity,excerpt:'Outro trecho.'},{source:'transcript',start_seconds:0,end_seconds:1}]});
  assert.equal(card.application,null);assert.deepEqual(card.evidence.map(x=>x.time),[null,null]);assert.equal(card.evidence.length,2);
 });
+
+test('inherited property names remain neutral text and source HTML stays literal',()=>{
+ for(const key of ['__proto__','constructor','toString',{toString:null}]){
+  const [card]=insightCards(JSON.parse(JSON.stringify({claim:'<img src=x onerror="alert(1)">',classification:key,evidence:[{source:key,excerpt:'<b>Trecho original</b>'}]})));
+  assert.equal(card.label,'Ideia registrada');assert.equal(card.claim,'<img src=x onerror="alert(1)">');assert.deepEqual(card.evidence,[{source:'Fonte registrada',excerpt:'<b>Trecho original</b>',time:null}]);
+ }
+});

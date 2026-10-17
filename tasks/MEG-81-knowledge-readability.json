@@ -28,7 +28,7 @@
       "sections": [
         "Knowledge"
       ],
-      "max_chars": 6000
+      "max_chars": 4000
     },
     {
       "path": "google-v0/lib/analysis.mjs",
@@ -37,7 +37,7 @@
         "schema",
         "validateAnalysis"
       ],
-      "max_chars": 4000
+      "max_chars": 3000
     },
     {
       "path": "google-v0/qa/reels-browser-check.mjs",
@@ -45,7 +45,7 @@
       "sections": [
         "published_knowledge"
       ],
-      "max_chars": 6000
+      "max_chars": 4000
     }
   ],
   "validation_commands": [

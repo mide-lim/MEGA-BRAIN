@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "MEG-57",
-  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "paperclip_issue_id": "5371a189-3f50-4784-89ba-5621377c3e1e",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "db37b0eedc706193060fea6a1e9a62dcd5aa480c",
   "objective": "Publicacao v2 conservadora e completa a partir de fontes ja salvas; preservar candidato, RAW, grounding literal e reconsolidar somente dez publicacoes C0 sem nova inferencia.",
@@ -10,7 +10,8 @@
     "Fontes completas atribuidas aparecem na Visao geral; citações nao literais continuam rejeitadas.",
     "Titulos/resumos/qualidade/lacunas livres do modelo nao sao fatos publicados sem apoio verificavel; candidato original e confidence permanecem preservados.",
     "Casos receita incompleta, quantidades contraditorias e modelo de produto inventado passam com adversariais em Actions.",
-    "Pacote offline reconsolida somente dez IDs/referencias congelados, beforeimages, create-only e CAS leaf; sem provedores, ledger, execucoes ou Google writes pelo agente."
+    "Pacote offline reconsolida somente dez IDs/referencias congelados, beforeimages, create-only e CAS leaf; sem provedores, ledger, execucoes ou Google writes pelo agente.",
+    "Texto de capacidade descreve desiredConcurrency limitado pela configuração técnica; não promete ampliar servidores/quotas ou verificar condições não implementadas."
   ],
   "allowed_paths": [
     "tasks/MEG-57-grounded-publication.json",
@@ -24,7 +25,8 @@
     "google-v0/qa/reels-browser-check.mjs",
     "google-v0/scripts/reconsolidate-saved-analysis.mjs",
     "google-v0/docs/saved-publication-reconciliation.md",
-    "google-v0/Dockerfile.worker"
+    "google-v0/Dockerfile.worker",
+    "google-v0/web-google/app/reels/operations.jsx"
   ],
   "context": [
     {

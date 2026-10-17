@@ -4,7 +4,7 @@
   "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "696fd21cfecf7b850a3799174e2e79bb63acb8ee",
-  "objective": "Integrar comandos web, drenagem duravel, despacho autenticado aos tres workers e conciliacao por evidencias de resultados incertos; preparar piloto sem processar Reels nem apagar nada.",
+  "objective": "Integrar comandos web, drenagem duravel, despacho autenticado aos tres workers e conciliacao por evidencias de resultados incertos; preparar piloto sem processar Reels nem apagar nada. Continuação autorizada: integrar este PR e publicar somenteweb+3stageworkers com processamento desligado; conferir filas/IAM/ocupação, preparar piloto semexecutar.",
   "risk": "high",
   "acceptance_criteria": [
     "Comandos de lote/todos fixam selecao e persistem progresso retomavel em lotes limitados, sem depender da duracao HTTP.",
@@ -13,7 +13,7 @@
     "Pausa impede novas submissoes, preserva coleta/persistencia ja enviada; capacidades desejada e efetiva permanecem distintas e nenhum bloqueio financeiro impede trabalho valido.",
     "Configuracao continua desligada por padrao; fixtures sinteticas e adaptadores falsos comprovam tres etapas, backlog3005, falhas, timeouts, reinicio e resposta perdida sem Google/provedores reais.",
     "GitHub Actions executa suites/build/browser no commit final; nenhuma suite/build de produto na VPS.",
-    "Piloto concreto preparado com preflight, ativacao futura explicita, amostra limitada, criterios de interrupcao, preservacao, evidencia e reversao; nenhuma ativacao, merge, deploy ou processamento nesta preparacao."
+    "Piloto preparado semprocessamento/exclusao; na continuacao humana publicadaweb+3stageworkers comruntimev2 explicitamente fechado, preservando legacyworker e filas/IAM/reservas/holds."
   ],
   "allowed_paths": [
     "tasks/MEG-93-web-command-worker-integration.json",
@@ -26,7 +26,11 @@
     "google-v0/qa/",
     "google-v0/Dockerfile.worker",
     ".github/workflows/google-v0.yml",
-    ".github/workflows/frontend-qa.yml"
+    ".github/workflows/frontend-qa.yml",
+    "ops/deploy-reels-services.py",
+    "ops/test_deploy_reels_services.py",
+    "ops/test_deploy_existing_services.py",
+    ".github/workflows/google-deploy.yml"
   ],
   "context": [
     {
@@ -111,8 +115,8 @@
     "max_concurrent_slots": 4,
     "processing": false,
     "real_deletion": false,
-    "live_google_mutations": false,
-    "merge_deploy": false,
+    "live_google_mutations": "Only authorized closed publication of web+3stageworkers, image+closed-release env; no providers/data/queue/IAM changes.",
+    "merge_deploy": "Human authorized PR61 and exact closed services; reviewed packet before apply.",
     "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
     "ownership": {
       "pipeline_integration": "service/pipeline/dispatcher/runtime Google/worker entry e testes correspondentes",

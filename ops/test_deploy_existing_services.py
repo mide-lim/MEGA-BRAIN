@@ -365,7 +365,7 @@ class WebOnlyDeploymentTests(unittest.TestCase):
 
     def test_workflow_passes_explicit_selection_to_cli(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/google-deploy.yml").read_text()
-        self.assertRegex(workflow, r"services:\s+description:[^\n]+\s+required: true\s+default: all\s+type: choice\s+options: \[all, web\]")
+        self.assertRegex(workflow, r"services:\s+description:[^\n]+\s+required: true\s+default: all\s+type: choice\s+options: \[all, web, web_stages\]")
         self.assertIn("DEPLOY_SERVICES: ${{ inputs.services }}", workflow)
         self.assertIn('--services "$DEPLOY_SERVICES"', workflow)
 

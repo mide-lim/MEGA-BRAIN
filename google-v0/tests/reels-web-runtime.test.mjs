@@ -1,7 +1,8 @@
+import {libraryAPI} from '../lib/library-api.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {reelsWebRuntime,validateReelsStageRoutes} from '../lib/reels-web-runtime.mjs';
-import {reelsProcessingEnabled} from '../lib/reels-runtime-policy.mjs';
+import {reelsProcessingEnabled,closedReleaseConfig} from '../lib/reels-runtime-policy.mjs';
 import {fixedStageRuntime} from '../lib/fixed-stage-runtime.mjs';
 import {reelsGoogleRuntime} from '../lib/reels-google-runtime.mjs';
 import {reelsAPI} from '../lib/reels-api.mjs';
@@ -112,4 +113,23 @@ test('frozen and completed 3005-item operation fits the real Firestore REST enco
   assert.ok(bytes<1048576,`Firestore encoding measured ${bytes} bytes`);
  }
  assert.deepEqual(operation.accepted,[]);assert.equal([...x.store.docs].filter(([p])=>p.startsWith('reels_executions/')).length,0);
+});
+
+test('protected closed-release environment forces v2 off and cannot enable any processing',async()=>{
+ const legacy={project},open={...enabled};
+ assert.equal(closedReleaseConfig(legacy,{}),legacy);
+ for(const config of [legacy,open,{...open,reels_processing_enabled:'true'}]){
+  const closed=closedReleaseConfig(config,{MEGABRAIN_REELS_CLOSED_RELEASE:'v2'});assert.equal(closed.reels_runtime_version,'v2');assert.equal(reelsProcessingEnabled(closed),false);
+  const x=setup([reel('Reel_001')]),runtime=reelsWebRuntime({...x,config:closed});
+  assert.equal((await apiFor(x.repository,runtime)(post('commands',{type:'start',selection:{all:true},idempotencyKey:'closed-release-command'}))).status,423);assert.equal(x.requests.length,0);
+ }
+ for(const value of ['',true,'true','false','v1','v2-enabled'])assert.throws(()=>closedReleaseConfig(open,{MEGABRAIN_REELS_CLOSED_RELEASE:value}));
+ assert.equal(open.reels_processing_enabled,true);
+});
+
+test('closed web composition can block legacy control writes without blocking authenticated reads',async()=>{
+ let writes=0;const repository={controls:async()=>({enabled:false}),updateControls:async()=>{writes++;}},handle=libraryAPI({repository,ledgerStore:{},authorize:()=>true,sameOrigin:()=>true,controlsWriteEnabled:false,linkImportEnabled:false});
+ assert.equal((await handle.controls(new Request('https://web.example/api/controls'))).status,200);
+ assert.equal((await handle.controls(new Request('https://web.example/api/controls',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:true})}))).status,423);
+ assert.equal(writes,0);
 });

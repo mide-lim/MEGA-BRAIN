@@ -6,3 +6,12 @@ export function reelsProcessingEnabled(config={}){
  if(flag===true&&mode!=='v2')throw Error('Processamento exige runtime v2 explícito.');
  return mode==='v2'&&flag===true;
 }
+
+// A protected deployment fence can only select a closed v2 runtime. Enabling
+// processing requires removing this fence under a separate reviewed operation.
+export function closedReleaseConfig(config={},env=process.env){
+ const value=env.MEGABRAIN_REELS_CLOSED_RELEASE;
+ if(value===undefined)return config;
+ if(value!=='v2')throw Error('Publicação fechada inválida.');
+ return {...config,reels_closed_release:true,reels_runtime_version:'v2',reels_processing_enabled:false};
+}

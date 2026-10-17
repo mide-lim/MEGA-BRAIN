@@ -17,17 +17,17 @@ async function availablePort(){
   await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
   return port;
 }
-async function checkStage(stage,{v2=false}={}){
-  const port=await availablePort(),configPath=join(folder,stage+(v2?'-v2':'')+'.json');
+async function checkStage(stage,{v2=false,closedEnv=false}={}){
+  const port=await availablePort(),configPath=join(folder,stage+(v2?'-v2':'')+(closedEnv?'-env':'')+'.json');
   const config={project:'megabrain-v0-1017370021431',cost_accounting:'conservative_estimate_not_invoice',
-    ...(v2?{reels_runtime_version:'v2',reels_processing_enabled:false}:{}),worker_stage:stage,worker_origin:example.stage_routes[stage].workerOrigin,stage_routes:example.stage_routes,
+    ...(v2?{reels_runtime_version:'v2',reels_processing_enabled:closedEnv}:{}),worker_stage:stage,worker_origin:example.stage_routes[stage].workerOrigin,stage_routes:example.stage_routes,
     enabled:false,dispatch_enabled:false,admission_enabled:false,downloads_enabled:false,
     assisted_upload_enabled:false,assisted_single_upload_enabled:false,pilot_video_ids:[],quotes:{}};
   await writeFile(configPath,JSON.stringify(config));
   // The real entrypoint receives no inherited credentials. Its preload denies
   // outbound sockets and fetches; only the parent makes loopback HTTP requests.
   const child=spawn(process.execPath,['--import',pathToFileURL(join(folder,'deny-outbound.mjs')).href,entrypoint,stage],{
-    env:{NODE_ENV:'test',PORT:String(port),MEGABRAIN_V0_WORKER_CONFIG:configPath},stdio:['ignore','pipe','pipe']
+    env:{...(closedEnv?{MEGABRAIN_REELS_CLOSED_RELEASE:'v2'}:{}),NODE_ENV:'test',PORT:String(port),MEGABRAIN_V0_WORKER_CONFIG:configPath},stdio:['ignore','pipe','pipe']
   });
   let output='',spawnError=null;
   const capture=chunk=>{output=(output+chunk).slice(-8192);};
@@ -71,6 +71,6 @@ const denied=()=>{console.error('Unexpected outbound I/O');throw Error('Outbound
 net.Socket.prototype.connect=denied;
 globalThis.fetch=denied;
 `);
-  for(const stage of ['upload','transcription','analysis']){await checkStage(stage);await checkStage(stage,{v2:true});}
+  for(const stage of ['upload','transcription','analysis']){await checkStage(stage);await checkStage(stage,{v2:true});await checkStage(stage,{v2:true,closedEnv:true});}
 }finally{await rm(folder,{recursive:true,force:true});}
 console.log('Stage worker smoke passed: three real entrypoints in legacy and v2 modes, closed synthetic configs, anonymous rejection, isolated routes and no outbound I/O.');

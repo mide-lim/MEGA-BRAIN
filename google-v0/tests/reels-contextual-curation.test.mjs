@@ -178,3 +178,10 @@ test('source-evidence review cannot certify an unrelated value role context or c
  const entry=projectContextualPublication({...f,qualityVerification:verification});assert.equal(entry.context.value,'recipe');assert.equal(entry.independentUnitCount,null);assert.equal(entry.attributes[0].state,'present_unverified');assert.equal(entry.attributes[0].role,'unknown');assert.equal(entry.attributes[0].claimedRole,'central');
  for(const facetMode of ['supported','mentioned'])assert.equal(filterContextualEntries([entry],{dimension:'ingredient',value:'carne-bovina',facetMode}).length,0);
 });
+
+test('a later stale catalogue refresh is disclosed even while the contextual cache remains valid',async()=>{
+ const f=native();let stale=false,now=1000,rawReads=0;const original='2026-10-16T12:00:00.000Z';
+ const repository={items:async()=>[f.item],raw:async()=>{rawReads++;return f.video;},store:{get:async()=>null},categories:async()=>({nodes:[]}),observation:()=>({observedAt:original,cache:{stale}})};
+ const curator=new ReelsContextualCurator({repository,clock:()=>now}),first=await curator.overview();assert.equal(first.sourceStale,false);
+ now+=1000;stale=true;const later=await curator.overview();assert.equal(later.sourceStale,true);assert.equal(later.dataAsOf,original);assert.equal(rawReads,1);
+});

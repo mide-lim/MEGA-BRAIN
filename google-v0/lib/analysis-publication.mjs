@@ -44,7 +44,7 @@ export function consolidatePublication(reviewed,record,candidate){
  const conflict=value=>{
   if(typeof value==='string')return (value.match(/\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9-]{3,}\b/giu)??[]).some(token=>!contains(token));
   if(Array.isArray(value))return value.some(conflict);
-  return !!value&&typeof value==='object'&&Object.values(value).some(conflict);
+  return !!value&&typeof value==='object'&&Object.entries(value).some(([key,item])=>key!=='sourceIdentity'&&conflict(item));
  };
  const fields=(reviewed.knowledge?.fields??[]).filter(f=>!conflict(f));
  const grounded={...reviewed,useful_information:reviewed.useful_information.filter(x=>!conflict(x)),visual_observations:reviewed.visual_observations.filter(x=>!conflict(x)),...(reviewed.knowledge?{knowledge:{...reviewed.knowledge,fields,keywords:reviewed.knowledge.keywords.filter(x=>!conflict(x))}}:{})};

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {evaluateQualityGateV2,qualitySourceManifest,qualityCandidateHash,qualityDigest,persistQualityCandidateV2,verifyPublicationQualityReceipt} from '../lib/reels-quality-gate.mjs';
-import {buildAnalysisRequest,validateProviderResponseSchema} from '../lib/analysis.mjs';
-const record=()=>({id:'reel_fixture',duration_seconds:20,media_verified:true,video_key:'originals/instagram/reel_fixture/video.mp4',video_generation:'1',audio_key:'prepared/reel_fixture/audio.flac',audio_generation:'2',audio_bytes:100,audio_sha256:'a'.repeat(64),audio_source_key:'originals/instagram/reel_fixture/video.mp4',audio_source_generation:'1',transcript:'Frango no forno. Use 200 g de frango.',transcript_key:'results/reel_fixture/transcript.json',transcript_generation:'3',source_caption:{text:'Frango no forno. Use 200 g de frango.',capture_id:'caption_saved'}});
+import {buildAnalysisRequest,validateProviderResponseSchema,analysisOutcome} from '../lib/analysis.mjs';
+const record=()=>({id:'reel_fixture',duration_seconds:20,media_verified:true,video_key:'originals/instagram/reel_fixture/video.mp4',video_generation:'1',audio_key:'prepared/reel_fixture/audio.flac',audio_generation:'2',audio_bytes:100,audio_sha256:'a'.repeat(64),audio_source_key:'originals/instagram/reel_fixture/video.mp4',audio_source_generation:'1',transcript:'Frango no forno. Use 200 g de frango.',transcript_key:'results/reel_fixture/transcript.json',transcript_generation:'3',source_caption:{text:'Frango no forno. Use 200 g de frango.',capture_id:'capture20261017'}});
 const report=(r)=>{const manifest=qualitySourceManifest(r),e={source:'caption',sourceIdentity:manifest.caption,excerpt:r.source_caption.text};return {title:'Frango no forno.',summary:'Use 200 g de frango.',categories:['receitas'],useful_information:[],visual_observations:[],limitations:[],transcript_quality:{assessment:'Texto reconhecido, sem revisão independente.',uncertain_segments:[]},knowledge:{context:'recipe',fields:[{kind:'ingredient',name:'Ingrediente',value:'200 g de frango',evidence:[e]}],keywords:[],missing_information:['Rendimento não informado.']},qualityEvidenceV2:{version:2,title:[e],summary:[e]},source_consolidation:{sources:[{source:'caption',text:r.source_caption.text,capture_id:r.source_caption.capture_id},{source:'transcript',text:r.transcript}]}};};
 const evidence=(r)=>({mediaInspection:{kind:'media-inspector',receiptId:'inspection_saved',sourceIdentity:qualitySourceManifest(r).video,decodePassed:true,probePassed:true,durationSeconds:20,expectedAudio:true,audioTrackPresent:true},transcriptionReceipt:{operationIdentity:'saved_operation',sourceAudioIdentity:qualitySourceManifest(r).audio,resultIdentity:qualitySourceManifest(r).transcript,rawResultIdentity:{key:'raw/stt.json',generation:'4'},words:[{start_seconds:0,end_seconds:2}]}});
 test('future gate supports literal identified content while preserving legitimate gaps and unmeasured alignment',()=>{
@@ -80,4 +80,23 @@ test('opt-in quality and contextual attributes enrich the same request; default 
  const payload=JSON.parse(v2.contents[0].parts[1].text);assert.equal(payload.quality_policy_version,'gate_v2');assert.deepEqual(payload.source_manifest,qualitySourceManifest(r));
  assert.ok(v2.generationConfig.responseSchema.properties.contextualSignals);validateProviderResponseSchema(v2.generationConfig.responseSchema);
  assert.equal(baseline.generationConfig.responseSchema.properties.qualityEvidenceV2,undefined);
+});
+
+test('received gate-v2 outcome preserves provenance identities as metadata, not invented product claims',()=>{
+ const r=record(),p=report(r),response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(p)}]}}]};
+ const outcome=analysisOutcome(response,r,{requireKnowledge:true,qualityGateV2:evidence(r)});
+ assert.equal(outcome.accepted,true);
+ assert.equal(outcome.report.knowledge.fields.length,1);
+ assert.deepEqual(outcome.report.knowledge.fields[0].evidence[0].sourceIdentity,{captureId:r.source_caption.capture_id});
+});
+test('contextual semantic receipts and literal-only anchors remain distinct and candidate verification is ignored',async()=>{
+ const r=record(),p=report(r),manifest=qualitySourceManifest(r);
+ p.contextualSignals={version:2,primaryContext:{categoryId:'receitas',purpose:'Receitas',evidenceRefs:['proof1']},units:[],attributes:[],evidence:[{id:'proof1',sourceKind:'caption',sourceIdentity:manifest.caption.captureId,excerpt:'200 g de frango',verificationLevel:'semantic_support_reviewed',verifiedBy:'model'}]};
+ const literal=evaluateQualityGateV2({record:r,report:p,...evidence(r)});
+ assert.equal(literal.contextualEvidence[0].verificationLevel,'literal_anchor_verified');
+ const trustedReviews=[{receiptId:'independent_context_review',kind:'human_source_review',fieldPath:'contextualSignals.evidence.proof1',reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(manifest),verdict:'supported'}];
+ const semantic=evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews});
+ assert.equal(semantic.contextualEvidence[0].verificationLevel,'semantic_support_reviewed');
+ p.contextualSignals.evidence[0].sourceIdentity='wrong_capture';
+ assert.equal(evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews}).contextualEvidence[0].state,'invalid');
 });

@@ -142,7 +142,7 @@ export function verifyPublicationQualityReceipt({video,receipt}={}){
  const candidateContentHash=qualityCandidateHash(video.analysis);
  if(receipt.candidateContentHash!==candidateContentHash||!video.analysis||!list(receipt.checks).length||receipt.checks.some(c=>c.state!=='supported'))return untrusted('candidate_or_gate_mismatch');
  const manifest=qualitySourceManifest(video);
- if(receipt.sourceManifestHash!==qualityDigest(receipt.sourceManifest)||!same(manifest,receipt.sourceManifest))return untrusted('source_manifest_mismatch');
+ if(!receipt.sourceManifest||receipt.sourceManifestHash!==qualityDigest(receipt.sourceManifest)||!same(manifest,receipt.sourceManifest))return untrusted('source_manifest_mismatch');
  return {trusted:true,reason:null,policyVersion:qualityPolicyVersion,receiptId:receipt.id,candidateContentHash,verifiedEvidenceIds:list(receipt.contextualEvidence).filter(e=>e.state==='supported'&&['semantic_support_reviewed','visual_support_independently_verified'].includes(e.verificationLevel)&&present(e.reviewReceiptId)).map(e=>e.id),literalEvidenceIds:list(receipt.contextualEvidence).filter(e=>e.state==='supported'&&e.verificationLevel==='literal_anchor_verified').map(e=>e.id)};
 }
 export async function persistQualityCandidateV2({record,report,rawResponse,ports,expectedPublicationRevision=null,...evidence}={}){
@@ -153,7 +153,7 @@ export async function persistQualityCandidateV2({record,report,rawResponse,ports
  if(saved?.candidateContentHash!==qualityCandidateHash(report))throw Error('Hash do candidato persistido incompatível.');
  if(!candidateIdentity)throw Error('Candidato precisa de identidade durável antes da avaliação.');
  const gate=evaluateQualityGateV2({record,report,...evidence});
- const receiptBody={createdBy:'server:gate_v2',policyVersion:qualityPolicyVersion,verdict:gate.accepted?'accepted':'rejected',reelId:record.id,analysisKey:candidateIdentity.key,analysisGeneration:candidateIdentity.generation,candidateContentHash:gate.reportHash,sourceManifest:gate.sourceManifest,sourceManifestHash:gate.sourceManifestHash,checks:gate.checks,gaps:gate.gaps,contextualEvidence:gate.contextualEvidence};
+ const receiptBody={createdBy:'server:gate_v2',policyVersion:qualityPolicyVersion,verdict:gate.accepted?'accepted':'rejected',reelId:record.id,analysisKey:candidateIdentity.key,analysisGeneration:candidateIdentity.generation,candidateContentHash:gate.reportHash,sourceManifest:gate.sourceManifest,sourceManifestHash:gate.sourceManifestHash,checks:gate.checks,gaps:gate.gaps,contextualEvidence:gate.contextualEvidence??[]};
  const receipt={id:'quality_'+qualityDigest(receiptBody),...receiptBody};
  const receiptIdentity={receiptId:receipt.id,receiptHash:qualityDigest(receipt)};
  const savedReceipt=await ports.saveReceipt(receipt);

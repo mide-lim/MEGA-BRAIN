@@ -71,3 +71,13 @@ test('a recipe-looking typed source outside the approved recipe parent is not si
  const input=makeContextualCalibrationFixture();for(const c of input.catalog)c.categoryIds=['tecnologia'];
  const {plan}=prepareContextualCategoryPlan(input);assert.equal(plan.groups.length,0);
 });
+
+test('finite rerun retains the same group identities and member IDs without adding a second group per rule',()=>{
+ const input=makeContextualCalibrationFixture(),first=prepareContextualCategoryPlan(input);
+ for(const g of first.plan.groups){input.taxonomy.data.nodes.push({id:g.categoryId,name:g.label,parentId:g.parentCategoryId,manual:false});input.taxonomy.data.rules.push(g.rule);}
+ input.taxonomy.data.revision++;
+ const next=prepareContextualCategoryPlan(input);
+ assert.deepEqual(next.plan.groups.map(g=>g.categoryId),first.plan.groups.map(g=>g.categoryId));
+ assert.ok(next.plan.groups.every(g=>g.nodeAction==='retain'));
+ assert.deepEqual(next.plan.affectedIds,first.plan.affectedIds);
+});

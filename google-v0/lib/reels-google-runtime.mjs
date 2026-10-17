@@ -9,6 +9,9 @@ import {workerAuthorization} from './worker-auth.mjs';
 import {ReelsRepository} from './reels-repository.mjs';
 import {ReelsPipeline,executionId,STAGES} from './reels-pipeline.mjs';
 import {ReelsDispatcher} from './reels-dispatcher.mjs';
+import {ReelsService} from './reels-service.mjs';
+import {ReelsCommandRunner} from './reels-command-runner.mjs';
+import {reelsProcessingEnabled} from './reels-runtime-policy.mjs';
 import {knowledgeReadiness} from './reels-quality.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ensure} from './reels-runtime.mjs';
@@ -17,7 +20,7 @@ const legacy={acquisition:'upload',transcription:'transcription',analysis:'analy
 const denied=()=>Response.json({error:'Processamento real desabilitado nesta entrega.',code:'PROCESSING_DISABLED'},{status:423,headers:{'Cache-Control':'no-store'}});
 export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={}}={}){
  if(config?.project!==PROJECT||!STAGES.includes(stage))throw Error('Projeto e etapa fixa obrigatórios.');
- const enabled=config.reels_processing_enabled===true;
+ const enabled=reelsProcessingEnabled(config);
  // Factories are lazy: a disabled runtime never requests service identity,
  // creates provider adapters, reads a database or dispatches a task.
  let runtime;
@@ -35,9 +38,18 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
    const check=async({executionId:id,stage:adapterStage,videoId})=>{
     const current=(await store.get('reels_executions/'+job.id))?.data;
     if(!enabled||id!==job.id||videoId!==job.reelId||adapterStage!==legacy[job.stage]||current?.owner!==job.owner||!['submitting','collecting'].includes(current.status))throw Error('Execução não autorizada.');
+    const video=await repository.raw(job.reelId);
+    if(video?.import_hold?.active===true||video?.reels_v2?.operationId!==job.operationId||video.reels_v2.executionId!==job.id)throw Object.assign(Error('Execução não possui mais o Reel.'),{definitive:true,code:'EXECUTION_SUPERSEDED'});
+    if(current.status==='submitting'&&(await store.get('reels_controls/'+job.stage))?.data.paused===true)throw Object.assign(Error('Etapa pausada antes da submissão.'),{definitive:true,code:'STAGE_PAUSED'});
    };
+   // Preparation may take time. Fence each paid POST again at the transport
+   // boundary so a pause after audio preparation cannot submit new STT/Gemini.
+   const adapterAPI={project:api.project,request:async(url,options)=>{
+    if(options?.method==='POST'&&/^https:\/\/(?:[a-z0-9-]+-)?(?:speech|aiplatform)\.googleapis\.com\//.test(url))await check({executionId:job.id,stage:legacy[job.stage],videoId:job.reelId});
+    return api.request(url,options);
+   }};
    const video=input.video??await repository.raw(job.reelId);
-   const adapter=(dependencies.operationsFactory??googleOperations)({api,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null});
+   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null});
    return {adapter,job,video};
   }
   const operations={
@@ -63,14 +75,31 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
   };
   const taxonomy=new ReelsTaxonomy({repository});
   const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
-  runtime={pipeline,store,repository,dispatcher};return runtime;
+  const service=new ReelsService({repository,processingEnabled:enabled,onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Despacho requer retomada.');return receipt;},onCommandQueued:operation=>dispatcher.enqueueControl(operation)});
+  const runner=new ReelsCommandRunner({service,dispatcher,enabled,pageSize:25});
+  runtime={pipeline,store,repository,dispatcher,service,runner};return runtime;
  }
  return async request=>{
   if(!enabled)return denied();
   if(await auth?.(request)!==true)return Response.json({error:'Acesso negado.'},{status:401});
-  if(request.method!=='POST'||new URL(request.url).pathname!=='/tasks/run')return Response.json({error:'Rota inválida.'},{status:405});
-  let body;try{const text=await request.text();if(Buffer.byteLength(text)>2048)throw Error();body=JSON.parse(text);if(!body||Object.keys(body).some(k=>!['executionId','poll'].includes(k))||!/^[a-f0-9]{64}$/.test(body.executionId??'')||body.poll!==undefined&&typeof body.poll!=='boolean')throw Error();}catch{return Response.json({error:'Tarefa inválida.'},{status:400});}
-  try{const {pipeline,store}=build();const saved=await store.get('reels_executions/'+body.executionId);if(!saved||saved.data.stage!==stage||body.poll&&stage!=='transcription')return Response.json({error:'Tarefa fora da etapa fixa.'},{status:409});
+  const route=new URL(request.url).pathname,control=route==='/tasks/control';
+  if(request.method!=='POST'||!['/tasks/run','/tasks/control'].includes(route))return Response.json({error:'Rota inválida.'},{status:405});
+  if(control&&stage!=='acquisition')return Response.json({error:'Controle exige serviço de aquisição.'},{status:409});
+  let body;try{
+   const text=await request.text();if(Buffer.byteLength(text)>2048)throw Error();body=JSON.parse(text);
+   const allowed=control?['operationId','sequence','outboxId']:['executionId','poll','outboxId'];
+   if(!body||Object.keys(body).some(k=>!allowed.includes(k))||!/^[a-f0-9]{64}$/.test((control?body.operationId:body.executionId)??'')||body.outboxId!==undefined&&!/^[a-f0-9]{64}$/.test(body.outboxId)||control&&(!Number.isSafeInteger(body.sequence)||body.sequence<0)||!control&&body.poll!==undefined&&typeof body.poll!=='boolean')throw Error();
+  }catch{return Response.json({error:'Tarefa inválida.'},{status:400});}
+  try{
+   const {pipeline,store,dispatcher,runner}=build();
+   if(control){
+    // Control always carries the durable outbox identity; only the queue identity
+    // can authenticate this route. It runs a finite page and awaits continuation.
+    await dispatcher.acknowledge({...body,stage});
+    return Response.json(await runner.run(body),{headers:{'Cache-Control':'no-store'}});
+   }
+   const saved=await store.get('reels_executions/'+body.executionId);if(!saved||saved.data.stage!==stage||body.poll&&stage!=='transcription')return Response.json({error:'Tarefa fora da etapa fixa.'},{status:409});
+   if(body.outboxId)await dispatcher.acknowledge({...body,poll:Boolean(body.poll),stage});
    const result=body.poll?await pipeline.collect(body):await pipeline.run(body);
    const retryable=['TECHNICAL_BACKPRESSURE','EXECUTION_IN_PROGRESS'].includes(result.reason)||result.status==='applying';return Response.json(result,{status:retryable?503:200,headers:{'Cache-Control':'no-store'}});
   }catch{return Response.json({error:'Execução requer conferência; estado preservado.'},{status:503,headers:{'Cache-Control':'no-store'}});}

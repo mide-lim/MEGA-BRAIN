@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "id": "MEG-93",
+  "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "696fd21cfecf7b850a3799174e2e79bb63acb8ee",
+  "objective": "Integrar comandos web, drenagem duravel, despacho autenticado aos tres workers e conciliacao por evidencias de resultados incertos; preparar piloto sem processar Reels nem apagar nada.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Comandos de lote/todos fixam selecao e persistem progresso retomavel em lotes limitados, sem depender da duracao HTTP.",
+    "Web, Cloud Tasks e workers compativeis conectados por rotas autenticadas com idempotencia, outbox e fencing; reentrega nao duplica chamadas pagas.",
+    "Conciliacao inspeciona provas salvas no servidor, nunca aceita payload de resultado/ausencia como comprovacao, nao transforma desconhecido em falha confirmada e preserva publicacao e reservas.",
+    "Pausa impede novas submissoes, preserva coleta/persistencia ja enviada; capacidades desejada e efetiva permanecem distintas e nenhum bloqueio financeiro impede trabalho valido.",
+    "Configuracao continua desligada por padrao; fixtures sinteticas e adaptadores falsos comprovam tres etapas, backlog3005, falhas, timeouts, reinicio e resposta perdida sem Google/provedores reais.",
+    "GitHub Actions executa suites/build/browser no commit final; nenhuma suite/build de produto na VPS.",
+    "Piloto concreto preparado com preflight, ativacao futura explicita, amostra limitada, criterios de interrupcao, preservacao, evidencia e reversao; nenhuma ativacao, merge, deploy ou processamento nesta preparacao."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-93-web-command-worker-integration.json",
+    "google-v0/lib/",
+    "google-v0/tests/",
+    "google-v0/web-google/",
+    "google-v0/scripts/",
+    "google-v0/docs/",
+    "google-v0/config/",
+    "google-v0/qa/",
+    "google-v0/Dockerfile.worker",
+    ".github/workflows/google-v0.yml",
+    ".github/workflows/frontend-qa.yml"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-service.mjs",
+      "reason": "Comandos e selecao atuais",
+      "sections": [
+        "ReelsService"
+      ],
+      "max_chars": 1700
+    },
+    {
+      "path": "google-v0/lib/reels-pipeline.mjs",
+      "reason": "Claims, persistencia e transicao atuais",
+      "sections": [
+        "ReelsPipeline"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/reels-google-runtime.mjs",
+      "reason": "Adaptadores existentes sem nova inferencia",
+      "sections": [
+        "reelsGoogleRuntime"
+      ],
+      "max_chars": 1600
+    },
+    {
+      "path": "google-v0/lib/reels-dispatcher.mjs",
+      "reason": "Cloud Tasks e outbox",
+      "sections": [
+        "ReelsDispatcher"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/reels-api.mjs",
+      "reason": "API autenticada e mesma origem",
+      "sections": [
+        "reelsAPI"
+      ],
+      "max_chars": 900
+    },
+    {
+      "path": "google-v0/web-google/lib/server.mjs",
+      "reason": "Composicao web desligada",
+      "sections": [
+        "reelsAPI composition"
+      ],
+      "max_chars": 600
+    },
+    {
+      "path": "google-v0/docs/reels-web-v2.md",
+      "reason": "Contrato vigente, partes historicas datadas",
+      "sections": [
+        "API e integridade"
+      ],
+      "max_chars": 1600
+    }
+  ],
+  "validation_commands": [
+    "node --test google-v0/tests/reels-*.test.mjs",
+    "node --test google-v0/tests/*.test.mjs",
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": false,
+    "merge_deploy": false,
+    "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
+    "ownership": {
+      "pipeline_integration": "service/pipeline/dispatcher/runtime Google/worker entry e testes correspondentes",
+      "uncertain_reconciliation": "novo reconciliador, API, cliente/componentes e testes correspondentes",
+      "root": "composicao web, contrato, CI integrado, piloto e publicacao do PR",
+      "review": "contexto novo, somente leitura, revisao independente do commit final"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json"
+  }
+}

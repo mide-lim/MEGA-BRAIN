@@ -16,3 +16,11 @@ test('category coverage is a dated read and browser cannot choose internal autom
  assert.equal(automatic.status,400);assert.equal((await automatic.json()).code,'INVALID_KEY');
 });
 
+test('retry API preserves failed stage and excludes rejected saved candidates',async()=>{
+ const store=memory([reel('Reel_BAD',{status:'failed',stage:'analysis',failure_confirmed:true}),reel('Reel_REVIEW',{status:'failed',stage:'analysis',failure_confirmed:true,reels_v2:{status:'failed',stage:'analysis',executionId:'review_execution',error:{retryable:false,destination:'review'}}})]);
+ await store.create('reels_executions/review_execution',{id:'review_execution',reelId:'Reel_REVIEW',stage:'analysis',status:'failed',error:{retryable:false},rawResult:{valid:false}});
+ let dispatches=0;const api=reelsAPI({repository:new ReelsRepository({store,clock}),authorize:()=>true,sameOrigin:()=>true,processingEnabled:true,onCommandQueued:async()=>{dispatches++;return {status:'sent'};}});
+ const preview=await api(request('preview',{type:'retry',selection:{ids:['Reel_REVIEW']}}));assert.equal(preview.status,200);assert.equal((await preview.json()).eligible,0);
+ const override=await api(request('commands',{type:'retry',idempotencyKey:'retry-stage-override',stage:'acquisition',selection:{ids:['Reel_BAD']}}));assert.equal(override.status,400);assert.equal((await override.json()).code,'INVALID_STAGE');assert.equal(dispatches,0);
+ assert.equal((await store.get('reels_executions/review_execution')).data.status,'failed');
+});

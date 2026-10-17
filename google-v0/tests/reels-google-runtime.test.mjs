@@ -7,7 +7,7 @@ import {hash} from '../lib/reels-runtime.mjs';
 import {googleOperations} from '../lib/google-operations.mjs';
 import {buildAnalysisRequest} from '../lib/analysis.mjs';
 const project='megabrain-v0-1017370021431';
-const config={project,worker_origin:'https://worker.run.app'};
+const config={project,reels_runtime_version:'v2',worker_origin:'https://worker.run.app'};
 const request=(body={},options={})=>new Request('https://worker.run.app/tasks/run',{method:'POST',body:JSON.stringify(body),...options});
 function memory(){const docs=new Map();let revision=0;return {docs,get:async p=>structuredClone(docs.get(p)??null),create:async(p,data)=>{if(docs.has(p))return {created:false};const v={data:structuredClone(data),updateTime:String(++revision)};docs.set(p,v);return {created:true,...structuredClone(v)};},patch:async(p,changes,{updateTime}={})=>{const old=docs.get(p);if(old?.updateTime!==updateTime)throw Object.assign(Error('conflict'),{status:412});const v={data:{...old.data,...structuredClone(changes)},updateTime:String(++revision)};docs.set(p,v);return structuredClone(v);}};}
 test('disabled fixed-stage runtime never initializes database, identity or providers',async()=>{
@@ -32,8 +32,12 @@ test('fixed stage rejects another stage and returns retryable backpressure with 
 const routes={analysis:{queue:'v0-analysis',workerOrigin:'https://analysis.run.app'}};
 async function outbox(store){const id=executionId('command','Reel_001','analysis'),outboxId=hash('dispatch');const job={id,stage:'analysis',reelId:'Reel_001',outboxId,poll:false};await store.create('reels_command_items/'+outboxId,{executionId:id,stage:'analysis',poll:false,status:'pending'});return job;}
 test('disabled dispatcher leaves durable intent untouched and makes no request',async()=>{const store=memory(),job=await outbox(store);const dispatcher=new ReelsDispatcher({api:{project,request:()=>assert.fail('network')},store,routes});assert.equal((await dispatcher.enqueue(job)).status,'disabled');assert.equal((await store.get('reels_command_items/'+job.outboxId)).data.status,'pending');});
-test('dispatch lost acknowledgement retries same task identity and reconciles conflict',async()=>{
- const store=memory(),job=await outbox(store),names=[];const api={project,request:async(url,{json})=>{names.push(json.task.name);assert.match(url,/queues\/v0-analysis\/tasks$/);assert.deepEqual(JSON.parse(Buffer.from(json.task.httpRequest.body,'base64')),{executionId:job.id,poll:false});throw Object.assign(Error('lost'),{status:names.length===1?503:409});}};
+test('dispatch lost acknowledgement reconciles only the same FULL task payload',async()=>{
+ const store=memory(),job=await outbox(store),names=[];let saved;
+ const api={project,request:async(url,options)=>{
+  if(options?.method==='POST'){const {task,responseView}=options.json;assert.equal(responseView,'FULL');names.push(task.name);saved??=structuredClone(task);assert.deepEqual(JSON.parse(Buffer.from(task.httpRequest.body,'base64')),{executionId:job.id,poll:false,outboxId:job.outboxId});throw Object.assign(Error('lost'),{status:names.length===1?503:409});}
+  assert.ok(url.endsWith('?responseView=FULL'));return saved;
+ }};
  const dispatcher=new ReelsDispatcher({api,store,routes,enabled:true});assert.equal((await dispatcher.enqueue(job)).status,'uncertain');assert.equal((await dispatcher.enqueue(job)).status,'sent');assert.equal(names[0],names[1]);await dispatcher.enqueue(job);assert.equal(names.length,2);
 });
 test('dispatcher rejects mismatched durable intent and unapproved routing without network',async()=>{
@@ -88,10 +92,26 @@ for(const stage of ['acquisition','transcription','analysis'])test(`runtime pres
 
 test('runtime keeps batch STT collection usage in the saved result and reads the operation once',async()=>{
  const store=memory(),id=executionId('finance-operation','Reel_001','transcription'),finance={measuredUsd:0.016,estimatedUsd:null,measurement:{currency:'USD',status:'measured'}};let polls=0;
- await store.create('videos/Reel_001',{id:'Reel_001',status:'registered'});await store.create('reels_executions/'+id,{id,operationId:'finance-operation',reelId:'Reel_001',stage:'transcription',status:'waiting',owner:'saved-owner',operationName:'saved-operation'});
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered'});await store.create('reels_executions/'+id,{id,operationId:'finance-operation',reelId:'Reel_001',stage:'transcription',status:'waiting',owner:'saved-owner',operationName:'saved-operation',operationEvidence:{schemaVersion:1,executionId:id,reelId:'Reel_001',operationId:'finance-operation',stage:'transcription',owner:'saved-owner',operationName:'saved-operation'}});
  await store.create('reels_controls/transcription',{id:'transcription',paused:false,desiredConcurrency:1,active:[id]});
  const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
  const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'transcription',authorize:()=>true,dependencies:{api:{project},store,repository,storage:{},tools:{},dispatcher:{enqueue:async()=>({status:'sent'})},operationsFactory:()=>({pollTranscription:async()=>{polls++;return {changes:{transcript:'Fonte preservada'},finance};}})}});
  assert.equal((await handler(request({executionId:id,poll:true}))).status,200);assert.deepEqual((await store.get('reels_executions/'+id)).data.rawResult.finance,finance);
  assert.equal((await handler(request({executionId:id,poll:true}))).status,200);assert.equal(polls,1);
+});
+
+
+test('pause during preparation fences the paid POST before provider submission',async()=>{
+ const store=memory(),id=executionId('pause-window','Reel_001','transcription');let paid=0;
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered'});
+ await store.create('reels_executions/'+id,{id,operationId:'pause-window',reelId:'Reel_001',stage:'transcription',status:'queued'});
+ const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
+ const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'transcription',authorize:()=>true,dependencies:{api:{project,request:async()=>{paid++;assert.fail('no paid request after pause');}},store,repository,storage:{},tools:{},dispatcher:{},operationsFactory:({api,executionAuthorization})=>({transcription:async input=>{
+  await executionAuthorization({executionId:id,videoId:'Reel_001',stage:'transcription'});
+  const control=await store.get('reels_controls/transcription');await store.patch('reels_controls/transcription',{paused:true},{updateTime:control.updateTime});
+  await api.request('https://us-speech.googleapis.com/v2/projects/fake:batchRecognize',{method:'POST'});
+  assert.fail('paused submission cannot finish');
+ }})}});
+ const response=await handler(request({executionId:id}));assert.equal(response.status,200);assert.equal((await response.json()).status,'failed');assert.equal(paid,0);
+ assert.equal((await store.get('reels_executions/'+id)).data.error.code,'STAGE_PAUSED');assert.deepEqual((await store.get('reels_controls/transcription')).data.active,[]);
 });

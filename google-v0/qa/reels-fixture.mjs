@@ -1,3 +1,4 @@
+import {executionId} from '../lib/reels-pipeline.mjs';
 // Synthetic data and CAS store for browser QA only. Never imported by the product.
 export function reelsFixture(now=new Date()) {
  const at=new Date(now).toISOString(),day=at.slice(0,10);
@@ -22,7 +23,10 @@ export function reelsFixture(now=new Date()) {
   {kind:'serving_count',name:'Rendimento informado',value:'2 porções'}
  ].map(field=>({...field,evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}))};
  videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
+ const failed=videos.find(video=>video.id==='QaFail_01'),failedOperation='qa-failed-operation',failedId=executionId(failedOperation,failed.id,'acquisition');
+ failed.reels_v2={status:'failed',stage:'acquisition',operationId:failedOperation,executionId:failedId,error:{...failed.error,stage:'acquisition',uncertain:false}};
  const documents=Object.fromEntries(videos.map(v=>['videos/'+v.id,v]));
+ documents['reels_executions/'+failedId]={id:failedId,operationId:failedOperation,reelId:failed.id,stage:'acquisition',status:'failed',owner:'qa-fixture-owner',error:{...failed.reels_v2.error},createdAt:at};
  documents['settings/reels_v2_taxonomy']={revision:1,nodes:[{id:'cat_tech',parentId:null,name:'Tecnologia',manual:false,evidenceCount:1},{id:'cat_models',parentId:'cat_tech',name:'Modelos',manual:false,evidenceCount:1},{id:'cat_food',parentId:null,name:'Receitas',manual:true,evidenceCount:1}],assignments:[],rules:[],appliedCommands:[]};
  documents['settings/reels_v2_finance']={budget:{amount:25,currency:'BRL'},days:[{day,billed:{amount:0.15,currency:'USD'}}],coverage:{estimates:null,measured:null,billing:{source:'qa-only',observedAt:at}},appliedCommands:[]};
  documents['reels_executions/qa_completed']={id:'qa_completed',reelId:'QaPub_tech',stage:'analysis',status:'completed',createdAt:at,completedAt:at,rawResult:{valid:true,finance:{estimatedUsd:0.02,measuredUsd:null}}};

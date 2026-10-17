@@ -30,6 +30,11 @@ jobs:
         run: node google-v0/qa/reels-browser-check.mjs
         env:
           MEGABRAIN_REELS_QA_OUTPUT: ${{ runner.temp }}/megabrain-reels-qa
+      - name: Reels operational commands and reconciliation browser QA
+        if: success() || failure()
+        run: node google-v0/qa/reels-operations-browser-check.mjs
+        env:
+          MEGABRAIN_REELS_OPERATIONS_QA_OUTPUT: ${{ runner.temp }}/megabrain-reels-operations-qa
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -41,4 +46,10 @@ jobs:
         with:
           name: reels-workspace-browser-qa
           path: ${{ runner.temp }}/megabrain-reels-qa
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reels-operations-browser-qa
+          path: ${{ runner.temp }}/megabrain-reels-operations-qa
           retention-days: 7

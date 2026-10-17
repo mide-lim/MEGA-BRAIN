@@ -8,15 +8,28 @@ import {ReelsRepository} from '../lib/reels-repository.mjs';
 import {reelsAPI} from '../lib/reels-api.mjs';
 import {reelsFixture,memoryReelsStore} from './reels-fixture.mjs';
 import {videoBytes} from './video-base64.mjs';
+import {reelsWebRuntime} from '../lib/reels-web-runtime.mjs';
+import {ReelsCommandRunner} from '../lib/reels-command-runner.mjs';
+import {executionId} from '../lib/reels-pipeline.mjs';
 
 // Same isolated esbuild/HTTP pattern as server.mjs; the legacy harness is retained.
 // This mounts the real Workspace and operational API, injecting only the database.
-export async function startReelsFixtureServer() {
+export async function startReelsFixtureServer({operational=false}={}) {
  const root=fileURLToPath(new URL('.',import.meta.url)),temp=await mkdtemp(join(tmpdir(),'megabrain-reels-qa-'));
  const fixture=reelsFixture(),store=memoryReelsStore(fixture.documents),repository=new ReelsRepository({store,cacheTtlMs:0}),calls=[],holds=new Set(),failures=new Map(),staleResponses=new Set(),externalAttempts=[];
  let server,origin;const externalFetch=globalThis.fetch;
  globalThis.fetch=async()=>{externalAttempts.push('external fetch attempted');throw Error('External fetch forbidden in Reels browser QA');};
- const api=reelsAPI({repository,processingEnabled:false,authorize:async request=>request.headers.get('cookie')?.includes('qa_session=local')===true,sameOrigin:async request=>request.headers.get('origin')===origin});
+ // Explicit synthetic mode for browser journeys. No Cloud Tasks client, ADC,
+ // provider adapter or task executor is installed; delivery stays in this Map.
+ const project='megabrain-v0-1017370021431',tasks=new Map(),stageRoutes=Object.fromEntries(['acquisition','transcription','analysis'].map(stage=>[stage==='acquisition'?'upload':stage,{queue:'v0-'+stage,workerOrigin:`https://megabrain-v0-${stage}-711042421394.us-central1.run.app`}]));
+ const taskAPI={project,request:async(url,options={})=>{if(!url.startsWith('https://cloudtasks.googleapis.com/v2/'))throw Error('Unexpected synthetic API');if(options.method==='POST'){const task=options.json.task;if(tasks.has(task.name))throw Object.assign(Error('exists'),{status:409});tasks.set(task.name,structuredClone(task));return task;}const name=url.split('/v2/')[1].split('?')[0],task=tasks.get(name);if(!task)throw Object.assign(Error('missing'),{status:404});return task;}};
+ const runtime=operational?reelsWebRuntime({repository,api:taskAPI,config:{project,reels_runtime_version:'v2',reels_processing_enabled:true,stage_routes:stageRoutes}}):null;
+ if(operational){
+  const id='QaRecover',operationId='qa-reconciliation-operation',jobId=executionId(operationId,id,'transcription'),owner='qa-reconciliation-owner',operationName=`projects/${project}/locations/us/operations/qa-saved-operation`;
+  await store.create('videos/'+id,{id,title:'Operação salva para conferir',status:'uncertain',stage:'transcription',created_at:fixture.at,reels_v2:{status:'uncertain',stage:'transcription',operationId,executionId:jobId,error:{uncertain:true,retryable:false}}});
+  await store.create('reels_executions/'+jobId,{id:jobId,reelId:id,operationId,stage:'transcription',status:'uncertain',owner,operationName,operationEvidence:{schemaVersion:1,executionId:jobId,reelId:id,operationId,stage:'transcription',owner,operationName},createdAt:fixture.at});
+ }
+ const api=reelsAPI({repository,...(runtime?{service:runtime.service,reconciliation:runtime.reconciliation}:{}),processingEnabled:operational,authorize:async request=>request.headers.get('cookie')?.includes('qa_session=local')===true,sameOrigin:async request=>request.headers.get('origin')===origin});
  async function cleanup(){for(const hold of holds)hold.release();if(server?.listening){server.closeAllConnections();await new Promise(r=>server.close(r));}globalThis.fetch=externalFetch;const target=resolve(temp);if(dirname(target)!==resolve(tmpdir())||!target.includes('megabrain-reels-qa-'))throw Error('Cleanup outside QA directory');await rm(target,{recursive:true,force:true});}
  try {
   const entry=join(temp,'entry.jsx');await writeFile(entry,`import React from 'react';import {createRoot} from 'react-dom/client';import Workspace from ${JSON.stringify(resolve(root,'../web-google/app/reels/workspace.jsx'))};createRoot(document.getElementById('root')).render(<Workspace/>);`);
@@ -49,7 +62,8 @@ export async function startReelsFixtureServer() {
    }catch(error){if(!res.headersSent){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:error.message}));}else res.end();}
   });
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});origin='http://127.0.0.1:'+server.address().port;
-  return {origin,calls,store,repository,fixture,externalAttempts,close:cleanup,
+  return {origin,calls,store,repository,fixture,externalAttempts,tasks,close:cleanup,
+   async pumpControls(){if(!runtime)throw Error('Synthetic operational mode required');const runner=new ReelsCommandRunner({service:runtime.service,dispatcher:runtime.dispatcher,pageSize:25,enabled:true});let count=0;for(const [name,task]of [...tasks]){if(!task.httpRequest.url.endsWith('/tasks/control'))continue;const body=JSON.parse(Buffer.from(task.httpRequest.body,'base64').toString());await runtime.dispatcher.acknowledge({...body,stage:'acquisition'});await runner.run(body);tasks.delete(name);count++;}return count;},
    failNext(path,message='Leitura sintética indisponível.',status=503){failures.set(path,{message,status});},
    staleNext(path){staleResponses.add(path);},
    holdNext(match){let release,notify;const wait=new Promise(r=>{release=r;}),started=new Promise(r=>{notify=r;});const hold={match,release,notify,wait,started:false};holds.add(hold);return {started,release};},

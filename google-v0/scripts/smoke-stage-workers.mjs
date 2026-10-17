@@ -17,10 +17,10 @@ async function availablePort(){
   await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
   return port;
 }
-async function checkStage(stage){
-  const port=await availablePort(),configPath=join(folder,stage+'.json');
+async function checkStage(stage,{v2=false}={}){
+  const port=await availablePort(),configPath=join(folder,stage+(v2?'-v2':'')+'.json');
   const config={project:'megabrain-v0-1017370021431',cost_accounting:'conservative_estimate_not_invoice',
-    worker_stage:stage,worker_origin:example.stage_routes[stage].workerOrigin,stage_routes:example.stage_routes,
+    ...(v2?{reels_runtime_version:'v2',reels_processing_enabled:false}:{}),worker_stage:stage,worker_origin:example.stage_routes[stage].workerOrigin,stage_routes:example.stage_routes,
     enabled:false,dispatch_enabled:false,admission_enabled:false,downloads_enabled:false,
     assisted_upload_enabled:false,assisted_single_upload_enabled:false,pilot_video_ids:[],quotes:{}};
   await writeFile(configPath,JSON.stringify(config));
@@ -42,8 +42,12 @@ async function checkStage(stage){
       try{response=await fetch(url+'/tasks/run',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});break;}catch{await delay(50);}
     }
     assert.ok(response,'Stage entrypoint did not become ready: '+output);
-    assert.equal(response.status,401,stage+' accepts no anonymous run');
+    assert.equal(response.status,v2?423:401,stage+' accepts no anonymous run');
     await response.text();
+    if(v2){
+      const control=await fetch(url+'/tasks/control',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(control.status,423);await control.text();
+      assert.doesNotMatch(output,/Unexpected outbound I\/O/);return;
+    }
     for(const path of ['/tasks/diagnose','/tasks/assisted-upload','/not-a-task']){
       const result=await fetch(url+path,{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});
       assert.equal(result.status,404,stage+' exposes unexpected route '+path);await result.text();
@@ -67,6 +71,6 @@ const denied=()=>{console.error('Unexpected outbound I/O');throw Error('Outbound
 net.Socket.prototype.connect=denied;
 globalThis.fetch=denied;
 `);
-  for(const stage of ['upload','transcription','analysis'])await checkStage(stage);
+  for(const stage of ['upload','transcription','analysis']){await checkStage(stage);await checkStage(stage,{v2:true});}
 }finally{await rm(folder,{recursive:true,force:true});}
-console.log('Stage worker smoke passed: three real entrypoints, closed synthetic configs, anonymous rejection, isolated routes and no outbound I/O.');
+console.log('Stage worker smoke passed: three real entrypoints in legacy and v2 modes, closed synthetic configs, anonymous rejection, isolated routes and no outbound I/O.');

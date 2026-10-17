@@ -5,6 +5,7 @@ import {Firestore}from '../../lib/firestore.mjs';import {LibraryRepository}from 
 import {boundedMedia}from '../../lib/bounded-media.mjs';
 import {ReelsRepository}from '../../lib/reels-repository.mjs';
 import {reelsAPI}from '../../lib/reels-api.mjs';
+import {reelsWebRuntime}from '../../lib/reels-web-runtime.mjs';
 export function settings(){
   const path=process.env.MEGABRAIN_V0_CONFIG;
   if(!path||!isAbsolute(path)||path.includes('/run/megabrain/')||path.includes('/opt/megabrain-pilot/'))throw new Error('Configuração própria da v0 ausente.');
@@ -32,7 +33,8 @@ let reelsBackend;
 export function reelsRoutes(){
  if(!reelsBackend){const s=settings(),tokenProvider=serviceIdentity({project:s.project_id}),api=new GoogleREST({project:s.project_id,buckets:[s.media_bucket],tokenProvider});
   const repository=new ReelsRepository({store:new Firestore(api)});
-  // Validation release: no client input or environment flag can enable processing.
-  reelsBackend=reelsAPI({repository,authorize:authenticated,sameOrigin,processingEnabled:false});}
+  // Processing remains off unless protected configuration explicitly selects v2.
+  const runtime=reelsWebRuntime({repository,api,config:s});
+  reelsBackend=reelsAPI({repository,authorize:authenticated,sameOrigin,processingEnabled:runtime.processingEnabled,service:runtime.service,reconciliation:runtime.reconciliation});}
  return reelsBackend;
 }

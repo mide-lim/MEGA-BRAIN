@@ -140,10 +140,16 @@ try {
    await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');assert.equal((await (await chicken).json()).total,1);
    await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('ingredient');
    await filters.getByLabel('Elemento 2',{exact:true}).locator('option[value="peixe"]').waitFor({state:'attached'});
-   await filters.getByLabel('Relação 2',{exact:true}).selectOption('ANY');
+   assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),'ANY','A new row in an existing dimension must inherit its group relation');
    const union=responseFor(orPage,'/api/reels/items',url=>{const values=JSON.parse(url.searchParams.get('facets')||'[]').filter(f=>f.dimension==='ingredient'&&f.quantifier==='ANY').map(f=>f.value);return values.includes('frango')&&values.includes('peixe');});
    await filters.getByLabel('Elemento 2',{exact:true}).selectOption('peixe');assert.equal((await (await union).json()).total,2);
    await orPage.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   for(const relation of ['ALL','SAME_UNIT','ANY']){
+    const grouped=responseFor(orPage,'/api/reels/items',url=>{const facets=JSON.parse(url.searchParams.get('facets')||'[]');return facets.length===2&&facets.every(f=>f.dimension==='ingredient'&&f.quantifier===relation);});
+    await filters.getByLabel('Relação 1',{exact:true}).selectOption(relation);const response=await grouped;assert.equal(response.status(),200);assert.equal((await response.json()).total,relation==='ANY'?2:0);
+    assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),relation,'Changing relation updates every value in the same dimension');
+   }
+
    // Explicit synthetic metadata injection checks presentation only. Backend
    // tests separately prove sourceStale/dataAsOf originate from a failed refresh.
    server.staleNext('/api/reels/contextual',oldSource,2);

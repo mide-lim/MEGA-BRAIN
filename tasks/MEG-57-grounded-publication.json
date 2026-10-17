@@ -34,7 +34,7 @@
         "reviewAnalysis",
         "analysisOutcome"
       ],
-      "max_chars": 12000
+      "max_chars": 6500
     },
     {
       "path": "google-v0/web-google/app/reels/detail.jsx",
@@ -42,7 +42,7 @@
       "sections": [
         "Knowledge"
       ],
-      "max_chars": 6000
+      "max_chars": 5000
     }
   ],
   "validation_commands": [

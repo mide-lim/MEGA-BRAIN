@@ -18,9 +18,15 @@ export function prepareSavedPublicationRepairs(snapshot,{ids,sourceSHA256}={}){
   const outcome=analysisOutcome(row.savedAnalysis?.response,record,{requireKnowledge:true,sourceGroundedPublication:true});
   need(outcome.accepted,'Saved result cannot be published: '+outcome.reasons.join(','));
   const fields=['title','summary','useful_information','limitations','transcript_quality','knowledge','source_coverage','source_consolidation','publication_review'];
-  const changes=Object.fromEntries(fields.filter(k=>json(record.analysis?.[k])!==json(outcome.report[k])).map(k=>['analysis.'+k,outcome.report[k]]));
+  const changes={},afterAnalysis=structuredClone(record.analysis);
+  const applyLeaves=(before,proposed,path,target,key)=>{
+   if(proposed&&typeof proposed==='object'&&!Array.isArray(proposed)){
+    target[key]=before&&typeof before==='object'&&!Array.isArray(before)?structuredClone(before):{};
+    for(const [child,value]of Object.entries(proposed))applyLeaves(before?.[child],value,path+'.'+child,target[key],child);
+   }else{target[key]=structuredClone(proposed);if(json(before)!==json(proposed))changes[path]=proposed;}
+  };
+  for(const key of fields)applyLeaves(record.analysis?.[key],outcome.report[key],'analysis.'+key,afterAnalysis,key);
   need(Object.keys(changes).length>0,'No new consolidation to publish.');
-  const afterAnalysis={...record.analysis,...Object.fromEntries(fields.map(k=>[k,outcome.report[k]]))};
   const before={analysis:record.analysis,analysis_key:record.analysis_key,analysis_generation:record.analysis_generation};
   const overlay={rule:publicationRule,sourceSnapshotSHA256:sourceSHA256,raw:{bucket:object.bucket,key:object.name,generation:object.generation,sha256:object.metadata?.sha256??null},previousAnalysisSHA256:sha(json(record.analysis)),derivedAnalysisSHA256:sha(json(afterAnalysis)),inferenceReplayed:false};
   changes.analysis_publication_overlay=overlay;

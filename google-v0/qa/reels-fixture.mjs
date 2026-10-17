@@ -8,7 +8,7 @@ export function reelsFixture(now=new Date()) {
   published('QaPub_tech','Modelo publicado','cat_models',{candidate_analysis_key:'qa/candidate.json',analysis_review_reasons:['Candidato separado sem substituir publicação.']}),
   published('QaPub_food','Receita publicada','cat_food'),
   {id:'QaFail_01',title:'Falha confirmada',status:'failed',failure_confirmed:true,stage:'acquisition',created_at:at,error:{code:'SOURCE_FAILED',message:'Origem exige diagnóstico.',destination:'retry',worker:'qa-worker',retryable:true}},
-  {id:'QaUnknown',title:'Resultado incerto',status:'uncertain',stage:'analysis',created_at:at,error:{code:'RESULT_UNKNOWN',message:'Resposta paga ainda sem confirmação.',worker:'qa-worker',uncertain:true}},
+  {id:'QaUnknown',title:'Resultado incerto',status:'uncertain',stage:'analysis',created_at:at,error:{code:'RECONCILIATION_REQUIRED',message:'Resposta paga ainda sem confirmação.',worker:'qa-worker',uncertain:true}},
   {id:'QaQueued',title:'Na fila de aquisição',status:'queued',stage:'acquisition',created_at:at},
   {id:'QaRunning',title:'Transcrição em curso',status:'running',stage:'transcription',created_at:at},
   {id:'QaWaiting',title:'Análise aguardando externo',status:'waiting',stage:'analysis',created_at:at}
@@ -34,7 +34,7 @@ export function reelsFixture(now=new Date()) {
  documents['settings/reels_v2_finance']={budget:{amount:25,currency:'BRL'},days:[{day,billed:{amount:0.15,currency:'USD'}}],coverage:{estimates:null,measured:null,billing:{source:'qa-only',observedAt:at}},appliedCommands:[]};
  documents['reels_executions/qa_completed']={id:'qa_completed',reelId:'QaPub_tech',stage:'analysis',status:'completed',createdAt:at,completedAt:at,rawResult:{valid:true,finance:{estimatedUsd:0.02,measuredUsd:null}}};
  for(const stage of ['acquisition','transcription','analysis'])documents['reels_controls/'+stage]={id:stage,paused:stage==='analysis',desiredConcurrency:7,effectiveConcurrency:2,appliedCommands:[]};
- documents['reels_events/00000000000000000001_qa']={id:'00000000000000000001_qa',at,reelId:'QaPub_tech',stage:'analysis',worker:'qa-worker',level:'info',type:'published',message:'Publicação sintética preservada.'};
+ documents['reels_events/00000000000000000001_qa']={id:'00000000000000000001_qa',at,reelId:'QaPub_tech',stage:'analysis',worker:'qa-worker',level:'info',type:'published',operationId:'a'.repeat(64),message:'Publicação sintética preservada.'};
  documents['settings/reels_v2_event_clock']={sequence:1,pending:null};
  return {documents,registeredIds:registered.map(x=>x.id),at};
 }

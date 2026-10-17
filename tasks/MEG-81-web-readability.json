@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "id": "MEG-81",
+  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "34f37ccb3aefef464ef7f095ebd93ac934a07992",
+  "objective": "Corrigir somente apresentação de ocorrências, cobertura financeira e atividade: linguagem clara, originais técnicos acessíveis e ausência de dados preservada.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português sem sugerir nova chamada; códigos originais permanecem acessíveis.",
+    "Cobertura mostra fontes, intervalos, observação, última medição e desconhecidos em português; moedas, estimativas e faturamento mantêm distinção.",
+    "Atividade destaca mensagem, Reel, worker, etapa e data; IDs e evento original estão em Detalhes do evento; histórico tem estado humanizado e datas originais.",
+    "Nenhum backend, contrato, worker, configuração, dado ou operação paga é alterado; testes e build somente GitHub Actions e revisão independente no head final."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-81-web-readability.json",
+    "google-v0/web-google/app/reels/catalog.jsx",
+    "google-v0/web-google/app/reels/operations.jsx",
+    "google-v0/web-google/app/reels/preserved.jsx",
+    "google-v0/web-google/lib/reels-display.mjs",
+    "google-v0/tests/reels-display.test.mjs",
+    "google-v0/qa/reels-fixture.mjs",
+    "google-v0/qa/reels-browser-check.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/web-google/app/reels/catalog.jsx",
+      "reason": "Consumidor de código/destino da ocorrência",
+      "sections": [
+        "Ocorrência e destino"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/web-google/app/reels/operations.jsx",
+      "reason": "Consumidor de cobertura e atividade atual",
+      "sections": [
+        "LiveActivity",
+        "Finance"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "google-v0/web-google/app/reels/preserved.jsx",
+      "reason": "Atividade histórica somente leitura",
+      "sections": [
+        "HistoricalActivity"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-finance.mjs",
+      "reason": "Contrato somente leitura para renderizar cobertura sem inventar dados",
+      "sections": [
+        "read return coverage"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/qa/reels-browser-check.mjs",
+      "reason": "Jornadas existentes dos três achados",
+      "sections": [
+        "attention",
+        "finance",
+        "activity",
+        "preserved"
+      ],
+      "max_chars": 3000
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-web-readability.json --diff-base 34f37ccb3aefef464ef7f095ebd93ac934a07992 --diff-head HEAD",
+    "node --test google-v0/tests/*.test.mjs",
+    "node google-v0/qa/reels-browser-check.mjs",
+    "Existing Google v0 integration image builds/smokes and frontend QA on GitHub Actions only"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "None by developer; root separately executes reviewed pilot. This change only renders saved response.",
+    "merge_deploy": "Root integrates reviewed concrete package under current user product_pending_closure authorization; developer does not merge/deploy.",
+    "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
+    "ownership": {
+      "developer": "Eight allowed files, isolated clone /workspace/megabrain-web-readability-20261017; /root/web_readability_fix",
+      "reviewer": "Fresh independent read-only exact-head review",
+      "root": "Canonical state, Actions integration, merge/publication and real acceptance"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "base_revision": 198,
+    "protocol_read": "/srv/paperclip/data/megabrain-operations/v2/protocol.json; tracked checkout has only AGENTS.md and google-v0/AGENTS.md, no native protocol file."
+  }
+}

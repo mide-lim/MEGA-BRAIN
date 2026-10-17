@@ -16,7 +16,7 @@ import {executionId} from '../lib/reels-pipeline.mjs';
 // This mounts the real Workspace and operational API, injecting only the database.
 export async function startReelsFixtureServer({operational=false}={}) {
  const root=fileURLToPath(new URL('.',import.meta.url)),temp=await mkdtemp(join(tmpdir(),'megabrain-reels-qa-'));
- const fixture=reelsFixture(),store=memoryReelsStore(fixture.documents),repository=new ReelsRepository({store,cacheTtlMs:0}),calls=[],holds=new Set(),failures=new Map(),staleResponses=new Set(),externalAttempts=[];
+ const fixture=reelsFixture(),store=memoryReelsStore(fixture.documents),repository=new ReelsRepository({store,cacheTtlMs:0}),calls=[],holds=new Set(),failures=new Map(),staleResponses=new Map(),externalAttempts=[];
  let server,origin;const externalFetch=globalThis.fetch;
  globalThis.fetch=async()=>{externalAttempts.push('external fetch attempted');throw Error('External fetch forbidden in Reels browser QA');};
  // Explicit synthetic mode for browser journeys. No Cloud Tasks client, ADC,
@@ -49,7 +49,7 @@ export async function startReelsFixtureServer({operational=false}={}) {
      let body='';for await(const chunk of req)body+=chunk;call.body=body?JSON.parse(body):null;
      const request=new Request(url,{method:req.method,headers:req.headers,...(body?{body}:{})});
      const response=await api(request);call.status=response.status;call.result=await response.json();
-     if(staleResponses.delete(path))call.result.cache={...(call.result.cache??{}),stale:true};
+     if(staleResponses.has(path)){const fixture=staleResponses.get(path),sourceAsOf=fixture.sourceAsOf;if(--fixture.remaining<=0)staleResponses.delete(path);call.result.cache={...(call.result.cache??{}),stale:true};if(sourceAsOf){call.result.sourceStale=true;call.result.dataAsOf=sourceAsOf;}}
      res.writeHead(response.status,Object.fromEntries(response.headers));res.end(JSON.stringify(call.result));return;
     }
     if(path.startsWith('/api/video/')||path.startsWith('/api/media/')){
@@ -65,7 +65,8 @@ export async function startReelsFixtureServer({operational=false}={}) {
   return {origin,calls,store,repository,fixture,externalAttempts,tasks,close:cleanup,
    async pumpControls(){if(!runtime)throw Error('Synthetic operational mode required');const runner=new ReelsCommandRunner({service:runtime.service,dispatcher:runtime.dispatcher,pageSize:25,enabled:true});let count=0;for(const [name,task]of [...tasks]){if(!task.httpRequest.url.endsWith('/tasks/control'))continue;const body=JSON.parse(Buffer.from(task.httpRequest.body,'base64').toString());await runtime.dispatcher.acknowledge({...body,stage:'acquisition'});await runner.run(body);tasks.delete(name);count++;}return count;},
    failNext(path,message='Leitura sintética indisponível.',status=503){failures.set(path,{message,status});},
-   staleNext(path){staleResponses.add(path);},
+   // Optional source timestamp is a synthetic presentation fixture only.
+   staleNext(path,sourceAsOf=null,count=1){staleResponses.set(path,{sourceAsOf,remaining:count});},
    holdNext(match){let release,notify;const wait=new Promise(r=>{release=r;}),started=new Promise(r=>{notify=r;});const hold={match,release,notify,wait,started:false};holds.add(hold);return {started,release};},
    async appendEvent(){const id='99999999999999999999_qa';await store.create('reels_events/'+id,{id,at:new Date().toISOString(),reelId:'QaPub_tech',stage:'analysis',worker:'qa-worker',level:'info',type:'qa_new',message:'Evento incremental após pausa.'});return id;}
   };

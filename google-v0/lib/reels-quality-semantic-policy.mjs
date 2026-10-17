@@ -33,9 +33,13 @@ export function evaluateContextualPropositions({report={},reportHash,sourceManif
   if(!p||!refs.length||new Set(refs).size!==refs.length||proofs.some(e=>!e||e.state==='invalid')){state='invalid';reason='Referência ausente, duplicada ou inválida na proposição.';}
   else if(entry.kind==='attribute'&&['not_recorded','not_applicable','unknown','inconclusive','invalid'].includes(p.state)){state=p.state;reason=present(p.reason)?p.reason:'Estado candidato sem razão verificável; excluído do suporte automático.';}
   else if(review?.verdict==='invalid'||review?.verdict==='inconclusive'){state=review.verdict;reason=present(review.reason)?review.reason:'Revisão independente rejeitou ou não confirmou a proposição.';}
+  else if(review?.verdict==='supported'&&proofs.some(e=>e.state!=='supported')){state='inconclusive';reason='Proposição revisada sem prova de fonte suficiente; janela visual não equivale a pixels verificados.';}
   else if(review?.verdict==='supported'){
    const completeRecipe=entry.kind==='unit'&&p.type==='recipe'&&p.completeness==='complete';
-   if(completeRecipe&&!proofs.some(e=>e.temporalAnchorVerified===true)){state='inconclusive';reason='Unidade completa exige independência temporal apoiada por palavras/segmentos realmente salvos.';}
+   const ownRanges=proofs.filter(e=>e.temporalAnchorVerified===true).map(e=>e.timeRange);
+   const otherRanges=list(report.contextualSignals?.units).filter(unit=>unit!==p&&unit.type==='recipe'&&unit.completeness==='complete').flatMap(unit=>list(unit.evidenceRefs).map(id=>evidence.get(id)).filter(e=>e?.temporalAnchorVerified===true).map(e=>e.timeRange));
+   const overlaps=ownRanges.some(a=>otherRanges.some(b=>a&&b&&a.startSeconds<b.endSeconds&&b.startSeconds<a.endSeconds));
+   if(completeRecipe&&(!ownRanges.length||overlaps)){state='inconclusive';reason='Unidade completa exige trechos temporais distintos entre preparos, apoiados por palavras/segmentos realmente salvos.';}
    else {state='supported';reason='Recibo independente ligado à proposição integral, relatório e fontes exatos.';}
   }
   const item={fieldPath:entry.fieldPath,propositionHash:entry.propositionHash,policyVersion:semanticQualityPolicyVersion,reportHash,sourceManifestHash,state,reason,reviewReceiptId:state==='supported'?review.receiptId:null,evidenceRefs:refs};

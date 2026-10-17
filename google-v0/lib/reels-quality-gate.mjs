@@ -97,7 +97,7 @@ function contextualEvidenceReview(report,record,manifest,reportHash,manifestHash
    if(temporal.state==='invalid'){output.push({id:e.id,state:'invalid',reason:'temporal_anchor_mismatch'});continue;}
   }
   const review=verifiedReview('contextualSignals.evidence.'+e.id,reportHash,manifestHash,reviews,{visual});
-  const common={id:e.id,temporalAnchorVerified:temporal.verified,sourceIdentity:expected,sourceKind:e.sourceKind,policyVersion:semanticQualityPolicyVersion};
+  const common={id:e.id,timeRange:e.timeRange??null,temporalAnchorVerified:temporal.verified,sourceIdentity:expected,sourceKind:e.sourceKind,policyVersion:semanticQualityPolicyVersion};
   output.push(review?{...common,state:'supported',verificationLevel:visual?'visual_support_independently_verified':'semantic_support_reviewed',reviewReceiptId:review.receiptId}:{...common,state:visual||temporal.state==='unknown'?'present_unverified':'supported',verificationLevel:visual?'source_present':'literal_anchor_verified',reason:visual?'pixels_not_independently_reviewed':'literal_only_not_proposition_review'});
  }
  return output;

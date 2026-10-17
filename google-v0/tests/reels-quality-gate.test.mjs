@@ -134,3 +134,11 @@ test('only an exact independent proposition receipt can certify centrality, purp
  gate=evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews:[review]});assert.equal(gate.contextualPropositions.attributes[0].state,'supported');assert.equal(gate.contextualPropositions.primaryContext.state,'present_unverified');
  p.contextualSignals.attributes[0].role='mentioned';gate=evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews:[review]});assert.equal(gate.contextualPropositions.attributes[0].state,'present_unverified');
 });
+
+test('a proposition receipt cannot promote unreviewed pixels or overlapping independent recipe units',()=>{
+ const r=record(),p=report(r),manifest=qualitySourceManifest(r),e=evidence(r);
+ e.transcriptionReceipt.words=[{start_seconds:0,end_seconds:2,word:r.transcript}];
+ p.contextualSignals={version:2,primaryContext:{categoryId:'receitas',purpose:'receita',evidenceRefs:['t']},units:[{unitId:'u1',type:'recipe',completeness:'complete',evidenceRefs:['t']},{unitId:'u2',type:'recipe',completeness:'complete',evidenceRefs:['t']}],attributes:[],evidence:[{id:'t',sourceKind:'transcript',sourceIdentity:manifest.transcript.key+'@'+manifest.transcript.generation,excerpt:r.transcript,timeRange:{startSeconds:0,endSeconds:2},verificationLevel:'literal_anchor_verified'}]};
+ const reviews=contextualPropositionEntries(p).filter(v=>v.kind==='unit').map(v=>({receiptId:'review_'+v.fieldPath,kind:'human_source_review',fieldPath:v.fieldPath,propositionHash:v.propositionHash,reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(manifest),policyVersion:semanticQualityPolicyVersion,method:'source_reading',observedAt:'2026-10-17T22:00:00Z',verdict:'supported'}));
+ const gate=evaluateQualityGateV2({record:r,report:p,...e,trustedReviews:reviews});assert.ok(gate.contextualPropositions.units.every(u=>u.state==='inconclusive'));
+});

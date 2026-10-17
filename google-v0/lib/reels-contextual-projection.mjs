@@ -42,7 +42,7 @@ const vocabulary={
   ['fritar','Fritar',['fritar','frito','frita','frying']]
  ]
 };
-export const contextualRuleHash=contextualHash({version:contextualVersion,vocabulary,states:coverageStates,dimensions:dimensionDefinitions,evidence:'literal-captured-caption-or-transcript;visual-candidate;recipe-independent-temporal-v1',role:'typed-inclusion-is-supporting-not-primary-protein',automatic:false});
+export const contextualRuleHash=contextualHash({version:contextualVersion,vocabulary,states:coverageStates,dimensions:dimensionDefinitions,evidence:'literal-captured-caption-or-transcript;visual-candidate;recipe-independent-temporal-v1',role:'typed-inclusion-is-supporting-not-primary-protein',contextualV2:'server-bound-independent-review-and-versioned-source-v2',automatic:false});
 const emptyDimension=(dimensionId,state,reason)=>({dimensionId,state,reason});
 const validNumber=v=>Number.isFinite(v)&&v>=0;
 const captionText=raw=>typeof raw.source_caption==='string'?raw.source_caption:raw.source_caption?.text;
@@ -141,6 +141,6 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   const state=coverageStates.find(s=>a.some(x=>x.state===s));
   return emptyDimension(d.id,state??(context.value===null?'unknown':'not_recorded'),a.length?'SAVED_TYPED_ATTRIBUTE':modern?'ATTRIBUTE_NOT_RECORDED':'LEGACY_STRUCTURED_ATTRIBUTE_UNAVAILABLE');
  });
- const proofContentHash=contextualHash({context,format,units:validUnits,attributes,legacy:modern?null:{claims:legacy.analysis.claims,topics:legacy.analysis.topics,references:legacy.analysis.candidate_relations}});
+ const proofContentHash=contextualHash({context,format,units:validUnits,attributes,contextualSignals:modern?raw.analysis.contextualSignals??null:null,legacy:modern?null:{claims:legacy.analysis.claims,topics:legacy.analysis.topics,references:legacy.analysis.candidate_relations}});
  return {id,title:text(item.title??analysis.title??raw.title,300),categoryIds:list(item.categoryIds).filter(x=>typeof x==='string'),sourceIdentity:identity,context,format,units:validUnits,independentUnitCount:unitCount,attributes,coverage,contextualSignals:v2?{version:2,receiptTrusted:v2.receiptTrusted,unitCandidates:v2.unitCandidates}:null,legacyEvidence:modern?null:{claims:list(legacy.analysis.claims).length,references:list(legacy.analysis.candidate_relations).length,topics:list(legacy.analysis.topics).length,state:'present_unverified'},proofContentHash,indexVersion:contextualVersion,ruleHash:contextualRuleHash,fingerprint:contextualHash({identity,proofContentHash,ruleHash:contextualRuleHash,categories:item.categoryIds,manual:item.categoryOverride??null})};
 }

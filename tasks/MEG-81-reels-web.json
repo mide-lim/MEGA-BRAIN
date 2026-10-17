@@ -3,16 +3,17 @@
   "id": "MEG-81",
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "b96356878bdcef86adc961f0d008d2022c130e02",
-  "objective": "Implementar nova versão integrada MEGABRAIN - Reels conforme plano canônico v2.0, sem processar Reels ou apagar dados reais; comandos reais desabilitados no servidor durante validação.",
+  "base_commit": "40628d1c925731ef23fb34a0b0265a99489498af",
+  "objective": "Implementar as duas curadorias nos painéis existentes: Filas para etapas, resultados e diagnósticos até publicação; Categorias para contexto, atributos, recorrências e gestão do acervo publicado. Começar pelos resultados salvos, preservar publicados e49incertos; sem novosReels ou repetição paga. Preparar e publicar somente web após CI/revisão.",
   "risk": "high",
   "acceptance_criteria": [
-    "Todas as áreas integradas com contratos persistentes, autenticação e sem dados DEMO no build.",
-    "Consultas leves para mais de3mil itens; conhecimento publicado e legenda separados; categorias somente acervo final.",
-    "Comandos idempotentes, orçamento informativo sem gates financeiros, execução nova testada por adaptadores simulados.",
-    "Migração apenas ensaio com preservação integral de origens e prova de restauração/reversão.",
-    "Revisão independente e testes da versão exata; nenhum processamento/provedor/exclusão real.",
-    "Pacote de publicação permite atualizar somente web, preservando worker/filas/configuração; implementação testada sem executar publicação."
+    "Filas mostra estado/busca/resultados/diagnósticos por etapa e Reel, distinguindo erro confirmado, incerteza paga e lacuna legítima; nenhuma nova admissão/provedor.",
+    "Categorias e Biblioteca usam exclusivamente publicações identificadas modernas/legadas, sem promover candidato; contexto/unidades/papéis/provas e contagens únicas com cobertura e regras versionadas.",
+    "Recorrências e facetas cruzadas distinguem receita única/lista e ANY/SAME_UNIT/ALL; desconhecido/não aplicável/inválido/inconclusivo separados e edição manual preservada.",
+    "Curadoria de índice não reenvia download/STT/IA nem altera artefato publicado. Sem inferência nova para enriquecer legado.",
+    "Gates e contrato de qualidade futuros compatíveis, título/resumo/fontes verificados sob regra explícita; não certificar legado retroativamente.",
+    "Testes/preparação/build exclusivamente GitHubActions, versão exata revisada independentemente, uma entrega funcional integrada.",
+    "Publicação somente web com processamento desligado; worker/imagens/filas/ocupações/IAM preservados e conferência autenticada de dados existentes."
   ],
   "allowed_paths": [
     "tasks/MEG-81-reels-web.json",
@@ -90,7 +91,7 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Campos de compatibilidade do launcher legado; esta entrega usa coordenação nativa explicitamente autorizada, com pacotes internos delimitados e sem scheduler."
+    "note": "Compatibilidade do launcher legado; atual execução nativa sob autorização humana para três frentes delimitadas de Desenvolvimento e revisão independente posterior; testes somenteGitHub, sem scheduler."
   },
   "review": {
     "mode": "independent_agent_and_human",
@@ -107,12 +108,14 @@
       "Revisor"
     ],
     "ownership": {
-      "dados": "reels-model/repository/migration e Firestore query",
-      "servicos": "reels-service/api/pipeline/taxonomy e composição server/rotas",
-      "interface": "componentes web, page/layout/globals.css"
+      "context_backend": "Backend context index/curation API modules; no frontend/quality file conflicts.",
+      "quality_backend": "Queue curation diagnostics and future-quality contract modules, coordinated adapter surface.",
+      "frontend": "Panels Filas/Categorias/Library, client styles and browser QA; no backend conflicts."
     },
     "source_plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
-    "ci_authorization": "Usuário autorizou GitHub Actions nesta implementação; testes sem credenciais/providers, não disparar deploy manual.",
-    "publication_preparation": "Extensão compatível web-only no publicador existente; preparar pacote concreto antes de aprovação final, sem merge/deploy/Google nesta implementação."
+    "ci_authorization": "Usuário atual autoriza implementação, CI centralGitHub e conferênciaweb; sem testes/build/preparaçãoVPS/desenvolvimento.",
+    "publication_preparation": "Web-only merge/deploy revisado necessário à entrega funcional conferida; sem mudar/publicarworkers, sem processar, sem repetirpagas, semIAM/filas ou excluir.",
+    "source_plan_version": "megabrain-reels-produto-v2.1",
+    "reviewed_plan_sha256": "3b0e5b37db77a9f15a20a543b2698e52f491ab9870f7c0f4a2db7d0ce9e6771c"
   }
 }

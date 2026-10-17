@@ -65,7 +65,7 @@ try {
   await dialog.getByRole('button',{name:'Visão geral',exact:true}).click();const denied=postFor(page,'/api/reels/commands');await dialog.getByRole('button',{name:'Solicitar complemento ao servidor',exact:true}).click();assert.equal((await denied).status(),423);await dialog.getByRole('alert').filter({hasText:'PROCESSING_DISABLED'}).waitFor();
   await page.screenshot({path:join(output,'reels-knowledge-desktop.png'),fullPage:true});await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});assert.equal(await card.evaluate(element=>document.activeElement===element),true);
   await page.locator('.library-card').filter({has:page.getByRole('heading',{name:'Receita publicada',exact:true})}).click();const recipe=page.getByRole('dialog',{name:'Receita publicada',exact:true});await recipe.getByText('300 g de frango',{exact:true}).waitFor();await recipe.getByText('Doure na frigideira por 8 minutos.',{exact:true}).waitFor();await recipe.getByText('8 minutos',{exact:true}).waitFor();await recipe.getByText('2 porções',{exact:true}).waitFor();
-  const complete=recipe.getByText('1 colher de chá dos temperos: páprica defumada e cominho.\nFinalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>',{exact:true});assert.equal(await complete.isVisible(),false);await recipe.getByText('Texto completo da legenda original',{exact:true}).click();await complete.waitFor();assert.equal(await complete.locator('script').count(),0);
+  const complete=recipe.getByText('1 colher de chá dos temperos: páprica defumada e cominho.\nFinalize o preparo: cubra com papel-alumínio e asse por uma hora. Retire o papel e doure. <script>alert(1)</script>\n300g de frango. Air fryer é somente uma referência; não é usada neste preparo.',{exact:true});assert.equal(await complete.isVisible(),false);await recipe.getByText('Texto completo da legenda original',{exact:true}).click();await complete.waitFor();assert.equal(await complete.locator('script').count(),0);
   const ingredient=recipe.locator('.knowledge-field').filter({has:page.getByRole('heading',{name:'Páprica defumada',exact:true})});
   await ingredient.getByText('Quantidade não consolidada; consulte as fontes abaixo.',{exact:true}).waitFor();assert.ok(!(await ingredient.innerText()).includes('Não especificado'));
   const originalField=ingredient.locator('pre');assert.equal(await originalField.isVisible(),false);await ingredient.getByText('Valor estruturado original',{exact:true}).click();
@@ -93,12 +93,83 @@ try {
   await navigate(page,'Financeiro');await navigate(page,'Biblioteca');await page.locator('.catalog tbody tr').first().waitFor();assert.equal(await page.locator('.catalog tbody tr').count(),21);assert.equal(await page.getByLabel('Buscar no acervo').inputValue(),'Modelo');assert.equal(await page.getByLabel('Buscar categoria na Biblioteca').inputValue(),'modelos');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Modelos'}).waitFor();assert.equal(await page.getByRole('button',{name:'Lista',exact:true}).getAttribute('aria-pressed'),'true');await page.waitForFunction(value=>Math.abs(window.scrollY-value)<3,scroll);
   await page.screenshot({path:join(output,'reels-library-tree-desktop.png'),fullPage:true});for(const id of navigationIds)server.store.docs.delete('videos/'+id);await page.getByRole('button',{name:'Grade',exact:true}).click();await page.getByRole('button',{name:'Limpar filtros',exact:true}).click();await page.getByLabel('Buscar categoria na Biblioteca').fill('');await page.setViewportSize({width:1440,height:1000});
  });
+
+ await record('two_curations_saved_publications_real_api_context_filters_and_unknown_units',async()=>{
+  const writeCount=server.calls.filter(x=>['/api/reels/commands','/api/reels/categories'].includes(x.path)&&x.method==='POST').length;
+  const curate=await context.newPage();await curate.goto(server.origin);await navigate(curate,'Filas');
+  const quality=curate.getByRole('region',{name:'Curadoria até o acervo',exact:true});
+  const result=responseFor(curate,'/api/reels/quality',url=>url.searchParams.get('q')==='Receita publicada');
+  await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).fill('Receita publicada');const qualityData=await (await result).json();
+  assert.equal(qualityData.matched,1);assert.equal(qualityData.items[0].reelId,'QaPub_food');assert.equal(qualityData.items[0].publication.qualityPolicyVersion,'historical_baseline');
+  await quality.getByText('Publicação histórica · regra anterior',{exact:true}).waitFor();
+  await quality.getByRole('button',{name:/Receita publicada/}).click();
+  const detail=curate.getByRole('dialog',{name:'Receita publicada',exact:true}),proof=detail.getByRole('region',{name:'Contexto desta publicação',exact:true});
+  const chicken=proof.locator('.contextual-attribute-list article').filter({has:curate.getByText('Frango',{exact:true})}).filter({has:curate.getByText('300g de frango',{exact:true})});
+  await chicken.getByText('Elemento de apoio',{exact:false}).waitFor();await chicken.getByText('Por que este elemento aparece',{exact:true}).click();await chicken.getByText('300g de frango',{exact:true}).waitFor();await closeDialog(curate);
+  await navigate(curate,'Categorias');await curate.getByRole('region',{name:'Curadoria do acervo',exact:true}).getByRole('heading',{name:'Contextos, elementos e recorrências',exact:true}).waitFor();
+  await navigate(curate,'Filas');assert.equal(await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).inputValue(),'Receita publicada');
+  await navigate(curate,'Categorias');const contextPanel=curate.getByRole('region',{name:'Curadoria do acervo',exact:true});
+  const library=responseFor(curate,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
+  await contextPanel.locator('.contextual-elements button').filter({has:curate.getByText('Frango',{exact:true})}).click();const filtered=await (await library).json();
+  assert.equal(filtered.total,1);await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await curate.locator('.library-card').count(),1);
+  const facetDetails=curate.locator('.contextual-library-filters');assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');
+  const sameUnit=responseFor(curate,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('SAME_UNIT'));
+  await facetDetails.getByLabel('Relação 1',{exact:true}).selectOption('SAME_UNIT');const unproven=await (await sameUnit).json();assert.equal(unproven.total,0,'Missing unit proof must not satisfy SAME_UNIT');
+  await curate.getByText('Nenhum registro nesta seleção',{exact:true}).waitFor();
+  const any=responseFor(curate,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"quantifier":"ANY"'));await facetDetails.getByLabel('Relação 1',{exact:true}).selectOption('ANY');assert.equal((await (await any).json()).total,1);
+  await navigate(curate,'Financeiro');await navigate(curate,'Biblioteca');await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');
+  const clear=responseFor(curate,'/api/reels/items',url=>!url.searchParams.get('facets'));await facetDetails.getByRole('button',{name:'Limpar elementos',exact:true}).click();await clear;if(await facetDetails.getAttribute('open')===null)await facetDetails.locator('summary').first().click();
+  const mentions=responseFor(curate,'/api/reels/contextual',url=>url.searchParams.get('facetMode')==='mentioned');await facetDetails.getByLabel('Papel dos elementos',{exact:true}).selectOption('mentioned');const mentionsData=await (await mentions).json();
+  const fryer=mentionsData.facets.find(f=>f.dimensionId==='tool'&&f.valueId==='air-fryer');assert.ok(fryer,'Saved literal reference must be available as a mention');assert.equal(fryer.supportCount,0);assert.equal(fryer.mentionedCount,1);
+  assert.equal(server.calls.filter(x=>['/api/reels/commands','/api/reels/categories'].includes(x.path)&&x.method==='POST').length,writeCount,'Read-only curation must not issue commands or write taxonomy');
+  await curate.screenshot({path:join(output,'reels-two-curations-contextual.png'),fullPage:true});await curate.close();
+ });
+
+
+ await record('contextual_same_dimension_or_preserves_options_and_source_age_metadata',async()=>{
+  const template=structuredClone((await server.store.get('videos/QaPub_food')).data),id='QaPub_fish',oldSource='2020-01-02T03:04:05.000Z';
+  const fish={...template,id,title:'Receita de peixe publicada',analysis_key:'qa/'+id+'/published.json',source_url:'https://www.instagram.com/reel/'+id+'/',source_caption:{capture_id:'qa-fish-caption',source:'instagram',text:'300g de peixe.'}};
+  fish.analysis={...template.analysis,title:fish.title,summary:'Receita de peixe salva para a navegação.',source_consolidation:{sources:[{source:'caption',capture_id:'qa-fish-caption',text:'300g de peixe.'}]},knowledge:{context:'recipe',fields:[{kind:'ingredient',name:'Peixe',value:'300g',role:'supporting',polarity:'positive',evidence:[{source:'caption',excerpt:'300g de peixe',start_seconds:0,end_seconds:0}]}]}};
+  await server.store.create('videos/'+id,fish);
+  const orPage=await context.newPage();
+  try {
+   await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   const filters=orPage.locator('.contextual-library-filters');await filters.locator('summary').first().click();
+   await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');
+   const chicken=responseFor(orPage,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"value":"frango"'));
+   await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');assert.equal((await (await chicken).json()).total,1);
+   await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('ingredient');
+   await filters.getByLabel('Elemento 2',{exact:true}).locator('option[value="peixe"]').waitFor({state:'attached'});
+   assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),'ANY','A new row in an existing dimension must inherit its group relation');
+   const union=responseFor(orPage,'/api/reels/items',url=>{const values=JSON.parse(url.searchParams.get('facets')||'[]').filter(f=>f.dimension==='ingredient'&&f.quantifier==='ANY').map(f=>f.value);return values.includes('frango')&&values.includes('peixe');});
+   await filters.getByLabel('Elemento 2',{exact:true}).selectOption('peixe');assert.equal((await (await union).json()).total,2);
+   await orPage.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   for(const relation of ['ALL','SAME_UNIT','ANY']){
+    const grouped=responseFor(orPage,'/api/reels/items',url=>{const facets=JSON.parse(url.searchParams.get('facets')||'[]');return facets.length===2&&facets.every(f=>f.dimension==='ingredient'&&f.quantifier===relation);});
+    await filters.getByLabel('Relação 1',{exact:true}).selectOption(relation);const response=await grouped;assert.equal(response.status(),200);assert.equal((await response.json()).total,relation==='ANY'?2:0);
+    assert.equal(await filters.getByLabel('Relação 2',{exact:true}).inputValue(),relation,'Changing relation updates every value in the same dimension');
+   }
+
+   // Explicit synthetic metadata injection checks presentation only. Backend
+   // tests separately prove sourceStale/dataAsOf originate from a failed refresh.
+   server.staleNext('/api/reels/contextual',oldSource,2);
+   const staleFilters=responseFor(orPage,'/api/reels/contextual',(_,r)=>r.status()===200);
+   await orPage.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await staleFilters;
+   await filters.locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();
+   const detailPath='/api/reels/contextual/QaPub_food';server.staleNext(detailPath,oldSource);await orPage.locator('.library-card').filter({hasText:'Receita publicada'}).click();
+   const detail=orPage.getByRole('dialog',{name:'Receita publicada',exact:true}).getByRole('region',{name:'Contexto desta publicação',exact:true});
+   await detail.locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();await closeDialog(orPage);
+   server.staleNext('/api/reels/contextual',oldSource);await navigate(orPage,'Categorias');
+   await orPage.getByRole('region',{name:'Curadoria do acervo',exact:true}).locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();
+  } finally {await orPage.close();server.store.docs.delete('videos/'+id);}
+ });
+
  await record('discovery_first_preview_global_scope_and_preserved_legacy_evidence_gaps',async()=>{
-  await navigate(page,'Categorias');await page.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await page.getByRole('button',{name:'Avaliar recorrências',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Avaliar recorrências',exact:true});
+  await navigate(page,'Categorias');await page.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await page.getByText('Regras de segmentação anteriores',{exact:true}).click();await page.getByRole('button',{name:'Avaliar recorrências',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Avaliar recorrências',exact:true});
   const response=postFor(page,'/api/reels/categories');await dialog.getByRole('button',{name:'Calcular prévia de impacto',exact:true}).click();const planned=await response;assert.equal(planned.status(),200);const data=await planned.json();assert.equal(data.preview.action,'discover');
   const body=server.calls.filter(x=>x.path==='/api/reels/categories').at(-1).body;assert.equal(body.id,undefined);assert.equal(body.backfillCursor,undefined);assert.ok(data.preview.coverage.missing>0);
   const saved=postFor(page,'/api/reels/categories');await dialog.getByRole('button',{name:'Confirmar alteração persistente',exact:true}).click();assert.equal((await saved).status(),200);await dialog.getByRole('status').filter({hasText:'Alteração persistida.'}).waitFor();await closeDialog(page);
-  await page.getByText('Como os padrões são identificados · cobertura das evidências',{exact:true}).click();await page.getByText('Publicações que precisam de complemento para segmentar',{exact:true}).waitFor();await page.screenshot({path:join(output,'reels-categories-discovery-desktop.png'),fullPage:true});
+  await page.getByText('Regras de segmentação anteriores',{exact:true}).waitFor();await page.getByText('Publicações que precisam de complemento para segmentar',{exact:true}).waitFor();await page.screenshot({path:join(output,'reels-categories-discovery-desktop.png'),fullPage:true});
  });
  await record('category_descendant_browse_and_broad_reclassification_preview_token',async()=>{
   await navigate(page,'Categorias');await page.locator('.tree-name').filter({hasText:'Tecnologia'}).click();

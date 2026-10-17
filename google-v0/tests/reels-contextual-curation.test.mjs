@@ -126,3 +126,12 @@ test('materialization verifies canonical v2 using only the publication-linked se
  const curator=new ReelsContextualCurator({repository});const d=await curator.detail(f.item.id);
  assert.equal(d.contextualSignals.receiptTrusted,true);assert.equal(d.attributes[0].role,'central');assert.deepEqual(reads,['reels_quality_receipts/'+receipt.id]);
 });
+
+test('unsupported unit references, oversized excerpts and unreviewed baseline central claims stay conservative',()=>{
+ const f=native();f.video.analysis.knowledge.fields[0].role='central';
+ let entry=projectContextualPublication(f);assert.equal(entry.attributes[0].role,'supporting');assert.equal(entry.attributes[0].claimedRole,'central');
+ f.video.analysis.knowledge.fields[0].unitIds=['unknown-unit'];entry=projectContextualPublication(f);
+ assert.equal(entry.attributes[0].state,'unknown');assert.deepEqual(entry.attributes[0].unitIds,[]);
+ const long=native();long.video.source_caption.text='Frango '+'.'.repeat(2100);long.video.analysis.knowledge.fields[0].evidence=[{source:'caption',excerpt:long.video.source_caption.text}];
+ assert.equal(projectContextualPublication(long).attributes[0].state,'invalid');
+});

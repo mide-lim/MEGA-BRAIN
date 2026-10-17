@@ -33,11 +33,10 @@ export function normalizeContextualSignalsV2({raw,identity,verification,makeEvid
  }
  for(const duplicate of duplicateIds)proofs.set(duplicate,{...proofs.get(duplicate),state:'invalid',reason:'DUPLICATE_EVIDENCE_REFERENCE'});
  const refs=input=>list(input).slice(0,8).map(ref=>proofs.get(ref)??{id:typeof ref==='string'?ref:'unknown',source:'unknown',excerpt:'',state:'invalid',reason:'EVIDENCE_REFERENCE_MISSING'});
- const completeEvidence=ev=>ev.length>0&&ev.every(p=>p.state==='supported');
  const contextSignal=signal.primaryContext,definition=categoryDefinitions.find(c=>c.id===contextSignal?.categoryId),contextProof=refs(contextSignal?.evidenceRefs);
- const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:contextProof.length?'present_unverified':'not_recorded',categoryId:definition.id,reason:'CONTEXT_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:null;
+ const context=definition?{value:definition.id==='receitas'?'recipe':definition.id==='nutricao'?'health':definition.group==='Alimentação'?'general':groupContext[definition.group]??null,state:contextProof.some(p=>p.state==='invalid')?'invalid':contextProof.length?'present_unverified':'not_recorded',categoryId:definition.id,reason:'CONTEXT_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:null;
  const units=list(signal.units).slice(0,64).filter(u=>object(u)&&id(u.unitId)).map(u=>({id:u.unitId,kind:u.type,title:u.unitId,state:'present_unverified',complete:false,claimedCompleteness:u.completeness,evidence:refs(u.evidenceRefs)}));
- let verifiedUnits=[],independentUnitCount=null,format=null;
+ const verifiedUnits=[],independentUnitCount=null,format=null;
  // A review of an evidence excerpt is not a review of the proposition that
  // an entire recipe unit is complete/independent. Existing v1 temporal recipe
  // proof remains available separately; v2 never manufactures known enumeration

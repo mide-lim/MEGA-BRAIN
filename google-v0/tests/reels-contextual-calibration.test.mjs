@@ -61,7 +61,7 @@ test('source-bound proof survives category-only metadata and invalidates changed
  assert.equal(entry.sourceProofHash,categoryOnly.sourceProofHash);assert.notEqual(entry.fingerprint,categoryOnly.fingerprint);
  const changed=structuredClone(source);changed.video.source_caption.capture_id='new-capture';
  assert.notEqual(entry.sourceProofHash,projectContextualPublication(changed).sourceProofHash);
- const body=structuredClone(source);body.video.analysis.summary+=' changed';assert.notEqual(entry.sourceProofHash,projectContextualPublication(body).sourceProofHash);
+ const body=structuredClone(source);body.video.analysis.knowledge.fields[0].value='Peixe';assert.notEqual(entry.sourceProofHash,projectContextualPublication(body).sourceProofHash);
 });
 test('accepted inventory without evaluated source remains unknown and never contributes members',()=>{
  const input=makeContextualCalibrationFixture();input.catalog.push({...input.catalog[0],id:'QaCal_099'});

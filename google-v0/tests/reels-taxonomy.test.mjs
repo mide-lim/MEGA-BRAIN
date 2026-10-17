@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
+import {publicationAvailable} from '../lib/reels-model.mjs';
 function memory(videos=[]){const docs=new Map(videos.map(v=>['videos/'+v.id,{data:structuredClone(v),updateTime:'1'}]));let version=1;const store={docs,get:async p=>structuredClone(docs.get(p)??null),create:async(p,d)=>{if(docs.has(p))return {created:false};const r={data:structuredClone(d),updateTime:String(++version)};docs.set(p,r);return {created:true,...structuredClone(r)};},patch:async(p,d,{updateTime}={})=>{const old=docs.get(p);if(old?.updateTime!==updateTime)throw Object.assign(Error('conflict'),{status:412});const r={data:{...old.data,...structuredClone(d)},updateTime:String(++version)};docs.set(p,r);return structuredClone(r);},list:async(c,{pageSize=100,pageToken}={})=>{const rows=[...docs].filter(([p])=>p.startsWith(c+'/')).sort(([a],[b])=>a.localeCompare(b)),n=Number(pageToken??0);return {records:rows.slice(n,n+pageSize).map(([path,r])=>({path,...structuredClone(r)})),nextPageToken:n+pageSize<rows.length?String(n+pageSize):null};},query:async(c,{limit=500,cursor,select,filters=[]}={})=>{let rows=[...docs].filter(([p])=>p.startsWith(c+'/')).sort(([a],[b])=>a.localeCompare(b));for(const f of filters)rows=rows.filter(([,v])=>v.data[f.field]===f.value);const n=Number(cursor??0);return {records:rows.slice(n,n+limit).map(([path,r])=>({path,...structuredClone(r)})),nextCursor:n+limit<rows.length?String(n+limit):null};}};return store;}
 const clock=()=>Date.parse('2026-10-16T03:30:00Z');
 const reel=(id='Reel_001',extra={})=>({id,status:'registered',created_at:'2026-10-16T03:00:00Z',...extra});
@@ -176,5 +177,69 @@ test('state drains a second operation approved between clearing the first marker
  const state=await store.get('settings/reels_v2_taxonomy');await store.patch('settings/reels_v2_taxonomy',{pendingOperationId:first},{updateTime:state.updateTime});
  const patch=store.patch;let interleaved=false;store.patch=async(p,d,o)=>{const result=await patch(p,d,o);if(p==='settings/reels_v2_taxonomy'&&d.pendingOperationId===null&&!interleaved){interleaved=true;const current=await store.get(p);await patch(p,{revision:current.data.revision+1,pendingOperationId:second},{updateTime:current.updateTime});}return result;};
  const stable=await taxonomy.state();assert.equal(stable.data.pendingOperationId,null);assert.equal((await store.get('reels_command_items/taxonomy_'+second)).data.status,'completed');
+});
+
+const preservedForClassification=id=>({schemaVersion:1,reelId:id,status:'legacy_preserved',originalStatus:'analyzed',historical:true,executable:false,provenance:{recordHash:'a'.repeat(64),sourceSnapshotHash:'b'.repeat(64)},analysis:{summary:'Análise antiga preservada',primary_category:'Receitas',claims:[{claim:'Conteúdo preservado'}]},transcript:'Transcrição preservada'});
+async function preservedClassificationSetup(video){
+ const store=memory([video]),repository=new ReelsRepository({store,clock}),taxonomy=new ReelsTaxonomy({repository,clock});
+ await store.create('reels_legacy_content/'+video.id,preservedForClassification(video.id));
+ await store.create('settings/reels_v2_taxonomy',{revision:0,nodes:[{id:'receitas',name:'Receitas e preparos',parentId:null,manual:true},{id:'selected_context',name:'Contexto escolhido',parentId:null,manual:true}],assignments:[],rules:[],appliedCommands:[]});
+ return {store,repository,taxonomy};
+}
+
+test('manual classification and merge of preserved legacy knowledge survive reload without worker publication or admission',async()=>{
+ const original={id:'LegacyManual_01',status:'registered',import_hold:{active:true,reason:'migration_not_activated'},analysis:null,error:null},
+  {store,repository,taxonomy}=await preservedClassificationSetup(original);
+ const first=await taxonomy.mutate({action:'reclassify',idempotencyKey:'legacy-manual-classification',revision:0,reelIds:[original.id],categoryIds:['selected_context']});
+ assert.equal(first.affected,1);
+ let raw=(await store.get('videos/'+original.id)).data;
+ assert.deepEqual(raw,{...original,categoryIds:['selected_context'],taxonomy_override:{manual:true,revision:1}});
+ assert.equal(publicationAvailable(raw),false);assert.equal((await repository.select({all:true})).eligible,0);
+ let detail=await new ReelsRepository({store,clock}).detail(original.id);
+ assert.equal(detail.publication.source,'legacy_preserved');assert.deepEqual(detail.categoryIds,['selected_context']);
+ assert.equal(detail.analysis.summary,'Análise antiga preservada');
+ assert.deepEqual((await store.get('reels_legacy_content/'+original.id)).data,preservedForClassification(original.id));
+ await taxonomy.mutate({action:'merge',idempotencyKey:'legacy-manual-merge',revision:1,id:'selected_context',targetId:'receitas'});
+ detail=await new ReelsRepository({store,clock}).detail(original.id);assert.deepEqual(detail.categoryIds,['receitas']);
+ raw=(await store.get('videos/'+original.id)).data;assert.equal(publicationAvailable(raw),false);assert.deepEqual(raw.import_hold,original.import_hold);
+ assert.equal([...store.docs.keys()].some(p=>p.startsWith('reels_executions/')),false);
+ assert.equal([...store.docs.keys()].some(p=>p.startsWith('reels_index/')),false);
+});
+
+test('manual preserved classification leaves current Google uncertainty and errors intact',async()=>{
+ const original={id:'LegacyUncertain_01',status:'uncertain',error:{code:'PAID_RESULT_UNKNOWN',uncertain:true,stage:'analysis'},analysis_candidate:{summary:'Candidato não publicado'},candidate_analysis_key:'candidate'},
+  {store,taxonomy}=await preservedClassificationSetup(original);
+ await taxonomy.mutate({action:'reclassify',idempotencyKey:'legacy-uncertain-classification',revision:0,reelIds:[original.id],categoryIds:['selected_context']});
+ const raw=(await store.get('videos/'+original.id)).data,detail=await new ReelsRepository({store,clock}).detail(original.id);
+ assert.deepEqual(raw,{...original,categoryIds:['selected_context'],taxonomy_override:{manual:true,revision:1}});
+ assert.equal(detail.status,'uncertain');assert.equal(detail.error.uncertain,true);assert.equal(detail.error.code,'PAID_RESULT_UNKNOWN');
+ assert.equal(detail.publication.source,'legacy_preserved');assert.deepEqual(detail.categoryIds,['selected_context']);
+ assert.equal(publicationAvailable(raw),false);
+});
+
+test('revoked preserved source keeps manual assignment pending instead of a successful no-op',async()=>{
+ const original={id:'LegacyRevoked_01',status:'registered',import_hold:{active:true}},
+  {store,taxonomy}=await preservedClassificationSetup(original);
+ const patch=store.patch;let revoked=false;
+ store.patch=async(path,changes,options)=>{const result=await patch(path,changes,options);
+  if(path==='settings/reels_v2_taxonomy'&&changes.pendingOperationId&&!revoked){revoked=true;const saved=await store.get('reels_legacy_content/'+original.id);await patch('reels_legacy_content/'+original.id,{originalStatus:'needs_attention'},{updateTime:saved.updateTime});}return result;
+ };
+ await assert.rejects(()=>taxonomy.mutate({action:'reclassify',idempotencyKey:'legacy-revoked-classification',revision:0,reelIds:[original.id],categoryIds:['selected_context']}),error=>error.code==='CLASSIFICATION_SOURCE_CHANGED'&&error.status===409);
+ assert.deepEqual((await store.get('videos/'+original.id)).data,original);
+ const rows=[...store.docs.values()].map(r=>r.data),receipt=rows.find(r=>r.kind==='taxonomy_manual'),assignment=rows.find(r=>r.kind==='taxonomy_manual_assignment');
+ assert.equal(receipt.status,'applying');assert.equal(assignment.status,'pending');
+ assert.equal((await store.get('settings/reels_v2_taxonomy')).data.pendingOperationId,receipt.id);
+});
+
+test('newer conflicting manual override is preserved and cannot complete an older assignment receipt',async()=>{
+ const original={id:'LegacyNewer_01',status:'registered',import_hold:{active:true}},
+  {store,taxonomy}=await preservedClassificationSetup(original);
+ const patch=store.patch;let overridden=false;
+ store.patch=async(path,changes,options)=>{const result=await patch(path,changes,options);
+  if(path==='settings/reels_v2_taxonomy'&&changes.pendingOperationId&&!overridden){overridden=true;const saved=await store.get('videos/'+original.id);await patch('videos/'+original.id,{categoryIds:['receitas'],taxonomy_override:{manual:true,revision:10}},{updateTime:saved.updateTime});}return result;
+ };
+ await assert.rejects(()=>taxonomy.mutate({action:'reclassify',idempotencyKey:'legacy-newer-classification',revision:0,reelIds:[original.id],categoryIds:['selected_context']}),error=>error.code==='CLASSIFICATION_REVISION_CONFLICT'&&error.status===409);
+ const raw=(await store.get('videos/'+original.id)).data;assert.deepEqual(raw.categoryIds,['receitas']);assert.equal(raw.taxonomy_override.revision,10);
+ const receipt=[...store.docs.values()].map(r=>r.data).find(r=>r.kind==='taxonomy_manual');assert.equal(receipt.status,'applying');
 });
 

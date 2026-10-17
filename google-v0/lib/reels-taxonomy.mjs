@@ -1,6 +1,7 @@
 import {publicationAvailable,initialReelsTaxonomy,projectReel,categoryNavigation} from './reels-model.mjs';
 import {hash,nowISO,fail,key,identifier,ensure,cas} from './reels-runtime.mjs';
 import {evidenceWindow} from './reels-speech-evidence.mjs';
+import {preservedContentAvailable} from './reels-preserved-content.mjs';
 const statePath='settings/reels_v2_taxonomy';
 const recurrenceVersion=1;
 const normalize=value=>value.normalize('NFKC').trim().toLocaleLowerCase('pt-BR');
@@ -206,5 +207,26 @@ export class ReelsTaxonomy {
   await this.finishManualOperation(operationId);
   return {operationId,revision:updated.data.revision,affected:ids.length,...discovery};
  }
- async applyAssignments(state){for(const assignment of state.assignments??[]){const raw=await this.repository.raw(assignment.reelId);if(!raw||!publicationAvailable(raw))continue;const applied=await cas(this.store,'videos/'+assignment.reelId,video=>!publicationAvailable(video)||(video.taxonomy_override?.revision??-1)>assignment.revision||assignment.manual!==true&&video.taxonomy_override?.manual===true?null:{categoryIds:assignment.categoryIds,taxonomy_override:{manual:assignment.manual,revision:assignment.revision}});await this.indexPublication(applied.data,assignment.reelId,0.5);await this.repository.refresh?.(assignment.reelId);}}
+ async applyAssignments(state){for(const assignment of state.assignments??[]){
+  const manual=assignment.manual===true,raw=await this.repository.raw(assignment.reelId);
+  if(!raw){if(manual)throw fail('CLASSIFICATION_SOURCE_CHANGED','O acervo mudou; a classificação permanece pendente de conferência.',409);continue;}
+  if(!manual&&!publicationAvailable(raw))continue;
+  const applied=await cas(this.store,'videos/'+assignment.reelId,async video=>{
+   if(!publicationAvailable(video)){
+    if(!manual)return null;
+    const preserved=(await this.store.get('reels_legacy_content/'+assignment.reelId))?.data;
+    // This authorizes a manual metadata edit in the web archive only. It does
+    // not publish an old analysis, clear a hold, or alter processing state.
+    if(!preservedContentAvailable(preserved,assignment.reelId))throw fail('CLASSIFICATION_SOURCE_CHANGED','O acervo mudou; a classificação permanece pendente de conferência.',409);
+   }
+   if((video.taxonomy_override?.revision??-1)>assignment.revision){
+    if(manual&&(video.taxonomy_override?.manual!==true||hash(video.categoryIds??[])!==hash(assignment.categoryIds)))throw fail('CLASSIFICATION_REVISION_CONFLICT','Uma classificação mais recente foi preservada. Confira a operação pendente.',409);
+    return null;
+   }
+   if(!manual&&video.taxonomy_override?.manual===true)return null;
+   return {categoryIds:assignment.categoryIds,taxonomy_override:{manual:assignment.manual,revision:assignment.revision}};
+  });
+  if(publicationAvailable(applied.data))await this.indexPublication(applied.data,assignment.reelId,0.5);
+  await this.repository.refresh?.(assignment.reelId);
+ }}
 }

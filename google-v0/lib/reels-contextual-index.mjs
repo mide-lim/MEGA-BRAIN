@@ -26,7 +26,7 @@ export function parseContextualQuery(input={}){
  return result;
 }
 export function contextualAttributeMatches(attribute,facetMode='supported'){
- if(attribute.polarity!=='affirmed'||attribute.role==='excluded')return false;
+ if(!['positive','affirmed'].includes(attribute.polarity)||attribute.role==='excluded')return false;
  return facetMode==='supported'?attribute.state==='supported'&&['central','supporting'].includes(attribute.role):['supported','present_unverified'].includes(attribute.state)&&['central','supporting','mentioned'].includes(attribute.role);
 }
 function descendants(nodes,category){

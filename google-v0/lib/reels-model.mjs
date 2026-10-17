@@ -88,6 +88,31 @@ export function initialReelsTaxonomy(items=[]){
 // assignments and revisions are never rewritten by a GET. Once manual actions
 // or recurrence rules exist, their exact nodes and IDs take precedence. That
 // configuration needs explicit copy validation rather than a silent reset.
+const finiteRuleKinds=new Set(['calibrated_ingredient_any']);
+const proofHashPattern=/^[a-f0-9]{64}$/;
+const finiteIdentityEqual=(a,b)=>a?.kind===b?.kind&&(a.kind==='native'?a.analysisKey===b.analysisKey&&a.analysisGeneration===b.analysisGeneration:a.kind==='legacy_preserved'&&a.recordHash===b.recordHash&&a.sourceSnapshotHash===b.sourceSnapshotHash);
+function finiteContextualCategoryIds(item,saved,nodes){
+ if(saved?.pendingOperationId||!item.contextualSourceProof)return [];
+ const proof=item.contextualSourceProof,out=[];
+ for(const a of arr(saved?.assignments)){
+  if(a.reelId!==item.id||a.manual!==false||!proofHashPattern.test(a.calibrationPlanHash??''))continue;
+  for(const rule of arr(saved?.rules)){
+   if(!arr(a.ruleIds).includes(rule.id)||!finiteRuleKinds.has(rule.kind)||rule.enabled!==true||rule.scope!=='finite_corpus_only'||rule.generalizationAllowed!==false||rule.calibrationPlanHash!==a.calibrationPlanHash||!arr(rule.memberIds).includes(item.id)||!arr(a.categoryIds).includes(rule.categoryId))continue;
+   const node=nodes.find(n=>n.id===rule.categoryId),parent=nodes.find(n=>n.id===rule.parentCategoryId);
+   if(!node||!parent||node.parentId!==parent.id||node.manual===true||parent.manual===true)continue;
+   if(arr(saved.suppressed).some(x=>x===rule.id||x===rule.categoryId||x?.ruleId===rule.id||x?.categoryId===rule.categoryId||x?.dimension===rule.dimension&&x?.valueId===rule.valueId))continue;
+   const member=arr(rule.members).find(m=>m.id===item.id);
+   if(!member||!proofHashPattern.test(member.publicationProofHash??'')||member.publicationProofHash!==proof.sourceProofHash||!finiteIdentityEqual(member.sourceIdentity,proof.sourceIdentity))continue;
+   out.push(rule.categoryId);
+  }
+ }
+ return [...new Set(out)];
+}
+const carryContextualProof=(item,result)=>{
+ if(item.contextualSourceProof)Object.defineProperty(result,'contextualSourceProof',{value:item.contextualSourceProof,enumerable:false});
+ return result;
+};
+
 export function categoryNavigation(items=[],saved=null){
  const managed=managedTaxonomy(saved),savedNodes=managed?arr(saved.nodes):[],savedIds=new Set(savedNodes.map(n=>n.id));
  const manualAssignments=new Map();
@@ -103,13 +128,15 @@ export function categoryNavigation(items=[],saved=null){
   const candidate=manualAssignments.get(item.id),assignment=candidate&&(item.categoryOverride?.revision??-1)>(candidate.revision??-1)?null:candidate,manual=item.categoryOverride?.manual===true||!!assignment;
   const explicit=assignment?arr(assignment.categoryIds):source;
   const resolved=resolveCategories(source);
-  const retained=managed?explicit.filter(id=>savedIds.has(id)&&!officialById.has(id)):[];
+  const finiteCategoryIds=new Set(arr(saved?.rules).filter(r=>finiteRuleKinds.has(r.kind)).map(r=>r.categoryId));
+  const retained=managed?explicit.filter(id=>savedIds.has(id)&&!officialById.has(id)&&(manual||!finiteCategoryIds.has(id))):[];
+  if(!manual)retained.push(...finiteContextualCategoryIds(item,saved,savedNodes));
   // Official primary classification stays singular even when the source holds
   // two valid subject IDs. Persisted custom/recurrence children remain attached
   // to that primary; an unresolved extra label adds no fallback destination.
   const primary=resolved.primaryId&&resolved.primaryId!=='a-organizar'?resolved.primaryId:null;
   const categoryIds=manual?[...new Set(explicit)]:retained.length?[...new Set([...(primary?[primary]:[]),...retained])]:resolved.primaryId?[resolved.primaryId]:[];
-  return {...item,categoryIds,categorySourceIds:source,categoryResolution:{version:taxonomyVersion,mode:manual?'manual':retained.length?'preserved-configuration':'official-primary',primaryId:categoryIds[0]??null,topics:resolved.topics,unresolved:resolved.unresolved}};
+  return carryContextualProof(item,{...item,categoryIds,categorySourceIds:source,categoryResolution:{version:taxonomyVersion,mode:manual?'manual':retained.length?'preserved-configuration':'official-primary',primaryId:categoryIds[0]??null,topics:resolved.topics,unresolved:resolved.unresolved}});
  });
  const base=initialReelsTaxonomy(projected.filter(i=>i.categoryResolution?.mode==='official-primary'||i.categoryResolution?.mode==='preserved-configuration'&&i.categoryIds.some(id=>officialById.has(id))));
  const nodes=managed?structuredClone(savedNodes):base.nodes;

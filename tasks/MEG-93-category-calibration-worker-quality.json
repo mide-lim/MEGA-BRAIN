@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "id": "MEG-93",
+  "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "551e9a3a627935827499ae62448c10d8151df6ba",
+  "objective": "Calibrar agrupamentos automáticos e critérios de qualidade dos workers usando somente análises publicadas salvas; uma entrega coesa, CI GitHub exclusivo, revisão independente, publicação fechada necessária e aceite web. Nenhum novo Reel, replay pago, exclusão ou mutação49/filas/IAM/reservas.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Calibração distingue prova literal/proposição/papel/unidade; corpus e anotações identificados por hashes, split train/holdout sem fuga, métricas com denominadores/abstenção/limites. Nenhuma declaração de precisão geral dos499.",
+    "Poucos agrupamentos contextuais sob árvore existente, membros únicos e fontes verificáveis; não criar categoria por vídeo nem transformar menção em tema central. Escopo finito auditado não autoriza generalização automática para novos conteúdos.",
+    "Plano finito revisado com versões/CAS/idempotência, preservação de publicação/análise original, edição manual e supressões; aplicação deriva somente fontes salvas, sem ativar aquisição/STT/Gemini.",
+    "Critérios operacionais versionados validam candidato inteiro antes de saneamento; integridade/proveniência/STT/visual/fatos/título/resumo e lacunas distintas. Baseline histórico sem selo retroativo; falha fechada preserva publicado e nunca repete chamada paga.",
+    "Filas exibe diagnóstico/qualidade/causas/limites; Categorias exibe calibrado/candidato/insuficiente, volumes/provas e agrupamentos, Biblioteca mantém mesma seleção e busca.",
+    "GitHubActions centraliza ensaio/preparação/avaliação/testes/build/browser no head final; nenhum produto/teste executado local/VPS. Aplicação real somente pacote finito exato previamente revisto e fechado.",
+    "Publicação fechada necessária à entrega em web e workers somente após revisão exata; processamento/admissão/automação permanecem false, filas pausadas/vazias, semIAM/reserva/49/exclusão/legado."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-93-category-calibration-worker-quality.json",
+    "google-v0/lib/",
+    "google-v0/tests/",
+    "google-v0/scripts/",
+    "google-v0/config/",
+    "google-v0/docs/",
+    "google-v0/web-google/",
+    "google-v0/qa/",
+    ".github/workflows/reels-curation-calibration.yml",
+    ".github/workflows/google-v0.yml",
+    ".github/workflows/frontend-qa.yml",
+    "ops/prepare-reels-curation.mjs",
+    "ops/prepare-reels-curation.test.mjs",
+    "ops/apply-reels-curation.py",
+    "ops/test_apply_reels_curation.py",
+    ".github/workflows/reels-alignment-review.yml",
+    "google-v0/Dockerfile.worker"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-contextual-curation.mjs",
+      "reason": "Índice de fontes publicadas e facetas",
+      "sections": [
+        "ReelsContextualCurator"
+      ],
+      "max_chars": 1700
+    },
+    {
+      "path": "google-v0/lib/reels-contextual-projection.mjs",
+      "reason": "Suporte conservador e identidade",
+      "sections": [
+        "projectContextualPublication"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/reels-quality-gate.mjs",
+      "reason": "Contrato opt-in existente e recibo",
+      "sections": [
+        "quality gate"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/analysis-publication.mjs",
+      "reason": "Durabilidade e pointer CAS",
+      "sections": [
+        "publication"
+      ],
+      "max_chars": 1300
+    },
+    {
+      "path": "google-v0/lib/reels-taxonomy.mjs",
+      "reason": "Gestão manual e operações de taxonomia",
+      "sections": [
+        "ReelsTaxonomy"
+      ],
+      "max_chars": 1100
+    },
+    {
+      "path": "google-v0/lib/reels-api.mjs",
+      "reason": "Rotas reais e autorização",
+      "sections": [
+        "reelsAPI"
+      ],
+      "max_chars": 900
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-93-category-calibration-worker-quality.json --diff-base 551e9a3a627935827499ae62448c10d8151df6ba --diff-head HEAD",
+    "python3 scripts/check_links.py",
+    "node --test google-v0/tests/*.test.mjs",
+    "GitHub Actions frontend QA and offline image builds",
+    "GitHub Actions finite saved-source calibration and dry-run, no provider calls"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo fresco e versão exata/CI/manifesto; usuário autorizou implementar e conferir web sem processamento. Correções delimitadas e publicação fechada necessária incluídas; nenhuma expansão de IAM ou processamento."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual category calibration/quality + AGENTS persistente v2",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "Only reviewed necessary closed web/stage publication and finite additive derived category metadata; no admission/queue/provider/IAM/reservation/49/deletion",
+    "merge_deploy": "Necessary to deliver requested actual web acceptance after exact independent review and CI; processing remains disabled.",
+    "ci_authorization": "All product tests/build/preparation/calibration only GitHubActions; raw existing data read via approved metadata helper; no new analysis.",
+    "ownership": {
+      "contextual_backend": "reels-contextual modules/tests; native alignment_backend",
+      "quality_backend": "quality gates/diagnostics/analysis contract/publication/tests; native quality_calibration",
+      "root": "API/repository/taxonomy/UI/runtime adapters/workflows/packet, finite integration/apply and closed publication",
+      "review": "fresh native review_calibration; read-only static/CI/evidence"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies."
+  }
+}

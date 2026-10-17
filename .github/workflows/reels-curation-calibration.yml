@@ -1,0 +1,74 @@
+name: Saved corpus curation calibration
+on:
+  push:
+    paths: ['google-v0/**', 'ops/prepare-reels-curation*', 'ops/apply-reels-curation.py', 'ops/test_apply_reels_curation.py', '.github/workflows/reels-curation-calibration.yml']
+  pull_request:
+    paths: ['google-v0/**', 'ops/prepare-reels-curation*', 'ops/apply-reels-curation.py', 'ops/test_apply_reels_curation.py', '.github/workflows/reels-curation-calibration.yml']
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: saved-corpus-calibration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  calibration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Validate source transport without external data
+        run: node --test ops/prepare-reels-curation.test.mjs
+      - name: Detect exact reviewed source manifest
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_PULL_REQUEST: '70'
+          TASK_BRANCH: codex/category-calibration-worker-quality
+        run: |
+          # This is a finite, reviewed corpus snapshot. Future unrelated commits
+          # must not depend on temporary source artifacts remaining available.
+          allowed=false
+          if [ "$GITHUB_HEAD_REF" = "$TASK_BRANCH" ] || [ "$GITHUB_REF_NAME" = "$TASK_BRANCH" ]; then
+            allowed=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            allowed="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 70 and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          if [ "$allowed" = true ] && test -f google-v0/config/contextual-calibration-source.json; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No finite calibration is scheduled for this commit; synthetic contracts remain active."
+          fi
+      - name: Assemble bounded private source artifacts
+        if: steps.source.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node ops/prepare-reels-curation.mjs --source google-v0/config/contextual-calibration-source.json --output "$RUNNER_TEMP/curation-input.json"
+      - name: Calibrate and prepare finite additive metadata with saved sources only
+        if: steps.source.outputs.available == 'true'
+        run: node google-v0/scripts/prepare-contextual-calibration.mjs --input "$RUNNER_TEMP/curation-input.json" --output "$RUNNER_TEMP/curation-review"
+      - name: Package committed owner operation without credentials
+        if: steps.source.outputs.available == 'true'
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib,json,os,pathlib,zipfile
+          source=pathlib.Path('ops/apply-reels-curation.py')
+          if not source.is_file():raise SystemExit('Reviewed owner operation is missing.')
+          payload=source.read_bytes()
+          destination=pathlib.Path(os.environ['RUNNER_TEMP'])/'curation-review'
+          with zipfile.ZipFile(destination/'owner-sources.zip','x',compression=zipfile.ZIP_DEFLATED) as archive:
+              archive.writestr(str(source),payload)
+              archive.writestr('source-manifest.json',json.dumps({'sourceCommit':os.environ['GITHUB_SHA'],'files':{str(source):{'sha256':hashlib.sha256(payload).hexdigest(),'bytes':len(payload)}}},indent=2)+'\n')
+          PYTHON
+      - name: Retain metadata-only reviewed output
+        if: steps.source.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: saved-corpus-curation-review
+          path: ${{ runner.temp }}/curation-review/
+          retention-days: 7
+          if-no-files-found: error

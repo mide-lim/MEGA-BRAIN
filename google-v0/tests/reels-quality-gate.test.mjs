@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {evaluateQualityGateV2,qualitySourceManifest,qualityCandidateHash,qualityDigest,persistQualityCandidateV2,verifyPublicationQualityReceipt} from '../lib/reels-quality-gate.mjs';
+import {semanticQualityPolicyVersion,contextualPropositionEntries} from '../lib/reels-quality-semantic-policy.mjs';
 import {buildAnalysisRequest,validateProviderResponseSchema,analysisOutcome} from '../lib/analysis.mjs';
 const record=()=>({id:'reel_fixture',duration_seconds:20,media_verified:true,video_key:'originals/instagram/reel_fixture/video.mp4',video_generation:'1',audio_key:'prepared/reel_fixture/audio.flac',audio_generation:'2',audio_bytes:100,audio_sha256:'a'.repeat(64),audio_source_key:'originals/instagram/reel_fixture/video.mp4',audio_source_generation:'1',transcript:'Frango no forno. Use 200 g de frango.',transcript_key:'results/reel_fixture/transcript.json',transcript_generation:'3',source_caption:{text:'Frango no forno. Use 200 g de frango.',capture_id:'capture20261017'}});
 const report=(r)=>{const manifest=qualitySourceManifest(r),e={source:'caption',sourceIdentity:manifest.caption,excerpt:r.source_caption.text};return {title:'Frango no forno.',summary:'Use 200 g de frango.',categories:['receitas'],useful_information:[],visual_observations:[],limitations:[],transcript_quality:{assessment:'Texto reconhecido, sem revisão independente.',uncertain_segments:[]},knowledge:{context:'recipe',fields:[{kind:'ingredient',name:'Ingrediente',value:'200 g de frango',evidence:[e]}],keywords:[],missing_information:['Rendimento não informado.']},qualityEvidenceV2:{version:2,title:[e],summary:[e]},source_consolidation:{sources:[{source:'caption',text:r.source_caption.text,capture_id:r.source_caption.capture_id},{source:'transcript',text:r.transcript}]}};};
@@ -23,7 +24,7 @@ test('model video verification booleans and time windows never verify pixels',()
  p.qualityEvidenceV2.title=[{source:'video',sourceIdentity:qualitySourceManifest(r).video,excerpt:p.title,start_seconds:1,end_seconds:3,verified:true,visualPixelsReviewed:true}];
  const gate=evaluateQualityGateV2({record:r,report:p,...evidence(r)});
  assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.code==='VISUAL_SUPPORT_UNVERIFIED'));
- const review={receiptId:'review_saved',kind:'human_source_review',fieldPath:'title',reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(qualitySourceManifest(r)),verdict:'supported',visualPixelsReviewed:true,frameArtifact:{key:'frames/exact.jpg',generation:'5'}};
+ const review={receiptId:'review_saved',kind:'human_source_review',fieldPath:'title',reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(qualitySourceManifest(r)),verdict:'supported',visualPixelsReviewed:true,videoIdentity:qualitySourceManifest(r).video,sourceManifest:qualitySourceManifest(r),frameArtifact:{key:'frames/exact.jpg',generation:'5'}};
  assert.equal(evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews:[review]}).accepted,true);
  assert.equal(evaluateQualityGateV2({record:r,report:{...p,title:'Outra afirmação'},...evidence(r),trustedReviews:[review]}).accepted,false);
 });
@@ -99,4 +100,50 @@ test('contextual semantic receipts and literal-only anchors remain distinct and 
  assert.equal(semantic.contextualEvidence[0].verificationLevel,'semantic_support_reviewed');
  p.contextualSignals.evidence[0].sourceIdentity='wrong_capture';
  assert.equal(evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews}).contextualEvidence[0].state,'invalid');
+});
+
+test('v2 rejects the whole saved candidate before legacy filtering or narrative replacement',()=>{
+ const r=record(),p=report(r);p.knowledge.fields.push({kind:'product',name:'Produto inventado',value:'FAKE123',evidence:[{source:'caption',sourceIdentity:qualitySourceManifest(r).caption,excerpt:r.source_caption.text}]});
+ const raw={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(p)}]}}]},before=structuredClone(raw);
+ const result=analysisOutcome(raw,r,{qualityGateV2:evidence(r)});
+ assert.equal(result.accepted,false);assert.equal(result.report.knowledge.fields.length,2);assert.equal(result.report.knowledge.fields[1].value,'FAKE123');assert.deepEqual(raw,before);
+});
+test('partial negated text, invented applications and unsupported visual observations are never approved',()=>{
+ const r=record(),p=report(r);r.source_caption.text='Não use 200 g de frango.';r.transcript=r.source_caption.text;
+ const e={source:'caption',sourceIdentity:qualitySourceManifest(r).caption,excerpt:r.source_caption.text};
+ p.title=r.source_caption.text;p.summary=r.source_caption.text;p.qualityEvidenceV2={version:2,title:[e],summary:[e]};p.knowledge.fields[0].evidence=[e];p.source_consolidation.sources=[{source:'caption',text:r.source_caption.text,capture_id:r.source_caption.capture_id},{source:'transcript',text:r.transcript}];
+ assert.equal(evaluateQualityGateV2({record:r,report:p,...evidence(r)}).accepted,false);
+ const a=record(),q=report(a);q.useful_information=[{claim:'Use 200 g de frango.',application:'Cura qualquer doença',classification:'author_claim',evidence:q.qualityEvidenceV2.summary}];
+ let gate=evaluateQualityGateV2({record:a,report:q,...evidence(a)});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.fieldPath==='useful_information.0.application'&&c.state==='inconclusive'));
+ q.useful_information=[];q.visual_observations=['Use 200 g de frango.'];q.qualityEvidenceV2.visualObservations=[{index:0,evidence:q.qualityEvidenceV2.summary}];
+ gate=evaluateQualityGateV2({record:a,report:q,...evidence(a)});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.fieldPath==='visual_observations.0'&&c.code==='VISUAL_SUPPORT_UNVERIFIED'));
+});
+test('transcript evidence intervals must contain the excerpt in saved word data',()=>{
+ const r=record(),p=report(r),e=evidence(r);p.qualityEvidenceV2.title=[{source:'transcript',sourceIdentity:qualitySourceManifest(r).transcript,excerpt:p.title,start_seconds:0,end_seconds:2}];
+ e.transcriptionReceipt.words=[{start_seconds:0,end_seconds:2,word:'Outro conteúdo'}];
+ assert.equal(evaluateQualityGateV2({record:r,report:p,...e}).state,'invalid');
+ e.transcriptionReceipt.words=[{start_seconds:0,end_seconds:2,word:p.title}];assert.equal(evaluateQualityGateV2({record:r,report:p,...e}).accepted,true);
+ delete e.transcriptionReceipt.words[0].word;assert.equal(evaluateQualityGateV2({record:r,report:p,...e}).accepted,false);
+});
+test('only an exact independent proposition receipt can certify centrality, purpose or a unit',async()=>{
+ const r=record(),p=report(r),manifest=qualitySourceManifest(r);
+ p.contextualSignals={version:2,primaryContext:{categoryId:'receitas',purpose:'receita',evidenceRefs:['e1']},units:[],attributes:[{dimension:'ingredient',valueId:'frango',scope:'video',unitIds:[],role:'central',polarity:'positive',state:'supported',evidenceRefs:['e1'],reason:'modelo diz'}],evidence:[{id:'e1',sourceKind:'caption',sourceIdentity:manifest.caption.captureId,excerpt:r.source_caption.text,verificationLevel:'semantic_support_reviewed'}]};
+ let gate=evaluateQualityGateV2({record:r,report:p,...evidence(r)});assert.equal(gate.contextualPropositions.attributes[0].state,'present_unverified');assert.equal(gate.contextualPropositions.primaryContext.state,'present_unverified');
+ const entry=contextualPropositionEntries(p).find(e=>e.kind==='attribute');
+ const review={receiptId:'exact_attribute_review',kind:'human_source_review',fieldPath:entry.fieldPath,propositionHash:entry.propositionHash,reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(manifest),policyVersion:semanticQualityPolicyVersion,method:'source_reading',observedAt:'2026-10-17T22:00:00Z',verdict:'supported'};
+ gate=evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews:[review]});assert.equal(gate.contextualPropositions.attributes[0].state,'supported');assert.equal(gate.contextualPropositions.primaryContext.state,'present_unverified');
+ p.contextualSignals.attributes[0].role='mentioned';gate=evaluateQualityGateV2({record:r,report:p,...evidence(r),trustedReviews:[review]});assert.equal(gate.contextualPropositions.attributes[0].state,'present_unverified');
+});
+
+test('a proposition receipt cannot promote unreviewed pixels or overlapping independent recipe units',()=>{
+ const r=record(),p=report(r),manifest=qualitySourceManifest(r),e=evidence(r);
+ e.transcriptionReceipt.words=[{start_seconds:0,end_seconds:2,word:r.transcript}];
+ p.contextualSignals={version:2,primaryContext:{categoryId:'receitas',purpose:'receita',evidenceRefs:['t']},units:[{unitId:'u1',type:'recipe',completeness:'complete',evidenceRefs:['t']},{unitId:'u2',type:'recipe',completeness:'complete',evidenceRefs:['t']}],attributes:[],evidence:[{id:'t',sourceKind:'transcript',sourceIdentity:manifest.transcript.key+'@'+manifest.transcript.generation,excerpt:r.transcript,timeRange:{startSeconds:0,endSeconds:2},verificationLevel:'literal_anchor_verified'}]};
+ const reviews=contextualPropositionEntries(p).filter(v=>v.kind==='unit').map(v=>({receiptId:'review_'+v.fieldPath,kind:'human_source_review',fieldPath:v.fieldPath,propositionHash:v.propositionHash,reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(manifest),policyVersion:semanticQualityPolicyVersion,method:'source_reading',observedAt:'2026-10-17T22:00:00Z',verdict:'supported'}));
+ const gate=evaluateQualityGateV2({record:r,report:p,...e,trustedReviews:reviews});assert.ok(gate.contextualPropositions.units.every(u=>u.state==='inconclusive'));
+});
+
+test('a positive caption quotation cannot hide the same proposition negated in the saved transcript',()=>{
+ const r=record(),p=report(r);r.transcript='Não use 200 g de frango.';p.source_consolidation.sources[1].text=r.transcript;
+ const gate=evaluateQualityGateV2({record:r,report:p,...evidence(r)});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.code==='CLAIM_NEGATED_CONTEXT'));assert.ok(gate.gaps.some(c=>c.code==='SOURCE_EQUIVALENCE_UNMEASURED'));
 });

@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {qualityPublicationRevision,qualitySourceStateHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
 export const STAGES=['acquisition','transcription','analysis'];
@@ -7,7 +8,7 @@ const workerFor=stage=>STAGES.includes(stage)?'reels-'+stage:null;
 const publicationTags=analysis=>{const result=[],seen=new Set();for(const value of Array.isArray(analysis?.knowledge?.keywords)?analysis.knowledge.keywords:[]){const term=typeof value==='string'?value:value?.term;if(typeof term!=='string'||!term.trim()||term.trim().length>120)continue;const text=term.trim(),key=text.normalize('NFKC').toLocaleLowerCase('pt-BR');if(seen.has(key))continue;seen.add(key);result.push(text);if(result.length===100)break;}return result;};
 const diagnosticFor=(job,status,error)=>({...safeError(error),stage:job.stage,worker:job.worker??workerFor(job.stage),destination:status==='uncertain'?'reconcile':'retry',uncertain:status==='uncertain',retryable:status==='failed'});
 export class ReelsPipeline {
- constructor({repository,store=repository.store,operations,processingEnabled=false,clock=Date.now,effectiveCapacity={acquisition:1,transcription:1,analysis:1},onQueued,onPublished,claimTimeoutMs=900000}){if(!Number.isInteger(claimTimeoutMs)||claimTimeoutMs<60000||claimTimeoutMs>3600000)throw Error('Prazo de claim inválido.');Object.assign(this,{repository,store,operations,clock,effectiveCapacity,onQueued,onPublished,claimTimeoutMs});this.processingEnabled=processingEnabled===true;}
+ constructor({repository,store=repository.store,operations,processingEnabled=false,clock=Date.now,effectiveCapacity={acquisition:1,transcription:1,analysis:1},onQueued,onPublished,claimTimeoutMs=900000,requiredQualityPolicyVersion=null}){if(!Number.isInteger(claimTimeoutMs)||claimTimeoutMs<60000||claimTimeoutMs>3600000)throw Error('Prazo de claim inválido.');Object.assign(this,{repository,store,operations,clock,effectiveCapacity,onQueued,onPublished,claimTimeoutMs,requiredQualityPolicyVersion});this.processingEnabled=processingEnabled===true;}
  async capacity(job,{collect=false}={}){
   const path='reels_controls/'+job.stage;await ensure(this.store,path,{id:job.stage,paused:false,desiredConcurrency:1,effectiveConcurrency:0,active:[],appliedCommands:[]});
   let allowed=false;await cas(this.store,path,data=>{allowed=false;const active=data.active??[],limit=Math.min(data.desiredConcurrency??1,this.effectiveCapacity[job.stage]??0);
@@ -101,12 +102,38 @@ export class ReelsPipeline {
   if(!video||video.import_hold?.active===true||!ownership.exact&&!ownership.successor)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
   if(!reconciliationEvidence(job).result)throw fail('EVIDENCE_UNPROVEN','Resultado sem vínculo demonstrado.',409);
   const result=job.rawResult;if(!result)throw fail('RESULT_MISSING','Resultado preservado ausente.',409);
-  if(job.stage==='analysis'&&result.valid!==true){const diagnostic={...diagnosticFor(job,'failed',{code:'QUALITY_VALIDATION_FAILED'}),message:'Resultado salvo requer revisão.',destination:'review',retryable:false};const candidateChanges=Object.fromEntries(Object.entries(result.changes??{}).filter(([key])=>key.startsWith('candidate_analysis_')||['analysis_candidate','analysis_review_reasons','review_reasons'].includes(key)));if(Object.keys(candidateChanges).length)await cas(this.store,'videos/'+job.reelId,video=>video.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id)?null:candidateChanges);await this.markVideo(job,'failed',{candidate:{available:true,state:'invalid',reason:'QUALITY_VALIDATION_FAILED',executionId:job.id},error:diagnostic});
-   await this.release(job);await this.emit(job,'candidate_rejected');await cas(this.store,'reels_executions/'+job.id,()=>({status:'failed',failedAt:nowISO(this.clock),error:diagnostic}));return {status:'failed',published:false};}
+  let qualityReceipt=null,qualityProposal=null;
+  if(job.stage==='analysis'&&this.requiredQualityPolicyVersion==='gate_v2'){
+   qualityProposal=result.qualityPublication;
+   if(result.valid!==true||qualityProposal?.policyVersion!=='gate_v2'||!qualityProposal.qualityReceipt?.receiptId)return this.rejectCandidate(job,result,{state:result.quality?.state==='invalid'?'invalid':'inconclusive'});
+   qualityReceipt=(await this.store.get('reels_quality_receipts/'+qualityProposal.qualityReceipt.receiptId))?.data;
+   const proposed={...video,...result.changes,publication:{...(video.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
+   if(qualitySourceStateHash(video)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)return this.rejectCandidate(job,result,{reason:'QUALITY_RECEIPT_UNVERIFIED',state:'inconclusive'});
+  }
+  if(job.stage==='analysis'&&result.valid!==true)return this.rejectCandidate(job,result,{state:result.quality?.state==='inconclusive'?'inconclusive':'invalid'});
   // Publication fields require explicit valid proof. A candidate never replaces them.
   const changes={...(job.providerChanges??{}),...(result.changes??{})};delete changes.reels_v2;
   if(job.stage!=='analysis'){for(const key of ['analysis','publication','published_analysis','analysis_revision'])delete changes[key];}
-  await cas(this.store,'videos/'+job.reelId,video=>video.reels_v2?.operationId&& (video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id)?null:({...changes,...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}}));
+  let publicationConflict=false,ownershipConflict=false;
+  await cas(this.store,'videos/'+job.reelId,async current=>{
+   publicationConflict=false;ownershipConflict=false;
+   if(current.reels_v2?.operationId&&(current.reels_v2.operationId!==job.operationId||current.reels_v2.executionId!==job.id)){
+    // A proved successor means the earlier stage already handed off. Resume
+    // its durable outbox without rewriting sources or regressing the pointer.
+    const ownership=await reconciliationOwnership(this.store,job,current);
+    if(!ownership.successor)ownershipConflict=true;
+    return null;
+   }
+   if(qualityProposal){
+    const proposed={...current,...changes,publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
+    const already=current.analysis_key===qualityProposal.publicationIdentity?.key&&String(current.analysis_generation)===String(qualityProposal.publicationIdentity?.generation)&&current.publication?.qualityReceipt?.receiptId===qualityProposal.qualityReceipt.receiptId&&verifyPublicationQualityReceipt({video:current,receipt:qualityReceipt}).trusted;
+    if(qualitySourceStateHash(current)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
+   }
+   const video=current;
+   return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}};
+  });
+  if(ownershipConflict)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
+  if(publicationConflict)return this.rejectCandidate(job,result,{reason:'QUALITY_PUBLICATION_REVISION_CONFLICT',state:'inconclusive'});
   const nextStage=STAGES[STAGES.indexOf(job.stage)+1];
   if(nextStage){const nextId=executionId(job.operationId,job.reelId,nextStage),queuedAt=nowISO(this.clock);await ensure(this.store,'reels_executions/'+nextId,{id:nextId,operationId:job.operationId,reelId:job.reelId,stage:nextStage,status:'queued',attempt:1,predecessorId:job.id,queuedAt,createdAt:queuedAt});
    await this.markVideo({...job,stage:nextStage,id:nextId},'queued',{},job.id);const next=await this.store.get('reels_executions/'+nextId);await queueOutbox(this.store,next.data,{onQueued:this.onQueued,clock:this.clock});}
@@ -115,6 +142,15 @@ export class ReelsPipeline {
   await this.release(job);await this.emit(job,'stage_completed');
   await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock)});
   return {status:'completed',executionId:job.id,nextStage:nextStage??null};
+ }
+ async rejectCandidate(job,result,{reason='QUALITY_VALIDATION_FAILED',state='invalid'}={}){
+  const diagnostic={...diagnosticFor(job,'failed',{code:reason}),message:'Resultado salvo requer revisão; publicação anterior preservada.',destination:'review',retryable:false};
+  const candidateChanges=Object.fromEntries(Object.entries(result.changes??{}).filter(([key])=>key.startsWith('candidate_analysis_')||['analysis_candidate','analysis_review_reasons','review_reasons','candidate_quality_receipt'].includes(key)));
+  if(result.qualityPublication){Object.assign(candidateChanges,{analysis_candidate:result.changes?.analysis??null,candidate_analysis_key:result.changes?.analysis_key??null,candidate_analysis_generation:result.changes?.analysis_generation??null,candidate_quality_receipt:result.qualityPublication.qualityReceipt??null});}
+  if(Object.keys(candidateChanges).length)await cas(this.store,'videos/'+job.reelId,video=>video.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id)?null:candidateChanges);
+  await this.markVideo(job,'failed',{candidate:{available:true,state,reason,executionId:job.id},error:diagnostic});
+  await this.release(job);await this.emit(job,'candidate_rejected');await cas(this.store,'reels_executions/'+job.id,()=>({status:'failed',failedAt:nowISO(this.clock),error:diagnostic}));
+  return {status:'failed',published:false,reason,qualityState:state};
  }
  async markVideo(job,status,extra={},predecessorId=null){await cas(this.store,'videos/'+job.reelId,video=>{const current=video.reels_v2;if(current?.operationId&&(current.operationId!==job.operationId||current.executionId!==job.id&&current.executionId!==predecessorId))return null;if(current?.executionId===job.id&&status==='queued'&&current.status!=='queued')return null;return {reels_v2:{...(video.reels_v2??{}),status,stage:job.stage,worker:job.worker===workerFor(job.stage)?job.worker:null,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock),...extra}};});await this.repository.refresh?.(job.reelId);}
  async failure(job,error,{submitted}){

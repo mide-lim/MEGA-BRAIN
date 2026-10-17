@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "branch": "codex/category-calibration-worker-quality",
+  "stagingSourceCommit": "e528e015a0e81359eabfa690c2845aa744e975d8",
+  "inputSHA256": "1573b47fb692e3c1b8d3f75f0acb2873b22b702e808bda1526a8eada47613095",
+  "parts": [
+    {
+      "runId": 39077583192
+    },
+    {
+      "runId": 39077584619
+    },
+    {
+      "runId": 39077586111
+    },
+    {
+      "runId": 39077587666
+    }
+  ]
+}

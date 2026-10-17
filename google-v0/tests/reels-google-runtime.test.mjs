@@ -115,3 +115,19 @@ test('pause during preparation fences the paid POST before provider submission',
  const response=await handler(request({executionId:id}));assert.equal(response.status,200);assert.equal((await response.json()).status,'failed');assert.equal(paid,0);
  assert.equal((await store.get('reels_executions/'+id)).data.error.code,'STAGE_PAUSED');assert.deepEqual((await store.get('reels_controls/transcription')).data.active,[]);
 });
+
+test('trusted runtime factory selects request and quality persistence together, with server-owned source receipts',async()=>{
+ const store=memory(),id=executionId('quality-operation','Reel_001','analysis'),sourceReceipt={kind:'media-inspector',receiptId:'server_saved'},sttReceipt={operationIdentity:'server_operation'};let calls=0;
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered',media_inspection_receipt:sourceReceipt,transcription_receipt:sttReceipt});await store.create('reels_executions/'+id,{id,operationId:'quality-operation',reelId:'Reel_001',stage:'analysis',status:'queued'});
+ const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
+ const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'analysis',authorize:()=>true,dependencies:{api:{project},store,repository,storage:{},tools:{},dispatcher:{},operationsFactory:options=>{assert.equal(options.config.reels_quality_policy_version,'gate_v2');assert.deepEqual(options.qualityEvidence,{mediaInspection:sourceReceipt,transcriptionReceipt:sttReceipt});assert.equal(typeof options.saveQualityReceipt,'function');return {analysis:async()=>{calls++;return {changes:{analysis:{summary:'No gate receipt'},analysis_quality_status:'accepted'}};}};}}});
+ const result=await handler(request({executionId:id}));assert.equal(result.status,200);assert.equal((await result.json()).qualityState,'inconclusive');assert.equal(calls,1);assert.equal((await store.get('videos/Reel_001')).data.analysis,undefined);
+});
+
+test('reusing media without a v2 receipt inspects saved bytes once and records proof without source download',async()=>{
+ const store=memory(),id=executionId('quality-reuse','Reel_001','acquisition'),bytes=Buffer.from('saved-video');let inspections=0,reads=0;
+ await store.create('videos/Reel_001',{id:'Reel_001',status:'registered',media_verified:true,video_key:'originals/instagram/Reel_001/video.mp4',video_generation:'1',video_bytes:bytes.length,audio_status:'present',duration_seconds:20});await store.create('reels_executions/'+id,{id,operationId:'quality-reuse',reelId:'Reel_001',stage:'acquisition',status:'queued'});
+ const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
+ const handler=reelsGoogleRuntime({...config,reels_processing_enabled:true},{},{stage:'acquisition',authorize:()=>true,dependencies:{api:{project},store,repository,storage:{metadata:async()=>({generation:'1',size:bytes.length}),read:async(_key,options)=>{reads++;assert.equal(options.generation,'1');return bytes;}},tools:{},inspect:async input=>{inspections++;assert.deepEqual(input,bytes);return {hasVideo:true,hasAudio:true,audio_status:'present',duration_seconds:20};},dispatcher:{enqueue:async()=>({status:'sent'})},operationsFactory:()=>({upload:async()=>assert.fail('saved media cannot be downloaded')})}});
+ assert.equal((await handler(request({executionId:id}))).status,200);const saved=(await store.get('videos/Reel_001')).data;assert.equal(inspections,1);assert.equal(reads,1);assert.equal(saved.media_inspection_receipt.kind,'media-inspector');assert.equal(saved.media_inspection_receipt.sourceIdentity.generation,'1');assert.equal(saved.media_inspection_receipt.semanticPixelsReviewed,false);assert.equal(saved.media_inspection_receipt.contentSha256,saved.video_sha256);
+});

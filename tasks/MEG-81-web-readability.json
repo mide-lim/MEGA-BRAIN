@@ -7,7 +7,7 @@
   "objective": "Corrigir somente apresentação de ocorrências, cobertura financeira e atividade: linguagem clara, originais técnicos acessíveis e ausência de dados preservada.",
   "risk": "medium",
   "acceptance_criteria": [
-    "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português sem sugerir nova chamada; códigos originais permanecem acessíveis.",
+    "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português tanto no catálogo quanto no painel de detalhe, sem sugerir nova chamada; erro original completo permanece em detalhes recolhidos.",
     "Cobertura mostra fontes, intervalos, observação, última medição e desconhecidos em português; moedas, estimativas e faturamento mantêm distinção.",
     "Atividade destaca mensagem, Reel, worker, etapa e data; IDs e evento original estão em Detalhes do evento; histórico tem estado humanizado e datas originais.",
     "Nenhum backend, contrato, worker, configuração, dado ou operação paga é alterado; testes e build somente GitHub Actions e revisão independente no head final."
@@ -17,6 +17,7 @@
     "google-v0/web-google/app/reels/catalog.jsx",
     "google-v0/web-google/app/reels/operations.jsx",
     "google-v0/web-google/app/reels/preserved.jsx",
+    "google-v0/web-google/app/reels/detail.jsx",
     "google-v0/web-google/lib/reels-display.mjs",
     "google-v0/tests/reels-display.test.mjs",
     "google-v0/qa/reels-fixture.mjs",
@@ -29,7 +30,7 @@
       "sections": [
         "Ocorrência e destino"
       ],
-      "max_chars": 2000
+      "max_chars": 1500
     },
     {
       "path": "google-v0/web-google/app/reels/operations.jsx",
@@ -66,6 +67,14 @@
         "preserved"
       ],
       "max_chars": 3000
+    },
+    {
+      "path": "google-v0/web-google/app/reels/detail.jsx",
+      "reason": "Ocorrência do painel de detalhe é o gatilho original do P3 e precisa da mesma apresentação do catálogo",
+      "sections": [
+        "Detail occurrence notice in detail-video"
+      ],
+      "max_chars": 500
     }
   ],
   "validation_commands": [
@@ -97,13 +106,15 @@
     "merge_deploy": "Root integrates reviewed concrete package under current user product_pending_closure authorization; developer does not merge/deploy.",
     "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
     "ownership": {
-      "developer": "Eight allowed files, isolated clone /workspace/megabrain-web-readability-20261017; /root/web_readability_fix",
+      "developer": "Nine allowed files including detail.jsx correction requested by independent review; isolated clone /workspace/megabrain-web-readability-20261017; /root/web_readability_fix",
       "reviewer": "Fresh independent read-only exact-head review",
       "root": "Canonical state, Actions integration, merge/publication and real acceptance"
     },
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
     "base_revision": 198,
-    "protocol_read": "/srv/paperclip/data/megabrain-operations/v2/protocol.json; tracked checkout has only AGENTS.md and google-v0/AGENTS.md, no native protocol file."
+    "protocol_read": "/srv/paperclip/data/megabrain-operations/v2/protocol.json; tracked checkout has only AGENTS.md and google-v0/AGENTS.md, no native protocol file.",
+    "resume_revision": 200,
+    "correction_source": "Independent review /root/review_web_delivery on head350d322d5002e92d3e8f3994cc90b4b233321b16: original detail-panel occurrence remains. Same PR scope expansion authorized by Orchestrator."
   }
 }

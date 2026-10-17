@@ -40,7 +40,7 @@ export function filterContextualEntries(entries,input={},nodes=[]){
  return entries.filter(entry=>{
   if(categoryIds&&!entry.categoryIds.some(id=>categoryIds.has(id)))return false;
   if(query.context&&(entry.context.value??'unknown')!==query.context)return false;
-  const terms=normalize(query.q).trim().split(/\s+/).filter(Boolean),hay=normalize([entry.title,...entry.attributes.map(a=>a.label)].join(' '));
+  const terms=normalize(query.q).trim().split(/\s+/).filter(Boolean),hay=normalize(entry.searchText??entry.title);
   if(!terms.every(t=>hay.includes(t)))return false;
   const groupMatches=groups.map(group=>{
    const attrs=entry.attributes.filter(a=>group.some(f=>f.value===a.valueId&&f.dimension===a.dimensionId)&&contextualAttributeMatches(a,query.facetMode));

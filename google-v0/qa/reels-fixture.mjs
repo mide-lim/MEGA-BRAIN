@@ -22,6 +22,7 @@ export function reelsFixture(now=new Date()) {
   {kind:'preparation_time',name:'Tempo informado',value:'8 minutos'},
   {kind:'serving_count',name:'Rendimento informado',value:'2 porções'}
  ].map(field=>({...field,evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}))};
+ food.analysis.insights=[{claim:'O autor orienta dourar o frango na frigideira.',application:'Usar a sequência descrita como referência de preparo.',classification:'author_claim',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]},{claim:'O preparo pode ser organizado antes de aquecer a frigideira.',application:'Separar os ingredientes antes de começar.',classification:'interpretation',evidence:[{source:'transcript',start_seconds:0,end_seconds:14,excerpt:food.transcript}]}];
  videos.find(v=>v.id==='QaPub_tech').analysis.knowledge.context='technology';
  const failed=videos.find(video=>video.id==='QaFail_01'),failedOperation='qa-failed-operation',failedId=executionId(failedOperation,failed.id,'acquisition');
  failed.reels_v2={status:'failed',stage:'acquisition',operationId:failedOperation,executionId:failedId,error:{...failed.error,stage:'acquisition',uncertain:false}};

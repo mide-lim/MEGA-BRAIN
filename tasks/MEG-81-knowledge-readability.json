@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "MEG-81",
+  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "ab6fa22940e44da5d9817db782c432728ce5766b",
+  "objective": "Apresentar ideias/aplicacoes publicadas em prosa legivel com classificacao em portugues e evidencias expansiveis, preservando texto/identidade/contratos de API e modelos. Corrigir somente consumidor constatado no acervo real; nenhuma chamada paga.",
+  "risk": "medium",
+  "acceptance_criteria": [
+    "Objeto claim/application/classification/evidence aparece como texto legivel com rotulos em portugues; nenhuma serializacao tecnica na Visao geral.",
+    "Afirmação do autor, observação visual e interpretação permanecem distintas, sem transformar alegacao em fato.",
+    "Evidencia fica expansivel com fonte, marcas temporais e trecho original; strings antigas e campos ausentes continuam seguros.",
+    "Ingredientes/passos/categorias/dados publicados e fluxo operacional permanecem intactos; nenhum provider ou escrita Google.",
+    "Teste de comportamento adversarial e jornada browser passam no headfinal somente GitHub Actions; reviewer independente avalia diff."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-81-knowledge-readability.json",
+    "google-v0/web-google/app/reels/detail.jsx",
+    "google-v0/lib/reels-insight-display.mjs",
+    "google-v0/tests/reels-insight-display.test.mjs",
+    "google-v0/qa/reels-fixture.mjs",
+    "google-v0/qa/reels-browser-check.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/web-google/app/reels/detail.jsx",
+      "reason": "Consumidor atual serializa insights como objeto generico",
+      "sections": [
+        "Knowledge"
+      ],
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Contrato existente claim/application/classification/evidence",
+      "sections": [
+        "schema",
+        "validateAnalysis"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "google-v0/qa/reels-browser-check.mjs",
+      "reason": "Jornada existente de biblioteca/detalhe",
+      "sections": [
+        "published_knowledge"
+      ],
+      "max_chars": 6000
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py",
+    "node --test google-v0/tests/*.test.mjs",
+    "node google-v0/qa/reels-browser-check.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "None by developer; root separately executes reviewed pilot. This change only renders saved response.",
+    "merge_deploy": "Root integrates reviewed concrete package under current user product_pending_closure authorization; developer does not merge/deploy.",
+    "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
+    "ownership": {
+      "developer": "Six listed files, isolated branch; private residual audit separate",
+      "reviewer": "Fresh independent read-only exact-head review",
+      "root": "Canonical state, Actions integration, merge/publication and real acceptance"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json"
+  }
+}

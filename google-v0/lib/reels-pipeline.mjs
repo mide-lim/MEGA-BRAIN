@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
 export const STAGES=['acquisition','transcription','analysis'];
 export const executionId=(operationId,reelId,stage)=>hash({operationId,reelId,stage});
@@ -31,13 +32,13 @@ export class ReelsPipeline {
   job=snapshot.data;let submitted=false;
   try{
    await this.markVideo(job,'running');
-   const video=await this.repository.raw(job.reelId);if(!video)throw Object.assign(fail('NOT_FOUND','Reel ausente.',404),{definitive:true});
+   const video=await this.repository.raw(job.reelId);if(video?.import_hold?.active===true||video?.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id))throw Object.assign(fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409),{definitive:true});if(!video)throw Object.assign(fail('NOT_FOUND','Reel ausente.',404),{definitive:true});
    const method={acquisition:'acquire',transcription:'transcribe',analysis:'analyze'}[job.stage];if(typeof this.operations?.[method]!=='function')throw Object.assign(fail('ADAPTER_MISSING','Adaptador não disponível.',503),{definitive:true});
    snapshot=await this.store.patch(path,{status:'submitting',submittedAt:nowISO(this.clock)},{updateTime:snapshot.updateTime});submitted=true;
    const recordPreparedAudio=async changes=>{await cas(this.store,'videos/'+job.reelId,()=>changes);};
    const result=await this.operations[method]({video,videoId:job.reelId,reelId:job.reelId,executionId:id,claim:{owner,updateTime:snapshot.updateTime},recordPreparedAudio});
    if(result?.pending===true||result?.operationName){if(typeof result.operationName!=='string'||!result.operationName)throw Error('Nome de operação ausente.');
-    await this.store.patch(path,{status:'waiting',operationName:result.operationName,providerChanges:result.changes??{},waitingAt:nowISO(this.clock)},{updateTime:snapshot.updateTime});
+    await this.store.patch(path,{status:'waiting',operationName:result.operationName,operationEvidence:{schemaVersion:1,executionId:job.id,reelId:job.reelId,operationId:job.operationId,stage:job.stage,owner:job.owner,operationName:result.operationName},providerChanges:result.changes??{},waitingAt:nowISO(this.clock)},{updateTime:snapshot.updateTime});
     await this.markVideo(job,'waiting');await this.emit(job,'stage_waiting');await queueOutbox(this.store,{...job,operationName:result.operationName},{onQueued:this.onQueued,clock:this.clock,poll:true});return {status:'waiting',operationName:result.operationName};}
    return await this.saveAndApply(job,result,snapshot.updateTime);
   }catch(error){return this.failure(job,error,{submitted});}
@@ -49,6 +50,8 @@ export class ReelsPipeline {
   // Polling reads the same saved external operation. Resuming a collecting
   // delivery never submits STT again, including after an executor crash.
   if(!['waiting','collecting'].includes(job.status)||!job.operationName)return {status:job.status,duplicate:true};
+  if(!reconciliationEvidence(job).operation)throw fail('EVIDENCE_UNPROVEN','Operação salva sem vínculo demonstrado.',409);
+  const video=await this.repository.raw(job.reelId);if(video?.import_hold?.active===true||video?.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id))throw fail('EXECUTION_SUPERSEDED','Coleta não possui mais o Reel.',409);
   const pollOwner=randomUUID();try{snapshot=await this.store.patch(path,{status:'collecting',pollOwner,worker:workerFor(job.stage)},{updateTime:snapshot.updateTime});}catch(error){if(error.status===412)return {status:'collecting',duplicate:true};throw error;}
   try{const result=await this.operations.pollTranscription({operationName:job.operationName,videoId:job.reelId,reelId:job.reelId,executionId:id,claim:{owner:job.owner,updateTime:snapshot.updateTime}});
    if(result?.pending){await this.store.patch(path,{status:'waiting',pollSequence:(job.pollSequence??0)+1},{updateTime:snapshot.updateTime});await queueOutbox(this.store,job,{onQueued:this.onQueued,clock:this.clock,poll:true,sequence:(job.pollSequence??0)+1});return {status:'waiting'};}
@@ -68,12 +71,37 @@ export class ReelsPipeline {
  async saveAndApply(job,result,updateTime){
   if(!result||typeof result!=='object')throw Error('Resultado ausente.');
   // Persist the entire adapter receipt before any publication or next-stage outbox.
-  const snapshot=await this.store.patch('reels_executions/'+job.id,{status:'applying',rawResult:result,resultSavedAt:nowISO(this.clock)},{updateTime});
+  const snapshot=await this.store.patch('reels_executions/'+job.id,{status:'applying',rawResult:result,resultEvidence:{schemaVersion:1,executionId:job.id,reelId:job.reelId,operationId:job.operationId,stage:job.stage,owner:job.owner,resultHash:hash(result)},resultSavedAt:nowISO(this.clock)},{updateTime});
   return this.apply(snapshot.data);
  }
+ async recover({executionId:id,action,evidenceVersion,recoveryId}){
+  if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
+  const snapshot=await this.store.get('reels_executions/'+id);if(!snapshot)throw fail('NOT_FOUND','Execução ausente.',404);
+  if(typeof evidenceVersion!=='string'||snapshot.updateTime!==evidenceVersion)throw fail('EVIDENCE_CHANGED','Evidência mudou; confira novamente.',409);
+  const job=snapshot.data,video=await this.repository.raw(job.reelId),ownership=await reconciliationOwnership(this.store,job,video);
+  if(video?.import_hold?.active===true||!(ownership.exact||action==='apply_saved_result'&&ownership.successor))throw fail('RECONCILIATION_OWNERSHIP','Posse atual não corresponde à execução.',409);
+  const proof=action==='apply_saved_result'?job.resultEvidence:action==='collect_saved_operation'?job.operationEvidence:null;
+  if(!proof||proof.schemaVersion!==1||proof.executionId!==job.id||proof.reelId!==job.reelId||proof.operationId!==job.operationId||proof.stage!==job.stage||!job.owner||proof.owner!==job.owner)throw fail('EVIDENCE_UNPROVEN','Vínculo da evidência não demonstrado.',409);
+  if(action==='apply_saved_result'){
+   if(!['applying','uncertain'].includes(job.status)||!job.rawResult||proof.resultHash!==hash(job.rawResult))throw fail('EVIDENCE_UNPROVEN','Resultado salvo sem prova válida.',409);
+   if(job.status!=='applying')await this.store.patch('reels_executions/'+id,{status:'applying'},{updateTime:snapshot.updateTime});
+   return this.apply(job);
+  }
+  if(action!=='collect_saved_operation'||job.stage!=='transcription'||!['waiting','collecting','uncertain'].includes(job.status)||!job.operationName||proof.operationName!==job.operationName)throw fail('EVIDENCE_UNPROVEN','Operação salva sem prova válida.',409);
+  // The web has no provider adapters: resume the durable polling task only.
+  if(typeof recoveryId!=='string'||!/^[a-f0-9]{64}$/.test(recoveryId))throw fail('INVALID_RECOVERY_ID','Identidade de conciliação obrigatória.',409);
+  const resumed=job.recoveryPollId===recoveryId?snapshot:await this.store.patch('reels_executions/'+id,{status:'waiting',recoveryPollId:recoveryId,pollSequence:(job.pollSequence??0)+1},{updateTime:snapshot.updateTime});
+  if(typeof this.onQueued!=='function')throw fail('DISPATCH_UNAVAILABLE','Coleta requer despacho autenticado.',503);
+  await queueOutbox(this.store,resumed.data,{onQueued:this.onQueued,clock:this.clock,poll:true,sequence:resumed.data.pollSequence??0});
+  return {status:'waiting',executionId:id,collectionQueued:true};
+ }
  async apply(job){
+  if(job.status==='completed')return {status:'completed',executionId:job.id,duplicate:true};
+  const video=await this.repository.raw(job.reelId),ownership=await reconciliationOwnership(this.store,job,video);
+  if(!video||video.import_hold?.active===true||!ownership.exact&&!ownership.successor)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
+  if(!reconciliationEvidence(job).result)throw fail('EVIDENCE_UNPROVEN','Resultado sem vínculo demonstrado.',409);
   const result=job.rawResult;if(!result)throw fail('RESULT_MISSING','Resultado preservado ausente.',409);
-  if(job.stage==='analysis'&&result.valid!==true){const diagnostic={...diagnosticFor(job,'failed',{code:'QUALITY_VALIDATION_FAILED'}),message:'Resultado salvo requer revisão.',destination:'review',retryable:false};const candidateChanges=Object.fromEntries(Object.entries(result.changes??{}).filter(([key])=>key.startsWith('candidate_analysis_')||['analysis_candidate','analysis_review_reasons','review_reasons'].includes(key)));if(Object.keys(candidateChanges).length)await cas(this.store,'videos/'+job.reelId,()=>candidateChanges);await this.markVideo(job,'failed',{candidate:{available:true,state:'invalid',reason:'QUALITY_VALIDATION_FAILED',executionId:job.id},error:diagnostic});
+  if(job.stage==='analysis'&&result.valid!==true){const diagnostic={...diagnosticFor(job,'failed',{code:'QUALITY_VALIDATION_FAILED'}),message:'Resultado salvo requer revisão.',destination:'review',retryable:false};const candidateChanges=Object.fromEntries(Object.entries(result.changes??{}).filter(([key])=>key.startsWith('candidate_analysis_')||['analysis_candidate','analysis_review_reasons','review_reasons'].includes(key)));if(Object.keys(candidateChanges).length)await cas(this.store,'videos/'+job.reelId,video=>video.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id)?null:candidateChanges);await this.markVideo(job,'failed',{candidate:{available:true,state:'invalid',reason:'QUALITY_VALIDATION_FAILED',executionId:job.id},error:diagnostic});
    await this.release(job);await this.emit(job,'candidate_rejected');await cas(this.store,'reels_executions/'+job.id,()=>({status:'failed',failedAt:nowISO(this.clock),error:diagnostic}));return {status:'failed',published:false};}
   // Publication fields require explicit valid proof. A candidate never replaces them.
   const changes={...(job.providerChanges??{}),...(result.changes??{})};delete changes.reels_v2;

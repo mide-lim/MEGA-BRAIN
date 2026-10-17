@@ -5,6 +5,7 @@ const clock=()=>Date.parse('2026-10-16T03:30:00Z');
 const reel=(id='Reel_001',extra={})=>({id,status:'registered',created_at:'2026-10-16T03:00:00Z',...extra});
 const pub=(id='Reel_001',extra={})=>reel(id,{status:'analyzed',analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{summary:'original',evidence:{categories:[]}},...extra});
 import {reelsAPI} from '../lib/reels-api.mjs';
+import {executionId} from '../lib/reels-pipeline.mjs';
 const request=(path,body,extra={})=>new Request('https://reels.test/api/reels/'+path,{...(body?{method:'POST',body:JSON.stringify(body),headers:{origin:'https://reels.test','content-type':'application/json'}}:{}),...extra});
 test('auth first, same origin writes, safe failures and no-store responses',async()=>{let reads=0;const repository={store:memory(),summary:async()=>{reads++;throw Error('SECRET credential');}},denied=reelsAPI({repository,authorize:()=>false,sameOrigin:()=>true});assert.equal((await denied(request('summary'))).status,401);assert.equal(reads,0);const api=reelsAPI({repository,authorize:()=>true,sameOrigin:r=>r.headers.get('origin')==='https://reels.test'});const invalid=await api(request('commands',{type:'pause',idempotencyKey:'origin-123'},{headers:{origin:'https://evil.test','content-type':'application/json'}}));assert.equal(invalid.status,403);const failure=await api(request('summary'));assert.equal(failure.status,503);assert.equal(failure.headers.get('cache-control'),'no-store');assert.ok(!JSON.stringify(await failure.json()).includes('SECRET'));});
 test('default API does not accept browser enable flag and permits persistence controls',async()=>{const repository=new ReelsRepository({store:memory([reel()]),clock}),api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,clock});const disabled=await api(request('commands',{type:'start',idempotencyKey:'disabled-123',processingEnabled:true,selection:{all:true}}));assert.equal(disabled.status,423);assert.equal((await disabled.json()).code,'PROCESSING_DISABLED');const pause=await api(request('commands',{type:'pause',idempotencyKey:'pause-api-123',stage:'analysis'}));assert.equal(pause.status,200);const id=(await pause.json()).operation.id;assert.equal((await api(request('commands/'+id))).status,200);});
@@ -16,3 +17,38 @@ test('category coverage is a dated read and browser cannot choose internal autom
  assert.equal(automatic.status,400);assert.equal((await automatic.json()).code,'INVALID_KEY');
 });
 
+test('retry API preserves failed stage and excludes rejected saved candidates',async()=>{
+ const operationId='prior_command',failedId=executionId(operationId,'Reel_BAD','analysis');
+ const store=memory([reel('Reel_BAD',{status:'failed',stage:'analysis',failure_confirmed:true,reels_v2:{status:'failed',stage:'analysis',executionId:failedId,operationId,error:{retryable:true,uncertain:false,stage:'analysis'}}}),reel('Reel_REVIEW',{status:'failed',stage:'analysis',failure_confirmed:true,reels_v2:{status:'failed',stage:'analysis',executionId:'review_execution',error:{retryable:false,destination:'review'}}})]);
+ await store.create('reels_executions/'+failedId,{id:failedId,operationId,reelId:'Reel_BAD',stage:'analysis',status:'failed',owner:'synthetic_worker',error:{retryable:true,uncertain:false,stage:'analysis'}});
+ await store.create('reels_executions/review_execution',{id:'review_execution',reelId:'Reel_REVIEW',stage:'analysis',status:'failed',error:{retryable:false},rawResult:{valid:false}});
+ let dispatches=0;const api=reelsAPI({repository:new ReelsRepository({store,clock}),authorize:()=>true,sameOrigin:()=>true,processingEnabled:true,onCommandQueued:async()=>{dispatches++;return {status:'sent'};}});
+ const preview=await api(request('preview',{type:'retry',selection:{ids:['Reel_REVIEW']}}));assert.equal(preview.status,200);assert.equal((await preview.json()).eligible,0);
+ const eligible=await api(request('preview',{type:'retry',selection:{ids:['Reel_BAD']}}));assert.equal(eligible.status,200);assert.equal((await eligible.json()).eligible,1);
+ const override=await api(request('commands',{type:'retry',idempotencyKey:'retry-stage-override',stage:'acquisition',selection:{ids:['Reel_BAD']}}));assert.equal(override.status,400);assert.equal((await override.json()).code,'INVALID_STAGE');assert.equal(dispatches,0);
+ assert.equal((await store.get('reels_executions/review_execution')).data.status,'failed');
+});
+
+test('admission recovery API is disabled by default and browser flags cannot enable it',async()=>{
+ const store=memory([reel()]),repository=new ReelsRepository({store,clock});let calls=0;
+ const api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,clock,onCommandQueued:async()=>{calls++;return {status:'sent'};}}),before=structuredClone([...store.docs]);
+ const response=await api(request('commands',{type:'resume_operation',targetOperationId:'a'.repeat(64),idempotencyKey:'disabled-recovery-api',processingEnabled:true}));
+ assert.equal(response.status,423);assert.equal((await response.json()).code,'PROCESSING_DISABLED');assert.equal(calls,0);assert.deepEqual([...store.docs],before);
+});
+test('admission recovery API preserves original selection and ID, scopes the recovery receipt and rejects injected input',async()=>{
+ const store=memory([reel()]),repository=new ReelsRepository({store,clock}),deliveries=[];
+ const api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,processingEnabled:true,clock,onCommandQueued:async(operation,options)=>{deliveries.push({operation:structuredClone(operation),options});return {status:'sent'};}});
+ const started=await api(request('commands',{type:'start',selection:{ids:['Reel_001']},idempotencyKey:'original-command-api'}));assert.equal(started.status,200);const original=(await started.json()).operation;assert.equal(original.status,'pending');
+ const recoveryInput={type:'resume_operation',targetOperationId:original.id,idempotencyKey:'recover-original-api'};
+ const response=await api(request('commands',recoveryInput));assert.equal(response.status,200);const recovered=await response.json();
+ assert.equal(recovered.operation.id,original.id);assert.deepEqual(recovered.operation.selected,original.selected);assert.equal(recovered.operation.cursor,original.cursor);assert.equal(recovered.recovery.targetOperationId,original.id);assert.notEqual(recovered.recovery.id,original.id);assert.equal(recovered.recovery.status,'completed');
+ assert.equal(deliveries.length,2);assert.equal(deliveries[1].operation.id,original.id);assert.equal(deliveries[1].options.recoveryId,recovered.recovery.id);
+ assert.equal([...store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,0);
+ const replay=await api(request('commands',recoveryInput));assert.equal(replay.status,200);assert.deepEqual(await replay.json(),recovered);assert.equal(deliveries.length,2);
+ const conflict=await api(request('commands',{...recoveryInput,targetOperationId:'b'.repeat(64)}));assert.equal(conflict.status,409);assert.equal((await conflict.json()).code,'IDEMPOTENCY_CONFLICT');
+ for(const extra of [{selection:{ids:['Reel_OTHER']}},{stage:'analysis'},{processingEnabled:true},{cursor:999},{recoveryId:'forged'}]){const rejected=await api(request('commands',{...recoveryInput,idempotencyKey:'invalid-recovery-api',...extra}));assert.equal(rejected.status,400);assert.equal((await rejected.json()).code,'INVALID_RECOVERY');}
+ const missing=await api(request('commands',{...recoveryInput,idempotencyKey:'unknown-recovery-api',targetOperationId:'c'.repeat(64)}));assert.equal(missing.status,409);assert.equal((await missing.json()).code,'OPERATION_NOT_RECOVERABLE');
+ const pause=await api(request('commands',{type:'pause',stage:'analysis',idempotencyKey:'pause-recovery-target'})),pauseId=(await pause.json()).operation.id;
+ const wrongType=await api(request('commands',{...recoveryInput,idempotencyKey:'control-not-recoverable',targetOperationId:pauseId}));assert.equal(wrongType.status,409);assert.equal((await wrongType.json()).code,'OPERATION_NOT_RECOVERABLE');
+ assert.equal(deliveries.length,2);assert.deepEqual((await store.get('reels_commands/'+original.id)).data.selected,original.selected);
+});

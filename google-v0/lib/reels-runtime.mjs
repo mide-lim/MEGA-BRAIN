@@ -24,9 +24,10 @@ export async function event(store,{id,...data},clock=Date.now){
  throw fail('EVENT_BUSY','Registro de eventos ocupado; tente recuperar o comando.',503);
 }
 
-export async function queueOutbox(store,job,{onQueued,clock=Date.now,poll=false,sequence=0}={}){
- const id=hash(job.id+(poll?':poll:'+sequence:':dispatch')),path='reels_command_items/'+id;
- const saved=await ensure(store,path,{id,executionId:job.id,reelId:job.reelId,stage:job.stage,poll,status:'pending',createdAt:nowISO(clock)});
+export async function queueOutbox(store,job,{onQueued,clock=Date.now,poll=false,sequence=0,redriveId=null}={}){
+ if(redriveId!==null&&(!/^[a-f0-9]{64}$/.test(redriveId)||poll))throw fail('INVALID_REDRIVE','Identidade de retomada inválida.');
+ const id=hash(job.id+(poll?':poll:'+sequence:redriveId?':dispatch:redrive:'+redriveId:':dispatch')),path='reels_command_items/'+id;
+ const saved=await ensure(store,path,{id,executionId:job.id,reelId:job.reelId,stage:job.stage,poll,...(redriveId?{redriveId}:{}),status:'pending',createdAt:nowISO(clock)});
  if(saved.data.status==='sent')return saved.data;
  // Failure must reach the current HTTP delivery. A durable intent alone is
  // insufficient when no task exists yet to resume it.

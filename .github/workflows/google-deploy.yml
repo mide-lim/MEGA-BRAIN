@@ -17,11 +17,11 @@ on:
         type: choice
         options: [review, deploy]
       services:
-        description: 'Services to publish and update (web preserves the worker)'
+        description: 'Services to publish (web_stages keeps legacy worker and forces processing off)'
         required: true
         default: all
         type: choice
-        options: [all, web]
+        options: [all, web, web_stages]
 permissions:
   contents: read
 concurrency:
@@ -80,6 +80,8 @@ jobs:
           docker build --build-arg VCS_REF="$commit" -t megabrain-worker:ci -f "$context/Dockerfile.worker" "$context"
       - name: Check worker image with synthetic media and no network
         run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-worker.mjs
+      - name: Check existing stage entrypoints and closed-release fence without network
+        run: docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:ci scripts/smoke-stage-workers.mjs
       - name: Extract the built web image for anonymous-route checks
         run: |
           set -eu
@@ -140,7 +142,11 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/megabrain-public-result"
-          python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
+          if [ "$DEPLOY_SERVICES" = "web_stages" ]; then
+            python3 ops/deploy-reels-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
+          else
+            python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
+          fi
       - name: Record the sanitized outcome
         working-directory: .
         run: |

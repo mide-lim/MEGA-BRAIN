@@ -1,7 +1,7 @@
 import {pipelineProgress}from './pipeline-progress.mjs';
 // Framework-neutral route handlers; identity comes from the v0 session adapter.
 // No database, credential or production fallback is accepted here.
-export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImportEnabled=false}){
+export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImportEnabled=false,controlsWriteEnabled=true}){
   if(!repository||!ledgerStore||typeof authorize!=='function'||typeof sameOrigin!=='function')throw new Error('Dependências isoladas obrigatórias.');
   const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
   async function access(request){try{return (await authorize(request))===true;}catch{return false;}}
@@ -39,6 +39,7 @@ export function libraryAPI({repository,ledgerStore,authorize,sameOrigin,linkImpo
       }
       if(request.method!=='POST')return reply({error:'Método inválido'},405);
       if(!sameOrigin(request))return reply({error:'Origem inválida'},403);
+      if(controlsWriteEnabled!==true)return reply({error:'Processamento desabilitado nesta publicação.',code:'PROCESSING_DISABLED'},423);
       if(!request.headers.get('content-type')?.startsWith('application/json'))return reply({error:'Use JSON'},415);
       // Bound request consumption even when Content-Length is omitted.
       let raw='';

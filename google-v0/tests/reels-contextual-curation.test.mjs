@@ -135,3 +135,9 @@ test('unsupported unit references, oversized excerpts and unreviewed baseline ce
  const long=native();long.video.source_caption.text='Frango '+'.'.repeat(2100);long.video.analysis.knowledge.fields[0].evidence=[{source:'caption',excerpt:long.video.source_caption.text}];
  assert.equal(projectContextualPublication(long).attributes[0].state,'invalid');
 });
+
+test('a saved typed value outside the controlled vocabulary is unknown, not absent',()=>{
+ const f=native();f.video.analysis.knowledge.fields=[{kind:'ingredient',name:'Banana',value:'Uma banana',evidence:[quote]}];
+ const entry=projectContextualPublication(f),coverage=entry.coverage.find(c=>c.dimensionId==='ingredient');
+ assert.equal(entry.attributes.length,0);assert.equal(coverage.state,'unknown');assert.equal(coverage.reason,'CONTROLLED_VALUE_NOT_MAPPED');
+});

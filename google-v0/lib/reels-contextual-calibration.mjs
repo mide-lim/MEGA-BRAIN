@@ -54,6 +54,7 @@ function buildCorpus(input){
   const id=source.item?.id,c=catalog.get(id);
   if(!c||records.has(id))fail('CALIBRATION_SOURCE_ID_INVALID');
   if(source.video?.id&&source.video.id!==id||source.legacy?.reelId&&source.legacy.reelId!==id)fail('CALIBRATION_SOURCE_ID_MISMATCH');
+  if(source.sourceUpdateTime?.video!==c.updateTime)fail('CALIBRATION_SOURCE_VERSION_MISMATCH');
   const actualManual=source.video?.taxonomy_override?.manual===true||source.item?.categoryOverride?.manual===true||source.item?.categoryResolution?.mode==='manual';
   if(actualManual&&!c.manual)fail('CALIBRATION_MANUAL_METADATA_MISMATCH');
   const item={...source.item,id,categoryIds:c.categoryIds,categoryOverride:{...(source.item?.categoryOverride??{}),manual:c.manual},publication:{...(source.item?.publication??{}),available:true,...(c.sourceIdentity.kind==='legacy_preserved'?{source:'legacy_preserved'}:{})}};
@@ -66,7 +67,7 @@ function buildCorpus(input){
 }
 function sourcePredicate(record,rule){
  if(record.manual)return {state:'excluded',reason:'MANUAL_CURATION_PROTECTED',attributes:[],evidenceIds:[]};
- if(record.entry.context.value!=='recipe')return {state:'abstain',reason:'RECIPE_CONTEXT_NOT_SUPPORTED',attributes:[],evidenceIds:[]};
+ if(record.entry.context.value!=='recipe'||record.entry.context.state!=='supported'||!record.catalog.categoryIds.includes('receitas'))return {state:'abstain',reason:'RECIPE_CONTEXT_NOT_SUPPORTED',attributes:[],evidenceIds:[]};
  const attrs=record.entry.attributes.filter(a=>a.dimensionId==='ingredient'&&a.valueId===rule.valueId&&a.state==='supported'&&['central','supporting'].includes(a.role)&&['positive','affirmed'].includes(a.polarity));
  const proofs=attrs.flatMap(a=>a.evidence).filter(p=>p.state==='supported'&&['caption','transcript'].includes(p.source)&&rule.aliases.some(alias=>hasTerm(p.excerpt,alias))&&!/\b(nao|sem|not|without|never)\b/.test(normal(p.excerpt)));
  if(!proofs.length)return {state:'abstain',reason:'POSITIVE_TYPED_LITERAL_INCLUSION_NOT_PROVEN',attributes:[],evidenceIds:[]};
@@ -142,7 +143,7 @@ function runCalibration(input){
   const insufficient=reasons.some(x=>x.includes('INSUFFICIENT')),status=!reasons.length?'calibrated':insufficient?'insufficient':'candidate';
   rules.push({ruleId:rule.ruleId,parentCategoryId:p.parentCategoryId,dimension:'ingredient',valueId:rule.valueId,label:rule.label,status,reasonCodes:reasons,supportCount:members.length,reviewedMemberCount:members.length,sourceCount:corpus.records.size,memberIds:members.map(m=>m.id),members,withheld,train,holdout,filter:{category:p.parentCategoryId,facets:[{dimension:'ingredient',value:rule.valueId,quantifier:'ANY'}]},calibrationScope:p.scope,generalizationAllowed:false,automaticUnseen:false});
  }
- const report={version:p.version,policyHash:contextualCalibrationPolicyHash,projectionRuleHash:contextualRuleHash,status:rules.some(r=>r.status==='calibrated')?'calibrated':rules.every(r=>r.status==='insufficient')?'insufficient':'candidate',scope:p.scope,generalizationAllowed:false,automaticUnseen:false,observedAt:input.observedAt,corpus:{inventoryCount:corpus.catalog.size,evaluatedCount:corpus.records.size,unevaluatedCount:corpus.catalog.size-corpus.records.size,sourceCorpusHash:corpus.sourceCorpusHash,catalogHash:corpus.catalogHash},annotationsHash:labels.annotationsHash,splitHash:labels.splitHash,sourceBindings:corpus.bindings,rules,limitations:['Calibration concerns the exact saved-source cohort and independently annotated finite members only.','Sample intervals do not certify unseen precision, independence of Reels or whole-video semantic quality.','Unobserved or unlabeled members are unknown, never negative by absence.','Ingredient ANY means inclusion in at least one preparation; no centrality, whole collection focus, practicality or complete enumeration is inferred.','Manual edits and suppressed rules take precedence; no source analysis is rewritten.']};
+ const report={version:p.version,policyVersion:p.version,evaluatedCount:corpus.records.size,unknownCount:corpus.catalog.size-corpus.records.size,policyHash:contextualCalibrationPolicyHash,projectionRuleHash:contextualRuleHash,status:rules.some(r=>r.status==='calibrated')?'calibrated':rules.every(r=>r.status==='insufficient')?'insufficient':'candidate',scope:p.scope,generalizationAllowed:false,automaticUnseen:false,observedAt:input.observedAt,corpus:{inventoryCount:corpus.catalog.size,evaluatedCount:corpus.records.size,unevaluatedCount:corpus.catalog.size-corpus.records.size,sourceCorpusHash:corpus.sourceCorpusHash,catalogHash:corpus.catalogHash},annotationsHash:labels.annotationsHash,splitHash:labels.splitHash,sourceBindings:corpus.bindings,rules,limitations:['Calibration concerns the exact saved-source cohort and independently annotated finite members only.','Sample intervals do not certify unseen precision, independence of Reels or whole-video semantic quality.','Unobserved or unlabeled members are unknown, never negative by absence.','Ingredient ANY means inclusion in at least one preparation; no centrality, whole collection focus, practicality or complete enumeration is inferred.','Manual edits and suppressed rules take precedence; no source analysis is rewritten.']};
  report.reportHash=contextualHash(report);
  return {report,corpus};
 }
@@ -154,7 +155,8 @@ export function prepareContextualCategoryPlan(input){
  const groups=[],suppressed=[];
  for(const rule of report.rules.filter(r=>r.status==='calibrated')){
   const identity=groupIdentity(rule),categoryId='ctx_'+identity.slice(0,28),ruleId='cal_'+identity.slice(0,32),parent=t.nodes.find(n=>n.id===rule.parentCategoryId),node=t.nodes.find(n=>n.id===categoryId),existingRule=list(t.rules).find(r=>r.id===ruleId||r.kind==='calibrated_ingredient_any'&&r.parentCategoryId===rule.parentCategoryId&&r.valueId===rule.valueId);
-  let reason=!parent?'PARENT_CATEGORY_MISSING':existingRule?.enabled===false?'RULE_SUPPRESSED':node?.manual===true?'MANUAL_NODE_PROTECTED':node&&node.parentId!==rule.parentCategoryId?'NODE_PARENT_CHANGED':list(t.nodes).some(n=>n.id!==categoryId&&n.parentId===rule.parentCategoryId&&normal(n.name)===normal(rule.label))?'EXISTING_EDITORIAL_CATEGORY_PROTECTED':null;
+  const disabledRule=list(t.rules).some(r=>r.enabled===false&&(r.id===ruleId||r.kind==='calibrated_ingredient_any'&&r.parentCategoryId===rule.parentCategoryId&&r.valueId===rule.valueId));
+  let reason=!parent?'PARENT_CATEGORY_MISSING':parent.manual===true?'PARENT_MANUAL_PROTECTED':disabledRule?'RULE_SUPPRESSED':node?.manual===true?'MANUAL_NODE_PROTECTED':node&&node.parentId!==rule.parentCategoryId?'NODE_PARENT_CHANGED':list(t.nodes).some(n=>n.id!==categoryId&&n.parentId===rule.parentCategoryId&&normal(n.name)===normal(rule.label))?'EXISTING_EDITORIAL_CATEGORY_PROTECTED':null;
   if(list(t.suppressed).some(x=>x===ruleId||x===categoryId||x?.ruleId===ruleId||x?.valueId===rule.valueId&&x?.dimension==='ingredient'))reason='EXPLICIT_SUPPRESSION';
   if(groups.length>=contextualCalibrationPolicy.maxGroups)reason='FINITE_GROUP_LIMIT';
   const manualIds=new Set(list(t.assignments).filter(a=>a.manual===true).map(a=>a.reelId));

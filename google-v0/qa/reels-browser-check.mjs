@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {chromium} from 'playwright';
 import {startReelsFixtureServer} from './reels-server.mjs';
 import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
+import {calibrationReportView} from '../lib/reels-curation-calibration.mjs';
 import {makeContextualCalibrationFixture} from '../tests/reels-contextual-calibration-fixture.mjs';
 
 const output=process.env.MEGABRAIN_REELS_QA_OUTPUT??join(tmpdir(),'megabrain-reels-qa-results');
@@ -204,7 +205,7 @@ try {
   const sources=input.records.map(r=>JSON.parse(r.sourceJson)),ids=sources.map(source=>source.item.id),calibrationPage=await context.newPage();
   for(const source of sources)assert.equal((await server.store.create('videos/'+source.item.id,source.video)).created,true);
   const taxonomyRecord=await server.store.get(taxonomyPath);await server.store.patch(taxonomyPath,{nodes:[...beforeTaxonomy.nodes,...input.taxonomy.data.nodes.filter(node=>!beforeTaxonomy.nodes.some(existing=>existing.id===node.id))]},{updateTime:taxonomyRecord.updateTime});
-  await server.store.create(path,{schemaVersion:1,planHash:plan.planHash,sourceHash:plan.sourceCorpusHash,report:calibration});
+  await server.store.create(path,{schemaVersion:1,planHash:plan.planHash,sourceHash:plan.sourceCorpusHash,report:calibrationReportView(calibration,plan)});
   const beforeCommands=server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length;
   try {
    const read=responseFor(calibrationPage,'/api/reels/curation/calibration');await calibrationPage.goto(server.origin);await navigate(calibrationPage,'Categorias');const data=await (await read).json();
@@ -215,6 +216,32 @@ try {
    await card.getByRole('region',{name:'Conferência independente',exact:true}).getByText(String(group.metrics.holdout.total),{exact:true}).first().waitFor();assert.equal(new Set(group.members.map(m=>m.id)).size,group.members.length);
    const member=group.members[0],browse=responseFor(calibrationPage,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&url.searchParams.get('q')===member.id);
    await card.getByRole('button',{name:member.title||'Ver Reel '+member.id,exact:true}).click();const memberData=await (await browse).json();assert.equal(memberData.items.some(item=>item.id===member.id),true);
+
+   // Simulate the finite additive metadata apply in the synthetic database only.
+   // Raw publications are deliberately unchanged: category membership must be
+   // derived from the reviewed settings, just as in the real two-document apply.
+   const beforeApply=await server.store.get(taxonomyPath),assignments=new Map();
+   for(const planned of plan.groups)for(const member of planned.members){
+    const previous=assignments.get(member.id),categoryIds=[...new Set([...(previous?.categoryIds||member.priorCategoryIds||[]),planned.categoryId])];
+    assignments.set(member.id,{reelId:member.id,categoryIds,ruleIds:[...new Set([...(previous?.ruleIds||[]),planned.rule.id])],manual:false,revision:beforeApply.data.revision+1,calibrationPlanHash:plan.planHash});
+   }
+   await server.store.patch(taxonomyPath,{
+    revision:beforeApply.data.revision+1,
+    nodes:[...beforeApply.data.nodes,...plan.groups.map(planned=>({id:planned.categoryId,name:planned.label,parentId:planned.parentCategoryId,manual:false,evidenceCount:planned.members.length,calibrationPlanHash:plan.planHash}))],
+    rules:[...(beforeApply.data.rules||[]),...plan.groups.map(planned=>({...planned.rule,members:planned.members.map(member=>({id:member.id,sourceIdentity:member.sourceIdentity,publicationProofHash:member.publicationProofHash})),calibrationPlanHash:plan.planHash}))],
+    assignments:[...(beforeApply.data.assignments||[]),...assignments.values()],
+    appliedCommands:[...(beforeApply.data.appliedCommands||[]),{id:'qa-finite-calibration-apply',fingerprint:plan.planHash}]
+   },{updateTime:beforeApply.updateTime});
+   await calibrationPage.reload();const appliedRead=responseFor(calibrationPage,'/api/reels/curation/calibration');await navigate(calibrationPage,'Categorias');const appliedData=await (await appliedRead).json();
+   const plannedGroup=plan.groups[0],appliedGroup=appliedData.groups.find(candidate=>candidate.appliedCategoryId===plannedGroup.categoryId);assert.ok(appliedGroup,'A trusted finite derived group must be available as an applied category');
+   const expectedIds=plannedGroup.members.map(member=>member.id).sort();assert.deepEqual(appliedGroup.members.map(member=>member.id).sort(),expectedIds);assert.equal(appliedGroup.memberCount,expectedIds.length);
+   const appliedPanel=calibrationPage.getByRole('region',{name:'Calibração de agrupamentos',exact:true}),appliedCard=appliedPanel.locator('.contextual-patterns>article').filter({has:calibrationPage.getByRole('heading',{name:appliedGroup.label,exact:true})});
+   const groupBrowse=responseFor(calibrationPage,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&url.searchParams.get('category')===plannedGroup.categoryId&&!url.searchParams.get('q'));
+   await appliedCard.getByRole('button',{name:'Abrir grupo na Biblioteca →',exact:true}).click();const libraryGroup=await (await groupBrowse).json();assert.equal(libraryGroup.total,expectedIds.length);assert.deepEqual(libraryGroup.items.map(item=>item.id).sort(),expectedIds,'Library must contain exactly the reviewed finite members, without inferred extras');
+   const selectedTree=calibrationPage.locator('.library-navigation .tree-name[aria-pressed=true]').filter({hasText:appliedGroup.label});await selectedTree.getByText(String(expectedIds.length),{exact:true}).waitFor();
+   await calibrationPage.locator('.library-card').first().waitFor();assert.equal(await calibrationPage.locator('.library-card').count(),expectedIds.length);
+   for(const source of sources)assert.deepEqual((await server.store.get('videos/'+source.item.id)).data,source.video,'Metadata-only grouping must preserve every raw published analysis');
+
    assert.equal(server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length,beforeCommands);assert.deepEqual(server.externalAttempts,[]);
   } finally {
    await calibrationPage.close();server.store.docs.delete(path);for(const id of ids)server.store.docs.delete('videos/'+id);

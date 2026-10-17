@@ -142,3 +142,8 @@ test('a proposition receipt cannot promote unreviewed pixels or overlapping inde
  const reviews=contextualPropositionEntries(p).filter(v=>v.kind==='unit').map(v=>({receiptId:'review_'+v.fieldPath,kind:'human_source_review',fieldPath:v.fieldPath,propositionHash:v.propositionHash,reportHash:qualityCandidateHash(p),sourceManifestHash:qualityDigest(manifest),policyVersion:semanticQualityPolicyVersion,method:'source_reading',observedAt:'2026-10-17T22:00:00Z',verdict:'supported'}));
  const gate=evaluateQualityGateV2({record:r,report:p,...e,trustedReviews:reviews});assert.ok(gate.contextualPropositions.units.every(u=>u.state==='inconclusive'));
 });
+
+test('a positive caption quotation cannot hide the same proposition negated in the saved transcript',()=>{
+ const r=record(),p=report(r);r.transcript='Não use 200 g de frango.';p.source_consolidation.sources[1].text=r.transcript;
+ const gate=evaluateQualityGateV2({record:r,report:p,...evidence(r)});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.code==='CLAIM_NEGATED_CONTEXT'));assert.ok(gate.gaps.some(c=>c.code==='SOURCE_EQUIVALENCE_UNMEASURED'));
+});

@@ -94,7 +94,7 @@ try {
   await navigate(page,'Filas');const analysis=page.locator('.queue-card').filter({has:page.getByRole('heading',{name:'Análise',exact:true})});
   await analysis.getByRole('button',{name:'Capacidade',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Ajustar capacidade · Análise e publicação',exact:true});await dialog.getByLabel('Concorrência desejada').fill('11');
   const changed=postFor(page,'/api/reels/commands');await dialog.getByRole('button',{name:'Ajustar capacidade no servidor',exact:true}).click();const result=await changed;assert.equal(result.status(),200);const {operation}=await result.json();assert.equal(operation.status,'completed');await closeDialog(page);
-  await analysis.getByText('Capacidade 2 efetiva / 11 desejada',{exact:true}).waitFor();await page.getByText('Última operação persistida',{exact:true}).waitFor();
+  await analysis.getByText('Última capacidade observada: 2 · Desejada: 11',{exact:true}).waitFor();await page.getByText('Última operação persistida',{exact:true}).waitFor();
   await page.reload();await page.getByText(operation.id,{exact:true}).waitFor();assert.ok(server.calls.some(x=>x.path==='/api/reels/commands/'+operation.id));
   await navigate(page,'Filas');const stage=responseFor(page,'/api/reels/items',url=>url.searchParams.get('stage')==='analysis');await page.locator('.queue-card').filter({has:page.getByRole('heading',{name:'Análise',exact:true})}).locator('.queue-title').click();await stage;await page.getByRole('button',{name:/Análise aguardando externo/}).waitFor();assert.equal(await page.getByLabel('Etapa / fila',{exact:true}).inputValue(),'analysis');
  });

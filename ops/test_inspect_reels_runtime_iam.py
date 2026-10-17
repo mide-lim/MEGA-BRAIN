@@ -71,6 +71,20 @@ class RuntimeIamTests(unittest.TestCase):
         first.pop("overallAccessState")
         self.assertBlocked()
 
+    def test_real_v3_denial_is_denied_not_unknown(self):
+        first = self.capture["checks"][0]["response"]
+        first["overallAccessState"] = "CANNOT_ACCESS"
+        first["allowPolicyExplanation"] = {"allowAccessState":"ALLOW_ACCESS_STATE_NOT_GRANTED"}
+        for deny in ({"denyAccessState":"DENY_ACCESS_STATE_DENIED"},
+                     {"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO", "permissionDeniable":False},
+                     {"denyAccessState":"DENY_ACCESS_STATE_NOT_DENIED"}):
+            first["denyPolicyExplanation"] = deny
+            self.assertEqual(self.result()["checks"][0]["access"], "denied")
+            self.assertBlocked()
+        first["errors"] = [{"code":7}]
+        self.assertEqual(self.result()["checks"][0]["access"], "unknown")
+        self.assertBlocked()
+
     def test_all_unknown_states_and_malformed_responses_fail_closed(self):
         for state in ("UNKNOWN", "OVERALL_ACCESS_STATE_UNSPECIFIED", None, True, 1):
             self.capture["checks"][0]["response"]["overallAccessState"] = state
@@ -90,6 +104,23 @@ class RuntimeIamTests(unittest.TestCase):
         self.assertTrue(self.result()["ready"])
         self.capture["checks"][0]["response"]["accessTuple"]["principalOverride"] = "owner"
         self.assertBlocked()
+
+    def test_actual_v3_empty_condition_context_is_normalized_only_when_empty(self):
+        first = self.capture["checks"][0]["response"]["accessTuple"]
+        first["permissionFqdn"] = "cloudtasks.googleapis.com/tasks.create"
+        first["conditionContext"] = {}
+        self.assertTrue(self.result()["ready"])
+        for context in ({"request":{"receiveTime":NOW.isoformat()}}, None, [], ""):
+            first["conditionContext"] = context
+            self.assertBlocked()
+
+    def test_firestore_is_explicit_project_policy_not_database_proof(self):
+        rows = [r for r in self.requests if r["accessTuple"]["permission"].startswith("datastore.")]
+        self.assertEqual(len(rows), 8)
+        for row in rows:
+            self.assertEqual(row["scope"], "project-policy")
+            self.assertEqual(row["accessTuple"]["fullResourceName"],
+                             "//cloudresourcemanager.googleapis.com/projects/" + iam.PROJECT)
 
     def test_future_stale_and_timezone_free_timestamps_fail(self):
         for observed in ((NOW + dt.timedelta(seconds=1)).isoformat(),
@@ -121,6 +152,9 @@ class RuntimeIamTests(unittest.TestCase):
         first["denyPolicyExplanation"] = {"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO",
                                          "permissionDeniable":False}
         self.assertTrue(self.result()["ready"])
+        first["denyPolicyExplanation"].pop("permissionDeniable")
+        self.assertBlocked()
+        first["denyPolicyExplanation"]["permissionDeniable"] = False
         first["overallAccessState"] = "CANNOT_ACCESS"
         self.assertBlocked()
         first["overallAccessState"] = "UNKNOWN_INFO"
@@ -182,7 +216,9 @@ class RuntimeIamTests(unittest.TestCase):
             def json(self):
                 return dict(overallAccessState="CAN_ACCESS", accessTuple=requested["accessTuple"],
                             denyPolicyExplanation={"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO",
-                                                   "policy":{"bindings":[{"members":["unrelated"]}]}},
+                                                   "permissionDeniable":True,
+                                                   "policy":{"bindings":[{"members":["unrelated"]}]},
+                                                   "explainedResources":[{"memberships":{"user:private@example.test":{"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO"}}}]},
                             errors=[{"code":7, "message":"private detail"}])
         class Session:
             def post(self, url, **kwargs):
@@ -191,7 +227,27 @@ class RuntimeIamTests(unittest.TestCase):
         serialized = str(capture)
         self.assertNotIn("unrelated", serialized)
         self.assertNotIn("private detail", serialized)
+        self.assertNotIn("private@example.test", serialized)
+        self.assertNotIn("memberships", serialized)
+        self.assertEqual(capture["checks"][0]["response"]["denyPolicyExplanation"],
+                         {"denyAccessState":"DENY_ACCESS_STATE_UNKNOWN_INFO", "permissionDeniable":True})
         self.assertFalse(iam.evaluate([requested], capture, now=NOW)["ready"])
+
+    def test_capture_paces_fixed_diagnostics_without_retrying(self):
+        calls, pauses = [], []
+        class Response:
+            status_code = 429
+            def json(self):
+                return {"error":{"code":429, "status":"RESOURCE_EXHAUSTED"}}
+        class Session:
+            def post(self, url, **kwargs):
+                calls.append(url)
+                return Response()
+        capture = iam.capture_requests(self.requests[:2], Session(), clock=lambda:NOW, sleep_fn=pauses.append)
+        self.assertEqual(calls, [iam.ENDPOINT, iam.ENDPOINT])
+        self.assertEqual(pauses, [4.5])
+        self.assertEqual([r["httpStatus"] for r in capture["checks"]], [429, 429])
+        self.assertFalse(iam.evaluate(self.requests[:2], capture, now=NOW)["ready"])
 
     def test_denial_http_body_never_persists_raw_message(self):
         requested = self.requests[0]

@@ -40,9 +40,11 @@ def matrix(model, speech_location):
                 # queue-level permission, without fabricating an existing task.
                 add(identity, resource, permission, "queue-policy")
         add(identity, "//iam.googleapis.com/projects/" + PROJECT + "/serviceAccounts/v0-queue@" + PROJECT + ".iam.gserviceaccount.com", "iam.serviceAccounts.actAs")
-        database = "//firestore.googleapis.com/projects/" + PROJECT + "/databases/(default)"
+        # The diagnostic API rejects the Firestore Database full resource name.
+        # This is explicitly an ancestor project-policy check, not database IAM.
+        project_resource = "//cloudresourcemanager.googleapis.com/projects/" + PROJECT
         for permission in ("datastore.entities.get", "datastore.entities.list", "datastore.entities.create", "datastore.entities.update"):
-            add(identity, database, permission, "database-policy")
+            add(identity, project_resource, permission, "project-policy")
         bucket = "//storage.googleapis.com/projects/_/buckets/" + PROJECT + "-media"
         for permission in (("storage.objects.get",) if identity == "v0-web" else ("storage.objects.get", "storage.objects.create")):
             add(identity, bucket, permission, "bucket-policy")
@@ -102,6 +104,15 @@ def incomplete(value):
     return False
 
 
+def normalized_tuple(value):
+    if not isinstance(value, dict):
+        return None
+    # permissionFqdn is documented output-only. An empty context adds no facts;
+    # every nonempty context and every other field must remain exactly bound.
+    return {k:v for k,v in value.items() if k != "permissionFqdn"
+            and not (k == "conditionContext" and v == {})}
+
+
 def evaluate(requests, capture, now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
     expected = {r["id"]: r for r in requests}
@@ -141,23 +152,23 @@ def evaluate(requests, capture, now=None):
             reason = "stale_or_invalid_observation"
         elif record.get("httpStatus") != 200:
             reason = "diagnostic_http_error"
-        elif response.get("accessTuple") != requested["accessTuple"]:
-            # v3 adds permissionFqdn; ignore only this documented output field.
-            actual = response.get("accessTuple", {})
-            if not isinstance(actual, dict) or {k:v for k,v in actual.items() if k != "permissionFqdn"} != requested["accessTuple"]:
-                reason = "principal_resource_permission_mismatch"
-            else:
-                reason = "tuple_valid"
+        elif normalized_tuple(response.get("accessTuple")) != normalized_tuple(requested["accessTuple"]):
+            reason = "principal_resource_permission_mismatch"
         else:
             reason = "tuple_valid"
         if reason == "tuple_valid":
             state = response.get("overallAccessState")
-            if incomplete(response):
+            explanations = [response.get(k, {}) for k in ("allowPolicyExplanation", "denyPolicyExplanation", "pabPolicyExplanation")]
+            summary_errors = response.get("error") or response.get("errors") or any(
+                not isinstance(x, dict) or x.get("error") or x.get("errors") for x in explanations)
+            # A definitive denial is not an incomplete grant. For example,
+            # allow NOT_GRANTED plus unsupported deny UNKNOWN is still denied.
+            if state == "CANNOT_ACCESS" and not summary_errors:
+                access, reason = "denied", "overall_cannot_access"
+            elif incomplete(response):
                 reason = "incomplete_policy_evaluation"
             elif state == "CAN_ACCESS":
                 access, reason = "granted", "overall_can_access"
-            elif state == "CANNOT_ACCESS":
-                access, reason = "denied", "overall_cannot_access"
             else:
                 reason = "overall_unknown"
         checks.append(dict(id=key, **requested["accessTuple"], scope=requested["scope"], access=access, reason=reason))
@@ -172,36 +183,35 @@ def evaluate(requests, capture, now=None):
                              "Unsupported deny permission (permissionDeniable=false) does not override definitive CAN_ACCESS; secondary binding uncertainty does not override policy summaries."])
 
 
-def capture_requests(requests, session, clock=None):
-    """Only the fixed read-only Policy Troubleshooter endpoint is reachable."""
+def capture_requests(requests, session, clock=None, sleep_fn=None):
+    """Only the fixed diagnostic endpoint; pace below its 15/minute quota."""
+    import time
     checks = []
-    for requested in requests:
+    for index, requested in enumerate(requests):
+        if index:
+            (sleep_fn or time.sleep)(4.5)
         response = session.post(ENDPOINT, json={"accessTuple": requested["accessTuple"]}, timeout=30)
         data = response.json()
         # Preserve only diagnostic fields; never persist credentials/headers.
         allowed = ("overallAccessState", "accessTuple", "allowPolicyExplanation",
                    "denyPolicyExplanation", "pabPolicyExplanation", "errors")
         def states_only(value):
-            if isinstance(value, list):
-                return [states_only(x) for x in value if isinstance(x, (dict, list))]
+            # No recursive policy/binding/member maps: preserve only each
+            # policy type's aggregate verdict and diagnostic support flags.
             if not isinstance(value, dict):
-                return {}
-            result = {}
-            for key, item in value.items():
-                if key.endswith("AccessState") or key in ("permissionDeniable", "relevance"):
-                    result[key] = item
-                elif key in ("error", "errors") and item:
-                    result[key] = {"present": True}
-                elif isinstance(item, (dict, list)):
-                    nested = states_only(item)
-                    if nested:
-                        result[key] = nested
-            return result
+                return {"errors":{"present":True}}
+            return {key: ({"present":True} if key in ("error", "errors") else item)
+                    for key,item in value.items()
+                    if key.endswith("AccessState") or key in ("permissionDeniable", "relevance")
+                    or key in ("error", "errors") and item}
         selected = {}
         if isinstance(data, dict):
             for key in allowed:
                 if key in data:
-                    selected[key] = data[key] if key in ("accessTuple", "overallAccessState") else states_only(data[key])
+                    if key == "errors":
+                        selected[key] = {"present":True} if data[key] else []
+                    else:
+                        selected[key] = data[key] if key in ("accessTuple", "overallAccessState") else states_only(data[key])
         if response.status_code != 200:
             error = data.get("error", {}) if isinstance(data, dict) else {}
             selected = {"error": {"code": error.get("code"), "status": error.get("status")}}

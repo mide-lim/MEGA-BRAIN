@@ -26,6 +26,12 @@ APPROVED_IMAGES = {
     'worker': IMAGE_ROOT + 'worker@sha256:8a6895e5780dd5697de525be8450f91c2bd4dd9a7fe4ea742d90f8ee77079ce7',
     **{stage: IMAGE_ROOT + 'worker@sha256:c89bf657cfabcab99ac3bbc7ee333ad8964871bd4227095934e8c53e3073b441' for stage in STAGES},
 }
+# Legacy OCI index 8a6895e... contains exactly this linux/amd64 child.
+# Registry manifests were verified by content SHA256, descriptor size3894
+# and mediaType; this fixed pair never admits another image or parent.
+APPROVED_RESOLVED_IMAGES = {**APPROVED_IMAGES,
+    'worker': IMAGE_ROOT + 'worker@sha256:fbaad22113b762a8933a26872c79c4f93a4b3bebf8afb6dba93b1a939f91b319',
+}
 TARGET_RETRY = dict(maxAttempts=20, maxRetryDuration='3600s', minBackoff='10s',
                     maxBackoff='60s', maxDoublings=3)
 QUEUE_FIELDS = ('name', 'state', 'rateLimits', 'retryConfig', 'httpTarget',
@@ -79,7 +85,7 @@ def validate_snapshot(snapshot, now=None):
             raise ValueError('Service/revision mismatch')
         if (kind != 'worker' and service.get('closedFence') != 'v2') or service.get('ready') is not True:
             raise ValueError('Runtime processing/dispatch not proven closed')
-        if service.get('image') != APPROVED_IMAGES[kind]:
+        if service.get('configuredImage') != APPROVED_IMAGES[kind] or service.get('image') != APPROVED_RESOLVED_IMAGES[kind]:
             raise ValueError('Runtime image outside exact reviewed allowlist')
 
 
@@ -163,7 +169,7 @@ class Google:
         for kind in KINDS:
             name = f'projects/{PROJECT}/locations/{REGION}/services/megabrain-v0-{kind}'
             service = self.get('https://run.googleapis.com/v2/' + name,
-                               'name,reconciling,terminalCondition,trafficStatuses,latestReadyRevision')
+                               'name,reconciling,terminalCondition,trafficStatuses,latestReadyRevision,template(containers(image))')
             traffic = service.get('trafficStatuses', [])
             if service.get('name') != name or service.get('reconciling') or service.get('terminalCondition', {}).get('state') != 'CONDITION_SUCCEEDED' or len(traffic) != 1 or traffic[0].get('percent') != 100:
                 raise ValueError('Service not fully stable')
@@ -182,11 +188,12 @@ class Google:
             fence = [row for row in containers[0].get('env', []) if row.get('name') == FENCE]
             if kind != 'worker' and fence != [{'name': FENCE, 'value': 'v2'}]:
                 raise ValueError('Closed release fence absent/conflicting')
-            if containers[0].get('image') != APPROVED_IMAGES[kind]:
+            configured = service.get('template', {}).get('containers', [])
+            if len(configured) != 1 or configured[0].get('image') != APPROVED_IMAGES[kind] or containers[0].get('image') != APPROVED_RESOLVED_IMAGES[kind]:
                 raise ValueError('Serving image outside exact reviewed allowlist')
             # Persist only the nonsecret fence; discard every other env value.
             result[kind] = dict(name=name, revision=revision,
-                                image=containers[0].get('image'), closedFence='v2' if kind != 'worker' else None, ready=True)
+                                configuredImage=configured[0]['image'], image=containers[0].get('image'), closedFence='v2' if kind != 'worker' else None, ready=True)
         return result
 
     def patch(self, stage, body):

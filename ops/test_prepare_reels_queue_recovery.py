@@ -17,7 +17,7 @@ class Fake:
                        for stage in m.QUEUE_STAGES}
         self.runtime_data = {kind: dict(name=f'projects/{m.PROJECT}/locations/{m.REGION}/services/megabrain-v0-{kind}',
                                        revision=f'projects/{m.PROJECT}/locations/{m.REGION}/services/megabrain-v0-{kind}/revisions/megabrain-v0-{kind}-00001-abc',
-                                       image=m.APPROVED_IMAGES[kind],
+                                       configuredImage=m.APPROVED_IMAGES[kind], image=m.APPROVED_RESOLVED_IMAGES[kind],
                                        closedFence=None if kind == 'worker' else 'v2', ready=True) for kind in m.KINDS}
         self.nonempty = False
         self.patches = []
@@ -85,6 +85,9 @@ class QueueRecovery(unittest.TestCase):
             lambda s: s['runtime']['web'].update(image='mutable:latest'),
             lambda s: s['runtime']['analysis'].update(image=m.IMAGE_ROOT + 'worker@sha256:' + 'a' * 64),
             lambda s: s['runtime']['worker'].update(image=m.APPROVED_IMAGES['analysis']),
+            lambda s: s['runtime']['worker'].update(configuredImage=m.APPROVED_RESOLVED_IMAGES['worker']),
+            lambda s: s['runtime']['worker'].update(image=m.APPROVED_IMAGES['worker']),
+            lambda s: s['runtime']['analysis'].update(configuredImage=m.APPROVED_IMAGES['worker']),
             lambda s: s['queues']['processing'].update(state='RUNNING'),
             lambda s: s['queues']['analysis']['rateLimits'].update(maxConcurrentDispatches=2),
             lambda s: s.update(observedAt='2000-01-01T00:00:00Z'),
@@ -160,6 +163,8 @@ class RuntimeTransport(unittest.TestCase):
                 self.foreign = False
                 self.bad_traffic = False
                 self.bad_fence = False
+                self.bad_parent = False
+                self.bad_child = False
             def get(self, url, params, timeout):
                 self.calls.append((url, params))
                 kind = url.split('megabrain-v0-')[-1].split('-00001')[0]
@@ -168,9 +173,10 @@ class RuntimeTransport(unittest.TestCase):
                     if self.foreign:
                         revision = 'projects/other/locations/us-central1/revisions/foreign'
                     return Response(dict(name=url.split('/v2/')[1], latestReadyRevision=revision,
+                                         template={'containers': [{'image': m.APPROVED_IMAGES[kind] if not self.bad_parent else m.IMAGE_ROOT + 'worker@sha256:' + 'a' * 64}]},
                                          terminalCondition={'state': 'CONDITION_SUCCEEDED'},
                                          trafficStatuses=[dict(revision=revision, percent=99 if self.bad_traffic else 100)]))
-                return Response(dict(name=revision, containers=[dict(image=m.APPROVED_IMAGES[kind],
+                return Response(dict(name=revision, containers=[dict(image=m.APPROVED_RESOLVED_IMAGES[kind] if not self.bad_child else m.IMAGE_ROOT + 'worker@sha256:' + 'b' * 64,
                     env=[dict(name=m.FENCE, value='wrong' if self.bad_fence else 'v2'),
                          dict(name='OTHER', value='PRIVATE_ENV_SENTINEL')])]))
         session = Session()
@@ -178,7 +184,7 @@ class RuntimeTransport(unittest.TestCase):
         self.assertNotIn('PRIVATE_ENV_SENTINEL', str(result))
         self.assertEqual(set(result), set(m.KINDS))
         self.assertEqual(len(session.calls), 10)
-        for flag in ('foreign', 'bad_traffic', 'bad_fence'):
+        for flag in ('foreign', 'bad_traffic', 'bad_fence', 'bad_parent', 'bad_child'):
             session = Session()
             setattr(session, flag, True)
             with self.assertRaises(ValueError):

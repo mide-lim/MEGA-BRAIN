@@ -47,7 +47,7 @@ export function decodeValue(value){
   throw new Error('Tipo Firestore desconhecido.');
 }
 export const decodeFields=fields=>Object.fromEntries(Object.entries(fields).map(([key,value])=>[key,decodeValue(value)]));
-const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks','execution_stops','reels_commands','reels_command_items','reels_executions','reels_events','reels_controls','reels_taxonomy','reels_finance','reels_index','reels_legacy_content','reels_backup_links','reels_historical_activity','reels_historical_finance','reels_historical_coverage','reels_reconciliations']);
+const collections=new Set(['videos','settings','analyses','migration_runs','jobs','reservations','control_chunks','execution_stops','reels_commands','reels_command_items','reels_executions','reels_events','reels_controls','reels_taxonomy','reels_finance','reels_index','reels_legacy_content','reels_backup_links','reels_historical_activity','reels_historical_finance','reels_historical_coverage','reels_reconciliations','reels_quality_receipts']);
 function documentPath(path){
   const [collection,id,...rest]=String(path).split('/');
   if(!collections.has(collection)||!id||rest.length||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw new Error('Documento fora do escopo permitido.');

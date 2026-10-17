@@ -1,12 +1,14 @@
 import {createHash} from 'node:crypto';
 import {parseReelLinks} from './links.mjs';
+import {buildQueueCuration} from './reels-quality-diagnostics.mjs';
 import {projectReel,reelDetail,projectExecution,matchesReel,eligibility,reelIdPattern,REEL_LIST_FIELDS,REEL_EXECUTION_FIELDS,categoryNavigation} from './reels-model.mjs';
 import {LEGACY_LIST_FIELDS,withPreservedSummary,preservedDetail,preservedRecordAvailable,HISTORICAL_FIELDS,historicalActivity,HISTORICAL_FINANCE_FIELDS,historicalFinance} from './reels-preserved-content.mjs';
 const invalid=message=>Object.assign(Error(message),{status:400,code:'INVALID_QUERY'});
+const hasContextualFilters=query=>{let facets=[];if(query.facets!==undefined&&query.facets!==''){try{facets=JSON.parse(query.facets);}catch{throw invalid('Facetas inválidas.');}if(!Array.isArray(facets)||facets.length>8)throw invalid('Facetas inválidas.');}return facets.length>0||['context','dimension','value'].some(field=>query[field]!==undefined&&query[field]!==null&&query[field]!=='');};
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const executionOrder=(a,b)=>{const left=a.queuedAt??a.createdAt,right=b.queuedAt??b.createdAt;if(left!==right)return left===null?1:right===null?-1:left<right?-1:1;const rank={acquisition:0,transcription:1,analysis:2};return (a.attempt??0)-(b.attempt??0)||(rank[a.stage]??3)-(rank[b.stage]??3)||String(a.id??'').localeCompare(String(b.id??''));};
 export class ReelsRepository{
- constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;}
+ constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
  async refresh(id){this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;const v=await this.raw(id);const legacy=v?(await this.store.get('reels_legacy_content/'+id))?.data:null;return v?categoryNavigation([withPreservedSummary(projectReel(v),legacy)],(await this.store.get('settings/reels_v2_taxonomy'))?.data).items[0]:null;}
@@ -36,13 +38,17 @@ export class ReelsRepository{
  }
  validateQuery(q){
   for(const [field,allowed]of Object.entries({workspace:['all','library','ready','attention'],attentionKind:['confirmed','uncertain'],sort:['newest','oldest','title'],status:['registered','queued','running','waiting','completed','failed','uncertain'],stage:['acquisition','transcription','analysis']}))if(q[field]&&(field==='status'?!String(q[field]).split(',').every(v=>allowed.includes(v)):!allowed.includes(q[field])))throw invalid('Filtro inválido.');
-  for(const field of ['q','category','language','tag','worker','destination'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
+  for(const field of ['q','category','language','tag','worker','destination','context','dimension','value'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
+  if(q.facets!==undefined&&(typeof q.facets!=='string'||q.facets.length>4096))throw invalid('Facetas inválidas.');
+  if(hasContextualFilters(q)&&q.workspace!=='library')throw invalid('Facetas contextuais pertencem ao acervo publicado.');
  }
  async matching(query={}){
-  const items=await this.items();if(!query.category)return items.filter(x=>matchesReel(x,query));
+  this.validateQuery(query);
+  const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
+  const items=await this.items();if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
   const {taxonomy}=categoryNavigation(items,(await this.store.get('settings/reels_v2_taxonomy'))?.data),ids=new Set([query.category]);let added=true;
   while(added){added=false;for(const node of taxonomy.nodes??[])if(ids.has(node.parentId)&&!ids.has(node.id)){ids.add(node.id);added=true;}}
-  const {category,...rest}=query;return items.filter(x=>matchesReel(x,rest)&&x.categoryIds.some(id=>ids.has(id)));
+  const {category,...rest}=query;return refine(items.filter(x=>matchesReel(x,rest)&&x.categoryIds.some(id=>ids.has(id))));
  }
  async list(query={}){
   this.validateQuery(query);const limit=Number(query.limit??50);if(!Number.isInteger(limit)||limit<1||limit>100)throw invalid('Limite inválido.');
@@ -55,6 +61,15 @@ export class ReelsRepository{
  }
  async summary(){const counts={registered:0,queued:0,running:0,waiting:0,completed:0,published:0,attention:0,ready:0,confirmedFailures:0,inconclusive:0,total:0,totalInventory:0};for(const i of await this.items()){counts.total++;if(Object.hasOwn(counts,i.status))counts[i.status]++;if(i.publication.available)counts.published++;if(eligibility(i)===null)counts.ready++;if(!i.publication.available){if(i.status==='failed')counts.confirmedFailures++;if(i.status==='uncertain')counts.inconclusive++;if(['uncertain','failed'].includes(i.status))counts.attention++;}counts.totalInventory=counts.total;}return {counts,...this.observation(),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
  async queues(){const items=await this.items(),config=Object.fromEntries(await Promise.all(['acquisition','transcription','analysis'].map(async id=>[id,(await this.store.get('reels_controls/'+id))?.data??{}])));return {stages:['acquisition','transcription','analysis'].map(id=>{const rows=items.filter(i=>i.stage===id),c=config[id]??{};return {id,name:{acquisition:'Aquisição',transcription:'Transcrição',analysis:'Análise'}[id],...Object.fromEntries(['queued','running','waiting','failed','uncertain'].map(s=>[s,rows.filter(i=>i.status===s).length])),paused:c.paused??true,desiredConcurrency:c.desiredConcurrency??null,effectiveConcurrency:c.effectiveConcurrency??null,...this.observation()};}),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
+ async quality(query={}){
+  const items=await this.items(),epoch=this.cacheEpoch,now=this.clock();
+  if(!this.qualitySnapshot||this.qualitySnapshot.expiresAt<=now||this.qualitySnapshot.epoch!==epoch){
+   if(!this.qualityPending)this.qualityPending=(async()=>{let executions=[],executionAvailability='available';try{executions=(await this.scan('reels_executions',[...REEL_EXECUTION_FIELDS,'cohortId'])).map(({data,path})=>({...projectExecution({...data,id:data.id??path.split('/').at(-1)}),cohortId:data.cohortId}));}catch{executionAvailability='unavailable';}const at=this.clock();this.qualitySnapshot={executions,executionAvailability,observedAt:new Date(at).toISOString(),expiresAt:at+this.cacheTtlMs,epoch};})().finally(()=>{this.qualityPending=null;});
+   await this.qualityPending;
+  }
+  const snapshot=this.qualitySnapshot,{limit=50,cursor=null,...filters}=query;
+  return {...buildQueueCuration({items,executions:snapshot.executions,observedAt:snapshot.observedAt,executionAvailability:snapshot.executionAvailability,filters,limit:Number(limit),cursor}),catalogueObservation:this.observation()};
+ }
  async select(selection){
   let rows,total,excluded=[];
   if(selection?.all===true&&!selection.ids){this.validateQuery(selection.filters??{});rows=await this.matching(selection.filters??{});total=rows.length;}

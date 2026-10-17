@@ -1,7 +1,8 @@
 import {consolidatePublication} from './analysis-publication.mjs';
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
-import {taxonomySignalsSchema,taxonomySignalsInstruction} from './reels-analysis-contract.mjs';
+import {qualitySourceManifest,evaluateQualityGateV2} from './reels-quality-gate.mjs';
+import {taxonomySignalsSchema,taxonomySignalsInstruction,qualityEvidenceV2Schema,contextualSignalsSchema,qualityGateV2Instruction} from './reels-analysis-contract.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
@@ -31,7 +32,7 @@ export function validateProviderResponseSchema(schema){
   for(const child of Object.values(schema.properties??{}))validateProviderResponseSchema(child);
 }
 
-export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignalsEnabled=false}) {
+export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignalsEnabled=false,qualityGateV2Enabled=false,contextCatalogSnapshot=null}) {
   if (!ID.test(record?.id ?? '')) throw new Error('Identificador inválido.');
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket ?? '')) throw new Error('Bucket inválido.');
   if (!Number.isFinite(record.duration_seconds) || record.duration_seconds <= 0) throw new Error('Duração verificada ausente.');
@@ -41,17 +42,26 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
   if (transcript.length>100000) throw new Error('Transcrição excede o escopo do piloto.');
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
-  const schema=taxonomySignalsEnabled?{...reportSchema,properties:{...reportSchema.properties,taxonomySignals:taxonomySignalsSchema}}:reportSchema;
+  let schema=taxonomySignalsEnabled?{...reportSchema,properties:{...reportSchema.properties,taxonomySignals:taxonomySignalsSchema}}:reportSchema;
+  if(qualityGateV2Enabled){
+   schema=structuredClone(schema);
+   schema.properties.qualityEvidenceV2=qualityEvidenceV2Schema;schema.properties.contextualSignals=contextualSignalsSchema;
+   schema.required=[...schema.required,'qualityEvidenceV2'];
+   const identitySchema=qualityEvidenceV2Schema.properties.title.items.properties.sourceIdentity;
+   for(const entry of [schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence])entry.items.properties.sourceIdentity=identitySchema;
+   if(contextCatalogSnapshot!==null&&(typeof contextCatalogSnapshot!=='object'||Array.isArray(contextCatalogSnapshot)||JSON.stringify(contextCatalogSnapshot).length>30000))throw Error('Catálogo contextual fora do limite.');
+  }
   validateProviderResponseSchema(schema);
   const request={
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,transcript_missing:!transcript.trim(),...(taxonomySignalsEnabled?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:categoryOptions(),category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...(taxonomySignalsEnabled?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
   if(taxonomySignalsEnabled)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
+  if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction;
   return request;
 }
 
@@ -115,7 +125,7 @@ export function analysisPublication(report,record){
 
 // Only evaluates a response already received. Storage and provider failures are
 // deliberately outside this boundary and must retain operational uncertainty.
-export function analysisOutcome(response,record,{requireKnowledge=false,sourceGroundedPublication=false}={}){
+export function analysisOutcome(response,record,{requireKnowledge=false,sourceGroundedPublication=false,qualityGateV2=null}={}){
  const candidate=response?.candidates?.[0];
  if(candidate?.finishReason!=='STOP')return {accepted:false,reasons:['incomplete_response']};
  let parsed;
@@ -126,10 +136,14 @@ export function analysisOutcome(response,record,{requireKnowledge=false,sourceGr
  try{validateCategoryIds(parsed?.categories);}
  catch{return {accepted:false,reasons:['invalid_categories']};}
  let report;
- try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true,sourceGroundedPublication});}
+ try{report=reviewAnalysis(parsed,record,{requireCategoryIds:true,sourceGroundedPublication:sourceGroundedPublication||qualityGateV2!==null});}
  catch{return {accepted:false,reasons:['invalid_report']};}
  if(requireKnowledge&&!report.knowledge)return {accepted:false,reasons:['missing_knowledge']};
  const publication=analysisPublication(report,record);
+ if(qualityGateV2!==null){
+  const quality=evaluateQualityGateV2({...qualityGateV2,record,report});
+  return {accepted:publication.accepted&&quality.accepted,report,quality,reasons:!publication.accepted?['unsupported_revision']:quality.accepted?[]:['quality_gate_v2_not_accepted']};
+ }
  return {accepted:publication.accepted,report,reasons:publication.accepted?[]:['unsupported_revision']};
 }
 

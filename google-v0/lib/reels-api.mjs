@@ -2,13 +2,17 @@ import {ReelsService} from './reels-service.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ReelsFinance} from './reels-finance.mjs';
 import {ReelsReconciliation} from './reels-reconciliation.mjs';
+import {ReelsContextualCurator} from './reels-contextual-curation.mjs';
 import {fail,safeError} from './reels-runtime.mjs';
 const headers={'Cache-Control':'no-store','Content-Type':'application/json; charset=utf-8'};
 const response=(data,status=200)=>Response.json(data,{status,headers});
 async function body(request){const length=request.headers.get('content-length');if(length&&(!/^\d+$/.test(length)||Number(length)>1048576))throw fail('BODY_TOO_LARGE','Conteúdo excede o limite.',413);if(!request.headers.get('content-type')?.toLowerCase().startsWith('application/json'))throw fail('INVALID_CONTENT_TYPE','Envie JSON.',415);let bytes=0,text='';if(!request.body)throw fail('INVALID_JSON','JSON ausente.');const reader=request.body.getReader(),decoder=new TextDecoder();try{while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>1048576){await reader.cancel();throw fail('BODY_TOO_LARGE','Conteúdo excede o limite.',413);}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode();}finally{reader.releaseLock();}try{const result=JSON.parse(text);if(!result||typeof result!=='object'||Array.isArray(result))throw Error();return result;}catch{throw fail('INVALID_JSON','JSON inválido.');}}
-function query(url){const result=Object.fromEntries(url.searchParams);if(result.limit!==undefined){if(!/^\d+$/.test(result.limit)||Number(result.limit)<1||Number(result.limit)>100)throw fail('INVALID_LIMIT','Limite inválido.');result.limit=Number(result.limit);}for(const [k,v]of Object.entries(result)){if(typeof v==='string'&&v.length>(k==='cursor'?8192:500))throw fail('INVALID_INPUT','Filtro muito longo.');}return result;}
-export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued,service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued}),reconciliation=new ReelsReconciliation({repository,processingEnabled,clock})}){
+function query(url){const result=Object.fromEntries(url.searchParams);if(result.limit!==undefined){if(!/^\d+$/.test(result.limit)||Number(result.limit)<1||Number(result.limit)>100)throw fail('INVALID_LIMIT','Limite inválido.');result.limit=Number(result.limit);}for(const [k,v]of Object.entries(result)){if(typeof v==='string'&&v.length>(k==='cursor'?8192:k==='facets'?4096:500))throw fail('INVALID_INPUT','Filtro muito longo.');}return result;}
+export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued,contextual,service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued}),reconciliation=new ReelsReconciliation({repository,processingEnabled,clock})}){
  const taxonomy=new ReelsTaxonomy({repository,clock}),finance=new ReelsFinance({repository,clock});
+ let contextualCurator=contextual;
+ const getContextual=()=>contextualCurator??=new ReelsContextualCurator({repository,clock});
+ repository.contextualMatchingIds=async filters=>getContextual().matchingIds(filters);
  const controls={processingAllowed:processingEnabled===true,processingReason:processingEnabled===true?null:'Processamento real desabilitado nesta entrega.'};
  return async function handle(request){
   try{
@@ -22,6 +26,9 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='items')return response(await repository.list(q));
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}
     if(path==='queues')return response({...await repository.queues(),...controls});
+     if(path==='quality')return response({...await repository.quality(q),...controls});
+     if(path==='contextual')return response(await getContextual().overview(q));
+     if(parts[0]==='contextual'&&parts.length===2){const item=await getContextual().detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Conteúdo publicado não encontrado.',404);return response(item);}
     if(path==='events')return response(await repository.events(q));
     if(path==='historical-activity')return response(await repository.historicalActivity(q));
     if(path==='historical-finance')return response(await repository.historicalFinance());

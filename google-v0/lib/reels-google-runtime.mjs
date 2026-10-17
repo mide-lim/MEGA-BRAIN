@@ -2,7 +2,7 @@ import {GoogleREST} from './google-rest.mjs';
 import {serviceIdentity} from './service-identity.mjs';
 import {Firestore} from './firestore.mjs';
 import {Storage} from './storage.mjs';
-import {googleOperations} from './google-operations.mjs';
+import {googleOperations,createMediaInspectionReceipt} from './google-operations.mjs';
 import {mediaTools} from './media-tools.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {workerAuthorization} from './worker-auth.mjs';
@@ -12,6 +12,7 @@ import {ReelsDispatcher} from './reels-dispatcher.mjs';
 import {ReelsService} from './reels-service.mjs';
 import {ReelsCommandRunner} from './reels-command-runner.mjs';
 import {reelsProcessingEnabled} from './reels-runtime-policy.mjs';
+import {qualityDigest} from './reels-quality-gate.mjs';
 import {knowledgeReadiness} from './reels-quality.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ensure} from './reels-runtime.mjs';
@@ -49,7 +50,12 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     return api.request(url,options);
    }};
    const video=input.video??await repository.raw(job.reelId);
-   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null});
+   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true,reels_quality_policy_version:'gate_v2'},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null,inspect:dependencies.inspect??inspectMedia,qualityEvidence:{mediaInspection:video?.media_inspection_receipt??null,transcriptionReceipt:video?.transcription_receipt??null},saveQualityReceipt:async receipt=>{
+    const path='reels_quality_receipts/'+receipt.id,receiptHash=qualityDigest(receipt);
+    const created=await store.create(path,receipt),saved=created.created?created:await store.get(path);
+    if(!saved?.data||qualityDigest(saved.data)!==receiptHash)throw Error('Recibo de qualidade salvo diverge; ponteiro preservado.');
+    return {id:receipt.id,receiptHash};
+   }});
    return {adapter,job,video};
   }
   const operations={
@@ -57,7 +63,16 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     // An already verified source is reused without consulting Instagram.
     if(video?.media_verified&&video.video_key===`originals/instagram/${job.reelId}/video.mp4`&&/^\d+$/.test(video.video_generation??'')){
      const object=await storage.metadata(video.video_key);if(!object||object.generation!==video.video_generation||Number(object.size)!==video.video_bytes)throw Object.assign(Error('Mídia preservada diverge da referência.'),{definitive:true});
-     return {changes:{video_key:video.video_key,video_generation:video.video_generation,video_bytes:video.video_bytes,media_verified:true,audio_status:video.audio_status,duration_seconds:video.duration_seconds},reused:true};
+     let receipt=video.media_inspection_receipt,videoSha=video.video_sha256;
+     const receiptBody=receipt?Object.fromEntries(Object.entries(receipt).filter(([key])=>key!=='receiptId')):null;
+     if(!receipt||receipt.version!==1||receipt.sourceIdentity?.key!==video.video_key||receipt.sourceIdentity?.generation!==video.video_generation||receipt.contentSha256!==videoSha||receipt.contentBytes!==video.video_bytes||receipt.decodePassed!==true||receipt.probePassed!==true||receipt.receiptId!=='media_'+qualityDigest(receiptBody)||receipt.durationSeconds!==video.duration_seconds){
+      const bytes=await storage.read(video.video_key,{generation:video.video_generation});
+      if(bytes.length!==video.video_bytes)throw Error('Bytes da mídia salva divergentes.');
+      const media=await (dependencies.inspect??inspectMedia)(bytes);
+      if(media.audio_status!=='present')throw Object.assign(Error('Áudio esperado não confirmado pela reinspeção.'),{definitive:true});
+      receipt=createMediaInspectionReceipt({video,media,bytes});if(videoSha&&receipt.contentSha256!==videoSha)throw Object.assign(Error('Checksum da mídia preservada diverge.'),{definitive:true});videoSha=receipt.contentSha256;
+     }
+     return {changes:{video_key:video.video_key,video_generation:video.video_generation,video_bytes:video.video_bytes,video_sha256:videoSha,media_inspection_receipt:receipt,media_verified:true,audio_status:receipt.audioStatus,duration_seconds:receipt.durationSeconds},reused:true};
     }
     if(await storage.metadata(`originals/instagram/${job.reelId}/video.mp4`))throw Object.assign(Error('Objeto existente sem referência verificada; conciliar antes de adquirir.'),{requiresReconciliation:true,code:'MEDIA_REFERENCE_REQUIRES_RECONCILIATION'});
     // Stop proof has its own immutable receipt. Updating the execution here
@@ -66,15 +81,15 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     return {changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};
    },
    async transcribe(input){const {adapter,video}=await scoped(input);const result=await adapter.transcription({...input,video});return result.operation_name?{pending:true,operationName:result.operation_name,changes:result.changes??{}}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
-   async pollTranscription(input){const {adapter}=await scoped(input);const result=await adapter.pollTranscription(input);return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
+   async pollTranscription(input){const {adapter,video}=await scoped(input);const result=await adapter.pollTranscription({...input,video});return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
    async analyze(input){const {adapter,video}=await scoped(input);const result=await adapter.analysis({...input,video});const quality=knowledgeReadiness(result.changes?.analysis);
-    const valid=result.changes?.analysis_quality_status==='accepted'&&quality.accepted;
-    const changes={...result.changes};if(!valid&&changes.analysis){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';}
-    return {changes,valid,quality,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
+    const valid=result.changes?.analysis_quality_status==='accepted'&&quality.accepted&&result.qualityGate?.accepted===true&&result.qualityPublication?.policyVersion==='gate_v2';
+    const changes={...result.changes};if(!valid&&changes.analysis&&result.qualityGate?.accepted!==false){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';changes.candidate_quality_receipt=result.qualityPublication?.qualityReceipt??changes.candidate_quality_receipt??null;}
+    return {changes,valid,quality:result.qualityGate?{...result.qualityGate,accepted:valid,state:valid?'supported':result.qualityGate.state==='invalid'?'invalid':'inconclusive',readiness:quality}:{accepted:false,state:'inconclusive',checks:[],gaps:[],readiness:quality},qualityPublication:valid?result.qualityPublication:null,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
    }
   };
   const taxonomy=new ReelsTaxonomy({repository});
-  const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
+  const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,requiredQualityPolicyVersion:'gate_v2',effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
   const service=new ReelsService({repository,processingEnabled:enabled,onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Despacho requer retomada.');return receipt;},onCommandQueued:(operation,options)=>dispatcher.enqueueControl(operation,options)});
   const runner=new ReelsCommandRunner({service,dispatcher,enabled,pageSize:25});
   runtime={pipeline,store,repository,dispatcher,service,runner};return runtime;

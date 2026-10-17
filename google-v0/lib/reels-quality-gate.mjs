@@ -110,6 +110,7 @@ export function evaluateQualityGateV2({record={},report,mediaInspection=null,tra
  if(!report||typeof report!=='object')return {policyVersion:qualityPolicyVersion,accepted:false,state:'inconclusive',reportHash,sourceManifestHash,sourceManifest,checks:[check('RESPONSE_NOT_RECEIVED','inconclusive','Resposta ausente não confirma falha nem autoriza repetição paga.')],gaps:[],replayAllowed:false};
  if(!sourceManifest.video||record.media_verified!==true||!Number.isFinite(record.duration_seconds)||record.duration_seconds<=0)checks.push(check('MEDIA_IDENTITY_MISSING','inconclusive','Identidade ou duração verificável da mídia ausente.'));
  else if(!mediaInspection||mediaInspection.kind!=='media-inspector'||!present(mediaInspection.receiptId)||!same(mediaInspection.sourceIdentity,sourceManifest.video))checks.push(check('MEDIA_INSPECTION_MISSING','inconclusive','Recibo de inspeção real vinculado à geração da mídia ausente.'));
+ else if(mediaInspection.version===1&&(mediaInspection.receiptId!=='media_'+qualityDigest(Object.fromEntries(Object.entries(mediaInspection).filter(([key])=>key!=='receiptId')))||mediaInspection.contentSha256!==record.video_sha256||mediaInspection.contentBytes!==record.video_bytes))checks.push(check('MEDIA_INTEGRITY_RECEIPT_INVALID','invalid','Checksum, tamanho ou hash do recibo de inspeção divergente da mídia salva.'));
  else if(mediaInspection.decodePassed!==true||mediaInspection.probePassed!==true||mediaInspection.durationSeconds!==record.duration_seconds||mediaInspection.expectedAudio===true&&mediaInspection.audioTrackPresent!==true)checks.push(check('MEDIA_INSPECTION_INVALID','invalid','Inspeção salva não confirma decodificação, duração ou trilha esperada.'));
  else checks.push(check('MEDIA_INSPECTED','supported','Recibo de inspeção salvo e identidade da mídia conferidos.'));
  const transcript=typeof record.transcript==='string'?record.transcript:null;
@@ -178,8 +179,8 @@ export function verifyPublicationQualityReceipt({video,receipt}={}){
  const verified=entry=>exactPropositions.get(entry?.fieldPath)===entry?.propositionHash&&entry?.state==='supported'&&entry.policyVersion===semanticQualityPolicyVersion&&entry.reportHash===candidateContentHash&&entry.sourceManifestHash===receipt.sourceManifestHash&&present(entry.reviewReceiptId);
  return {trusted:true,reason:null,policyVersion:qualityPolicyVersion,receiptId:receipt.id,candidateContentHash,verifiedAttributes:list(propositions?.attributes).filter(verified),verifiedUnits:list(propositions?.units).filter(verified),verifiedPrimaryContext:verified(propositions?.primaryContext)?propositions.primaryContext:null,verifiedEvidenceIds:list(receipt.contextualEvidence).filter(e=>e.state==='supported'&&['semantic_support_reviewed','visual_support_independently_verified'].includes(e.verificationLevel)&&present(e.reviewReceiptId)).map(e=>e.id),literalEvidenceIds:list(receipt.contextualEvidence).filter(e=>e.state==='supported'&&e.verificationLevel==='literal_anchor_verified').map(e=>e.id)};
 }
-export async function persistQualityCandidateV2({record,report,rawResponse,ports,expectedPublicationRevision=null,...evidence}={}){
- for(const method of ['saveCandidate','saveReceipt','compareAndSetPublication'])if(typeof ports?.[method]!=='function')throw Error('Porta de persistência de qualidade ausente: '+method);
+export async function prepareQualityCandidateV2({record,report,rawResponse,ports,expectedPublicationRevision=null,...evidence}={}){
+ for(const method of ['saveCandidate','saveReceipt'])if(typeof ports?.[method]!=='function')throw Error('Porta de persistência de qualidade ausente: '+method);
  if(rawResponse===undefined||rawResponse===null)return {accepted:false,state:'inconclusive',replayAllowed:false,reasons:['response_not_received'],publicationChanged:false};
  const saved=await ports.saveCandidate({reelId:record.id,rawResponse,report,candidateContentHash:qualityCandidateHash(report)});
  const candidateIdentity=resultIdentity(saved);
@@ -191,9 +192,17 @@ export async function persistQualityCandidateV2({record,report,rawResponse,ports
  const receiptIdentity={receiptId:receipt.id,receiptHash:qualityDigest(receipt)};
  const savedReceipt=await ports.saveReceipt(receipt);
  if(savedReceipt?.id!==receipt.id||savedReceipt?.receiptHash!==receiptIdentity.receiptHash)throw Error('Recibo precisa de confirmação durável antes da publicação.');
- if(!gate.accepted)return {...gate,candidateIdentity,receiptIdentity,publicationChanged:false};
- const publicationIdentity={...candidateIdentity,reportHash:gate.reportHash};
+ return {...gate,candidateIdentity,receiptIdentity,publicationIdentity:{...candidateIdentity,reportHash:gate.reportHash},expectedPublicationRevision,publicationChanged:false};
+}
+export function qualityPublicationRevision(record={}){
+ return qualityDigest({analysisKey:record.analysis_key??null,analysisGeneration:record.analysis_generation??null,analysisContentHash:record.analysis?qualityCandidateHash(record.analysis):null,publication:record.publication??null});
+}
+export async function persistQualityCandidateV2(options={}){
+ if(typeof options.ports?.compareAndSetPublication!=='function')throw Error('Porta de persistência de qualidade ausente: compareAndSetPublication');
+ const gate=await prepareQualityCandidateV2(options);
+ if(!gate.accepted)return gate;
+ const {record,ports,expectedPublicationRevision=null}=options,{candidateIdentity,receiptIdentity,publicationIdentity}=gate;
  const committed=await ports.compareAndSetPublication({reelId:record.id,expectedPublicationRevision,publicationIdentity,qualityPolicyVersion,qualityReceipt:receiptIdentity,sourceManifest:gate.sourceManifest});
  if(committed?.applied!==true)return {...gate,accepted:false,state:'inconclusive',candidateIdentity,receiptIdentity,publicationChanged:false,reasons:['publication_revision_conflict']};
- return {...gate,candidateIdentity,receiptIdentity,publicationIdentity,publicationChanged:true,event:{eventType:'publicationAccepted',reelId:record.id,publicationIdentity,qualityPolicyVersion,sourceManifest:gate.sourceManifest,contextualSignals:report.contextualSignals??null}};
+ return {...gate,candidateIdentity,receiptIdentity,publicationIdentity,publicationChanged:true,event:{eventType:'publicationAccepted',reelId:record.id,publicationIdentity,qualityPolicyVersion,sourceManifest:gate.sourceManifest,contextualSignals:options.report?.contextualSignals??null}};
 }

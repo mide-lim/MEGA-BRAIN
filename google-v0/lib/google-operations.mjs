@@ -7,14 +7,17 @@ import {analysisTimeoutMs} from './google-rest.mjs';
 import {submitAnalysisWithRetry,maximumAnalysisAttempts} from './analysis-retry.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {buildAnalysisRequest,analysisOutcome} from './analysis.mjs';
+import {qualitySourceManifest,qualityDigest,qualityCandidateHash,qualityPublicationRevision,evaluateQualityGateV2,prepareQualityCandidateV2} from './reels-quality-gate.mjs';
 import {speechWordEvidence} from './reels-speech-evidence.mjs';
 
 // Legacy callers retain the reservation gate. The v2 caller supplies a
 // server-owned execution authorization, independently of financial reporting.
-export function googleOperations({api,storage,tools,preset,config,gate,executionAuthorization=null,executionIds=null,preparedAudioKey=null,inspect=inspectMedia}){
+export function googleOperations({api,storage,tools,preset,config,gate,executionAuthorization=null,executionIds=null,preparedAudioKey=null,inspect=inspectMedia,qualityEvidence=null,saveQualityReceipt=null}){
   if(api.project!=='megabrain-v0-1017370021431'||storage.bucket!==`${api.project}-media`)throw new Error('Adaptadores fora do projeto v0.');
   if(typeof gate!=='function'&&typeof executionAuthorization!=='function')throw new Error('Autorização de execução obrigatória.');
   if(executionAuthorization!==null&&typeof executionAuthorization!=='function'||executionIds!==null&&typeof executionIds!=='function'||preparedAudioKey!==null&&typeof preparedAudioKey!=='function')throw Error('Contexto de execução inválido.');
+  const qualityMode=!!executionAuthorization&&config.reels_quality_policy_version==='gate_v2';
+  if(qualityMode&&typeof saveQualityReceipt!=='function')throw Error('Persistência de recibo de qualidade obrigatória para o worker v2.');
   async function admitted(id,stage,videoId){
     if(config?.enabled!==true||config.uploads_enabled!==true)throw new Error('Operações Google desligadas.');
     if(executionAuthorization){await executionAuthorization({executionId:id,stage,videoId});return;}
@@ -36,6 +39,27 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
     return {caption_status:'unavailable'};
   }
 
+  const qualityContext=video=>({mediaInspection:qualityEvidence?.mediaInspection??video.media_inspection_receipt??null,transcriptionReceipt:qualityEvidence?.transcriptionReceipt??video.transcription_receipt??null,trustedReviews:[]});
+  async function qualityChanges(response,video,rawIdentity){
+   const outcome=analysisOutcome(response,video,{requireKnowledge:true,qualityGateV2:qualityContext(video)}),report=outcome.report??{};
+   const candidateKey=rawIdentity.key.replace(/analysis\.json$/,'quality-candidate.json');
+   const prepared=await prepareQualityCandidateV2({record:video,report,rawResponse:response,expectedPublicationRevision:qualityPublicationRevision(video),...qualityContext(video),ports:{
+    saveCandidate:async value=>{const object=await persist(candidateKey,{report:value.report,candidateContentHash:value.candidateContentHash,rawResponseIdentity:rawIdentity,parseReasons:outcome.reasons??[]});return {key:candidateKey,generation:object.generation,candidateContentHash:value.candidateContentHash};},
+    saveReceipt:saveQualityReceipt
+   }});
+   const accepted=outcome.accepted&&prepared.accepted;
+   const changes=accepted?{analysis:report,analysis_key:prepared.candidateIdentity.key,analysis_generation:prepared.candidateIdentity.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:video.analysis_quality_status??'review_required',analysis_review_reasons:outcome.reasons?.length?outcome.reasons:['quality_gate_v2_not_accepted'],analysis_candidate:outcome.report??null,candidate_analysis_key:prepared.candidateIdentity.key,candidate_analysis_generation:prepared.candidateIdentity.generation,candidate_quality_receipt:prepared.receiptIdentity};
+   return {changes,qualityGate:prepared,qualityPublication:accepted?{policyVersion:'gate_v2',expectedPublicationRevision:prepared.expectedPublicationRevision,publicationIdentity:prepared.publicationIdentity,qualityReceipt:prepared.receiptIdentity}:null};
+  }
+  function sourcePreflight(video){
+   const evaluated=evaluateQualityGateV2({record:video,report:{},...qualityContext(video)});
+   if(!video.video_sha256||video.media_inspection_receipt?.version!==1||video.media_inspection_receipt.contentSha256!==video.video_sha256||video.media_inspection_receipt.contentBytes!==video.video_bytes||typeof video.transcript!=='string')return {accepted:false,state:'inconclusive',checks:[{code:'SOURCE_INTEGRITY_NOT_RECORDED',state:'inconclusive',reason:'Inspeção de bytes ou transcrição de origem não está registrada para esta revisão.',policyVersion:'gate_v2'}],gaps:evaluated.gaps,replayAllowed:false};
+   const checks=evaluated.checks.filter(c=>/^(?:MEDIA_|AUDIO_|TRANSCRIPT_IDENTITY_|TRANSCRIPT_TEMPORAL_)/.test(c.code)&&c.state!=='supported');
+   return checks.length?{accepted:false,state:checks.some(c=>c.state==='invalid')?'invalid':'inconclusive',checks,gaps:evaluated.gaps,replayAllowed:false}:null;
+  }
+  function transcriptionReceipt(video,reference,key,object,{operationIdentity,mode,words}){
+   return {version:1,operationIdentity,operationKind:mode==='synchronous'?'local_synchronous_submission':'provider_batch_operation',mode,sourceAudioIdentity:{key:reference.audio_key,generation:reference.audio_generation},resultIdentity:{key,generation:object.generation},rawResultIdentity:{key,generation:object.generation},words,alignmentMeasured:false,providerFidelityMeasured:false};
+  }
   const transcriptionIdFor=videoId=>{const id=executionIds?executionIds(videoId,'transcription'):stageExecutionId(videoId,'transcription');if(!/^[A-Za-z0-9_-]{16,100}$/.test(id??''))throw Error('Identidade STT inválida.');return id;};
   const audioKeyFor=videoId=>{const key=preparedAudioKey?.(videoId)??`results/instagram/${videoId}/${transcriptionIdFor(videoId)}/audio.flac`;if(typeof key!=='string'||!key.startsWith(`results/instagram/${videoId}/`)||!/^results\/instagram\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]{16,100}\/audio\.flac$/.test(key))throw Error('Referência de áudio fora do Reel.');return key;};
   function audioReference(video,key,object,audio){
@@ -98,6 +122,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       if(saved.preset_version!==preset.version||saved.model!==config.gemini_model||!saved.response)throw Error('Resposta salva diverge da revisão atual.');
       let caption=video.source_caption?.text?{source_caption:video.source_caption,caption_status:'captured'}:{caption_status:'unavailable'};
       if(!video.source_caption?.text){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
+      if(qualityMode){const prepared=await qualityChanges(saved.response,{...video,...caption},{key,generation:object.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},budget('analysis'),saved.usage_cost),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication,artifact:{key,generation:object.generation}};}
       const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
       return {...result(video.id,'analysis',{...caption,...changes},budget('analysis'),saved.usage_cost),artifact:{key,generation:object.generation}};
@@ -114,7 +139,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const key=`originals/instagram/${video.id}/video.mp4`;
       const object=await at('persist_download',()=>storage.writeImmutable(key,bytes,{contentType:'video/mp4',uploadsEnabled:true}));
       const audioPrepared=config.worker_stage==='upload'?await prepareAudio({...video,video_key:key,video_generation:object.generation},bytes):null;
-      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
+      return result(video.id,'upload',{...(audioPrepared?.reference??{}),video_key:key,video_generation:object.generation,video_bytes:object.size,video_sha256:object.sha256??sha256(bytes),...(qualityMode?{media_inspection_receipt:createMediaInspectionReceipt({video:{...video,video_key:key,video_generation:object.generation},media,bytes})}:{}),media_verified:true,audio_status:media.audio_status,duration_seconds:media.duration_seconds,...(downloaded.source_caption?{source_caption:downloaded.source_caption,caption_status:'captured'}:{caption_status:'unavailable'})},cost);
     },
     async transcription({video,executionId,recordPreparedAudio}){
       await admitted(executionId,'transcription',video.id);budget('transcription');speechSettings();
@@ -132,13 +157,13 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
         const key=`results/instagram/${video.id}/${executionId}/transcription.json`;
         const usage=measureSpeechUsage(response,{model:config.speech_model,location:config.speech_location,mode:'synchronous'});
         const object=await persist(key,{mode:'synchronous',model:config.speech_model,text,raw:response,usage_cost:usage});
-        return result(video.id,'transcription',{...reference,transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(response)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
+        return result(video.id,'transcription',{...reference,...(qualityMode?{transcription_receipt:transcriptionReceipt(video,reference,key,object,{operationIdentity:'synchronous:'+executionId,mode:'synchronous',words:speechWordEvidence(response)})}:{}),transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(response)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
       }
       const operation=await submitSTT(`${speechOrigin()}/v2/projects/${api.project}/locations/${config.speech_location}/recognizers/_:batchRecognize`,{method:'POST',json:{config:{autoDecodingConfig:{},model:config.speech_model,languageCodes:config.language_codes,features:{enableAutomaticPunctuation:true,enableWordTimeOffsets:true}},files:[{uri:`gs://${storage.bucket}/${audioKey}`}],recognitionOutputConfig:{inlineResponseConfig:{}}},timeoutMs:120000});
       if(!operation?.name)throw new Error('STT não confirmou identificador.');
-      return {video_id:video.id,stage:'transcription',operation_name:operation.name};
+      return {video_id:video.id,stage:'transcription',operation_name:operation.name,changes:qualityMode?{...reference,transcription_submission:{operationIdentity:operation.name,operationKind:'provider_batch_operation',sourceAudioIdentity:{key:reference.audio_key,generation:reference.audio_generation}}}:{}};
     },
-    async pollTranscription({operationName,videoId,executionId}){
+    async pollTranscription({operationName,videoId,executionId,video=null}){
       await admitted(executionId,'transcription',videoId);
       speechSettings();
       if(!['megabrain-v0-1017370021431','711042421394'].some(owner=>operationName.startsWith(`projects/${owner}/locations/${config.speech_location}/operations/`))||!/^projects\/[a-z0-9-]+\/locations\/(?:global|us)\/operations\/[A-Za-z0-9_-]+$/.test(operationName))throw new Error('Operação STT fora do escopo.');
@@ -155,17 +180,20 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const key=`results/instagram/${videoId}/${executionId}/transcription.json`;
       const usage=measureSpeechUsage(operation.response,{model:config.speech_model,location:config.speech_location,mode:'batch',audioUri});
       const object=await persist(key,{operation_name:operationName,model:config.speech_model,text,raw:operation.response,usage_cost:usage});
-      return result(videoId,'transcription',{transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(transcript)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
+      if(qualityMode&&(!video||!validatePreparedAudio(video,audioKeyFor(videoId))))throw Error('Vínculo do áudio salvo ausente ao coletar STT.');
+      return result(videoId,'transcription',{...(qualityMode?{transcription_receipt:transcriptionReceipt(video,video,key,object,{operationIdentity:operationName,mode:'batch',words:speechWordEvidence(transcript)})}:{}),transcript:text,...(executionAuthorization?{transcript_words:speechWordEvidence(transcript)}:{}),transcript_status:text?'recognized':'no_speech_recognized',transcript_key:key,transcript_generation:object.generation},budget('transcription'),usage);
     },
     async analysis({video,executionId,analysisAttempts=[],recordAnalysisAttempts}){
       const timeoutMs=analysisTimeoutMs(config?.analysis_timeout_ms),deadline=performance.now()+timeoutMs;
       await admitted(executionId,'analysis',video.id);const cost=budget('analysis');
       if(!/^gemini-[a-z0-9.-]+$/.test(config.gemini_model??''))throw new Error('Modelo Gemini precisa ser configurado.');
       if(video.video_key!==`originals/instagram/${video.id}/video.mp4`)throw new Error('Mídia fora do escopo.');
+      if(qualityMode&&await storage.metadata(`results/instagram/${video.id}/${executionId}/analysis.json`))return this.restoreAnalysisResult({video,executionId});
       if(typeof recordAnalysisAttempts==='function'&&await storage.metadata(`results/instagram/${video.id}/${executionId}/analysis.json`))throw Error('Resultado já existe; conferir sem repetir análise.');
       const caption=await captionFor(video,executionId);
       const analysisRecord={...video,...caption};
-      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model,taxonomySignalsEnabled:config.reels_taxonomy_signals_enabled===true});
+      if(qualityMode){const qualityGate=sourcePreflight(analysisRecord);if(qualityGate)return {...result(video.id,'analysis',{analysis_review_reasons:['quality_source_unverified'],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null},null,null),qualityGate,qualityPublication:null};}
+      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model,taxonomySignalsEnabled:config.reels_taxonomy_signals_enabled===true,qualityGateV2Enabled:qualityMode,contextCatalogSnapshot:qualityMode?config.reels_context_catalog_snapshot??null:null});
       let attempt=analysisAttempts.length;const callDiagnostics=[];
       const submit=()=>at('submit_analysis',()=>{
         const remainingMs=Math.floor(deadline-performance.now());
@@ -177,9 +205,18 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const usage=measureGeminiUsage(response,{model:config.gemini_model,location:'global'});
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage}));
+      if(qualityMode){const prepared=await qualityChanges(response,analysisRecord,{key,generation:raw.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},cost,usage),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication};}
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost,usage);
     }
   };
+}
+
+// Called only after the inspector actually probed and decoded these bytes.
+export function createMediaInspectionReceipt({video,media,bytes}){
+ if(media?.hasVideo!==true||typeof media.hasAudio!=='boolean'||!Number.isFinite(media.duration_seconds)||media.duration_seconds<=0||!Buffer.isBuffer(bytes)||!bytes.length)throw Error('Inspeção real incompleta.');
+ const sourceIdentity=qualitySourceManifest(video).video;if(!sourceIdentity)throw Error('Geração da mídia inspecionada ausente.');
+ const receipt={kind:'media-inspector',version:1,sourceIdentity,contentSha256:sha256(bytes),contentBytes:bytes.length,decodePassed:true,probePassed:true,durationSeconds:media.duration_seconds,expectedAudio:media.hasAudio,audioTrackPresent:media.hasAudio,audioStatus:media.audio_status,semanticPixelsReviewed:false};
+ return {...receipt,receiptId:'media_'+qualityDigest(receipt)};
 }

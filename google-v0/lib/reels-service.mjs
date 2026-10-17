@@ -1,6 +1,6 @@
 import {hash,canonical,nowISO,fail,key,identifier,ensure,cas,event} from './reels-runtime.mjs';
 import {queueOutbox} from './reels-runtime.mjs';
-import {projectReel,stageName,reelIdPattern} from './reels-model.mjs';
+import {projectReel,stageName,reelIdPattern,eligibility} from './reels-model.mjs';
 import {executionId,STAGES} from './reels-pipeline.mjs';
 const processingTypes=new Set(['start','retry','complement']);
 const retryStage=video=>stageName(video?.reels_v2?.stage??video?.error?.stage??video?.stage);
@@ -100,7 +100,7 @@ export class ReelsService {
      let admitted=false;await cas(this.store,'videos/'+reelId,async video=>{admitted=false;const current=video.reels_v2??{},item=projectReel(video);
       if(item.importHeld)return null;
       if(current.operationId===id){admitted=true;return null;}
-      {const eligible=type==='start'?item.status==='registered':type==='retry'?retryable(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
+      {const eligible=type==='start'?eligibility(item)===null:type==='retry'?retryable(video)&&retryStage(video)===selectedStage&&await this.retryProof(video):item.publication.available&&item.status==='completed';if(!eligible)return null;}
       admitted=true;return {reels_v2:{...current,status:'queued',stage:selectedStage,operationId:id,executionId:jobId,updatedAt:nowISO(this.clock)}};});
      if(!admitted){excluded.push({id:reelId,reason:'concurrent_admission_or_not_eligible'});continue;}
      queued=await ensure(this.store,jobPath,{id:jobId,operationId:id,reelId,stage:selectedStage,status:'queued',attempt:1,predecessorId:null,createdAt:nowISO(this.clock)});

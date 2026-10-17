@@ -50,6 +50,11 @@ export function projectMigrationHistory({googleSnapshot,legacySnapshot,targetVid
   return {linked:true,reason:null};
  }
  function pushHistory(kind,data,p,{rowKind=kind}={}){
+  const target=targets.get(id(data.reelId??data.video_id??data.videoId));
+  // A reviewed permanent reset is a tombstone for old operational history.
+  // Re-importing a historical snapshot must not recreate erased failure logs,
+  // including detached rows in the global activity archive. Accounting is kept.
+  if(target?.operational_reset?.rule==='confirmed-legacy-failure-reset-v1')return 'erased_confirmed_failure_history';
   const reelId=id(data.reelId??data.video_id??data.videoId),s=stage(data.stage),linked=link(reelId);
   const worker=sourceWorker(data.worker),row={id:hash({view:'history',source:p.sourceRef,record:p.recordHash}),kind:rowKind,...historical,reelId,stage:s,worker,workerLabelDerived:worker?null:workerLabel(s),sourceStatus:status(data.status??data.review_status),statusDisplay:'historical',...times(data),provenance:[p]};
   if(linked.linked)historyView.push(row);else unlinkedHistory.push({...row,reason:linked.reason});

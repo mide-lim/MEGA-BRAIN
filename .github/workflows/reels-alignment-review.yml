@@ -1,0 +1,133 @@
+name: Reels confirmed-failure preparation
+on:
+  pull_request:
+    paths: ['google-v0/**', '.github/workflows/reels-alignment-review.yml']
+  push:
+    branches: [main]
+    paths: ['google-v0/**', '.github/workflows/reels-alignment-review.yml']
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact reviewed commit on main
+        required: true
+        type: string
+      metadata_gzip_base64:
+        description: Metadata only, without error bodies, compressed and encoded
+        required: true
+        type: string
+      metadata_sha256:
+        description: SHA256 of the uncompressed metadata JSON
+        required: true
+        type: string
+      expected_candidates:
+        description: Exact independently reviewed nonpublished terminal cohort
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: reels-confirmed-failure-preparation
+  cancel-in-progress: false
+jobs:
+  firestore_contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Exercise the real Firestore wire contract in an isolated emulator
+        env:
+          CI: 'true'
+          FIREBASE_CLI_DISABLE_UPDATE_CHECK: '1'
+        run: npx --yes firebase-tools@15.34.0 emulators:exec --only firestore --project demo-megabrain --config google-v0/tests/fixtures/firestore-emulator.json "node --test google-v0/tests/reels-confirmed-failure-reset-emulator.test.mjs"
+      - name: Retain failed synthetic emulator diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-firestore-contract-diagnostics
+          path: |
+            firestore-debug.log
+            firebase-debug.log
+          retention-days: 3
+          if-no-files-found: ignore
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Bind exact source and decode bounded metadata
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          METADATA_GZIP_BASE64: ${{ inputs.metadata_gzip_base64 }}
+          METADATA_SHA256: ${{ inputs.metadata_sha256 }}
+          EXPECTED_CANDIDATES: ${{ inputs.expected_candidates }}
+        run: |
+          python3 - <<'PYTHON'
+          import base64, gzip, hashlib, io, json, os, pathlib, re
+          commit = os.environ['SOURCE_COMMIT']
+          if not re.fullmatch(r'[a-f0-9]{40}', commit) or commit != os.environ['GITHUB_SHA']:
+              raise SystemExit('Preparation must use the exact reviewed main commit.')
+          digest = os.environ['METADATA_SHA256']
+          encoded = os.environ['METADATA_GZIP_BASE64']
+          if not re.fullmatch(r'[a-f0-9]{64}', digest) or not 1 <= len(encoded) <= 60000:
+              raise SystemExit('Bounded metadata and its exact hash are required.')
+          if os.environ['EXPECTED_CANDIDATES'] != '197':
+              raise SystemExit('Only the independently reviewed 197-record cohort is supported.')
+          with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(encoded, validate=True))) as source:
+              payload = source.read(2 * 1024 * 1024 + 1)
+          if len(payload) > 2 * 1024 * 1024 or hashlib.sha256(payload).hexdigest() != digest:
+              raise SystemExit('Metadata size or hash differs.')
+          json.loads(payload)
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          (root / 'reset-input.json').write_bytes(payload)
+          (root / 'reset-review').mkdir()
+          (root / 'reset-review' / 'preparation-provenance.json').write_text(json.dumps({
+              'sourceCommit': commit, 'metadataSHA256': digest,
+              'expectedCandidates': 197, 'runId': os.environ['GITHUB_RUN_ID'],
+              'processingEnabled': False, 'googleCredentialsUsed': False,
+              'errorBodyBackupsCreated': False
+          }, indent=2) + '\n')
+          PYTHON
+      - name: Validate preparation and cleanup contracts without cloud credentials
+        run: node --test google-v0/tests/reels-confirmed-failure-reset.test.mjs
+      - name: Prepare the reviewed metadata-only deletion manifest
+        run: node google-v0/scripts/reset-confirmed-failures.mjs prepare --input "$RUNNER_TEMP/reset-input.json" --output "$RUNNER_TEMP/reset-review/confirmed-failure-plan.json"
+      - name: Package exact committed owner operation sources
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib, json, os, pathlib, zipfile
+          sources = [
+              'google-v0/scripts/reset-confirmed-failures.mjs',
+              'google-v0/lib/reels-confirmed-failure-reset.mjs',
+              'google-v0/lib/google-rest.mjs',
+              'google-v0/lib/firestore.mjs',
+              'google-v0/lib/control-fragments.mjs',
+              'google-v0/lib/reels-runtime.mjs',
+              'ops/assert-reels-alignment-closed.py'
+          ]
+          destination = pathlib.Path(os.environ['RUNNER_TEMP']) / 'reset-review' / 'owner-sources.zip'
+          manifest = {'sourceCommit': os.environ['GITHUB_SHA'], 'files': {}}
+          with zipfile.ZipFile(destination, 'x', compression=zipfile.ZIP_DEFLATED) as archive:
+              for name in sources:
+                  payload = pathlib.Path(name).read_bytes()
+                  manifest['files'][name] = {'sha256': hashlib.sha256(payload).hexdigest(), 'bytes': len(payload)}
+                  archive.writestr(name, payload)
+              archive.writestr('source-manifest.json', json.dumps(manifest, indent=2) + '\n')
+          PYTHON
+      - name: Save preparation manifest without source bodies
+        uses: actions/upload-artifact@v4
+        with:
+          name: reels-confirmed-failure-preparation
+          path: ${{ runner.temp }}/reset-review/
+          retention-days: 7
+          if-no-files-found: error

@@ -65,3 +65,32 @@ test('manual custom classification is included by projected reads and never repl
  assert.deepEqual((await repository.list({category:'my-root'})).items[0].categoryIds,['custom']);assert.deepEqual((await repository.detail('Reel_001')).categoryIds,['custom']);
  assert.ok(store.calls.filter(c=>c.collection==='videos').every(c=>c.select.includes('taxonomy_override.manual')));assert.deepEqual(store.docs.get('videos/Reel_001'),video);
 });
+
+// Product counts are exclusive at the publication boundary, including a legacy
+// success whose newer operational attempt remains uncertain.
+test('ready and attention partitions preserve current and legacy published results',async()=>{
+ const pub={analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted',analysis:{categories:['receitas']}};
+ const r=new ReelsRepository({store:storeOf([
+ {id:'Reel_001',status:'registered'},
+ {id:'Reel_002',status:'registered',import_hold:{active:true}},
+ {id:'Reel_003',status:'failed',failure_confirmed:true},
+ {id:'Reel_004',status:'uncertain'},
+ {id:'Reel_005',status:'uncertain',...pub},
+ {id:'Reel_006',status:'registered',...pub},
+ {id:'Reel_007',status:'running'},
+ ])});
+ const {counts}=await r.summary();assert.equal(counts.totalInventory,7);assert.equal(counts.ready,1);assert.equal(counts.published,2);assert.equal(counts.confirmedFailures,1);assert.equal(counts.inconclusive,1);assert.equal(counts.attention,2);
+ assert.deepEqual((await r.list({workspace:'ready'})).items.map(i=>i.id),['Reel_001']);
+ assert.equal((await r.list({workspace:'attention'})).total,2);
+ assert.deepEqual((await r.list({workspace:'attention',attentionKind:'confirmed'})).items.map(i=>i.id),['Reel_003']);
+ assert.deepEqual((await r.list({workspace:'attention',attentionKind:'uncertain'})).items.map(i=>i.id),['Reel_004']);
+ assert.deepEqual((await r.select({all:true,filters:{workspace:'ready'}})).ids,['Reel_001']);
+ await assert.rejects(()=>r.list({attentionKind:'invented'}),/Filtro/);
+});
+test('preserved legacy publication wins over registered or uncertain operational metadata',async()=>{
+ const preserved=id=>({schemaVersion:1,reelId:id,status:'legacy_preserved',originalStatus:'analyzed',historical:true,executable:false,provenance:{recordHash:'a'.repeat(64),sourceSnapshotHash:'b'.repeat(64)},analysis:{summary:'Conhecimento antigo preservado',primary_category:'Receitas'}});
+ const store=storeOf([{id:'Reel_001',status:'uncertain',import_hold:{active:true}},{id:'Reel_002',status:'registered'}],{'reels_legacy_content/Reel_001':preserved('Reel_001'),'reels_legacy_content/Reel_002':preserved('Reel_002')});
+ const r=new ReelsRepository({store}),counts=(await r.summary()).counts;
+ assert.equal(counts.published,2);assert.equal(counts.ready,0);assert.equal(counts.attention,0);assert.equal((await r.list({workspace:'ready'})).total,0);assert.equal((await r.list({workspace:'attention'})).total,0);
+ assert.deepEqual((await r.select({all:true})).ids,[]);assert.ok((await r.select({all:true})).excluded.every(row=>row.reason==='already_completed'));
+});

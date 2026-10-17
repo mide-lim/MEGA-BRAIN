@@ -69,3 +69,14 @@ test('original receipt inputs are mandatory and may not override source snapshot
  const f=fixture();delete f.options.linkInputs;assert.throws(()=>buildWebImportPackage(f.options));
  const good=fixture();good.options.linkInputs.googleSnapshot={records:[]};assert.throws(()=>buildWebImportPackage(good.options));
 });
+test('a permanent reset excludes legacy content and old operational history from a new import package',()=>{
+ const f=fixture(),id='demoLegacy';
+ f.input.googleSnapshot.records.push({path:'videos/'+id,updateTime:'2026-10-17T00:00:00Z',data:{id,status:'registered',operational_reset:{rule:'confirmed-legacy-failure-reset-v1'}}});
+ const copyBackup=createMigrationCopyBackup(f.input),plan=buildMigrationCopyPlan(f.input),backupLinks=buildBackupLinkManifest({googleSnapshot:f.input.googleSnapshot,legacySnapshot:f.input.legacySnapshot,...f.options.linkInputs}),historyProjection=projectMigrationHistory({googleSnapshot:f.input.googleSnapshot,legacySnapshot:f.input.legacySnapshot,targetVideos:plan.targetCopy.videos});
+ const pkg=buildWebImportPackage({...f.options,copyBackup,backupLinks,historyProjection});
+ assert.equal(pkg.records.some(r=>r.path==='reels_legacy_content/'+id),false);assert.equal(pkg.records.some(r=>r.path.startsWith('reels_historical_activity/')&&r.data.reelId===id),false);
+});
+test('an old valid package cannot recreate linked history after an operational reset',()=>{
+ const f=fixture(),pkg=buildWebImportPackage(f.options);f.targetCopy.records.push({path:'videos/demoLegacy',data:{id:'demoLegacy',status:'registered',operational_reset:{rule:'confirmed-legacy-failure-reset-v1'}}});
+ const before=structuredClone(f.targetCopy);assert.throws(()=>materializeIntoCopy({package:pkg,targetCopy:f.targetCopy,expectedSourceHashes:f.options.sourceHashes,...f.options}),/reset confirmado/);assert.deepEqual(f.targetCopy,before);
+});

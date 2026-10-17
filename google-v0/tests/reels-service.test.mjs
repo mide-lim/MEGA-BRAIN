@@ -102,3 +102,32 @@ test('legacy failure_confirmed without an execution receipt never admits a paid 
  const accepted=await execute(service,{type:'retry',idempotencyKey:'legacy-without-receipt',selection:{all:true}});assert.deepEqual(accepted.operation.accepted,[]);
  assert.equal([...store.docs].filter(([p])=>p.startsWith('reels_executions/')).length,0);
 });
+
+import {reelsAPI} from '../lib/reels-api.mjs';
+test('retry API excludes native and preserved publications after a proved later failure',async()=>{
+ const store=memory([pub('Reel_PUB'),reel('Reel_OLD',{status:'failed',failure_confirmed:true}),reel('Reel_BAD',{status:'failed',failure_confirmed:true}),pub('Reel_OK')]);
+ for(const id of ['Reel_PUB','Reel_OLD','Reel_BAD'])await provedFailure(store,id);
+ const savedLegacy={schemaVersion:1,reelId:'Reel_OLD',status:'legacy_preserved',originalStatus:'analyzed',historical:true,executable:false,provenance:{recordHash:'a'.repeat(64),sourceSnapshotHash:'b'.repeat(64)},analysis:{summary:'Publicação antiga preservada'}};await store.create('reels_legacy_content/Reel_OLD',savedLegacy);
+ const repository=new ReelsRepository({store,clock}),service=new ReelsService({repository,clock,processingEnabled:true,onCommandQueued:async()=>({status:'sent'}),onQueued:async()=>assert.fail('no protected publication may reach stage dispatch')});
+ const api=reelsAPI({repository,service,processingEnabled:true,authorize:async()=>true,sameOrigin:async()=>true,clock});
+ const response=await api(new Request('https://reels.test/api/reels/preview',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'retry',selection:{all:true}})}));assert.equal(response.status,200);const preview=await response.json();assert.deepEqual(preview.ids,['Reel_BAD']);assert.equal(preview.total,4);assert.deepEqual(preview.excluded.filter(row=>row.reason==='already_completed').map(row=>row.id).sort(),['Reel_OK','Reel_OLD','Reel_PUB']);
+ assert.deepEqual((await service.preview({ids:['Reel_PUB','Reel_OLD']},'retry')).ids,[]);assert.deepEqual((await service.preview({ids:['Reel_OK']},'complement')).ids,['Reel_OK']);
+ const retry=await service.command({type:'retry',idempotencyKey:'exclude-old-success',selection:{ids:['Reel_PUB','Reel_OLD']}}),result=await service.drain({operationId:retry.operation.id});assert.deepEqual(result.operation.accepted,[]);assert.equal([...store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,3);assert.deepEqual((await store.get('reels_legacy_content/Reel_OLD')).data,savedLegacy);assert.equal((await store.get('videos/Reel_PUB')).data.analysis_generation,'1');
+});
+test('drain rechecks a publication added after retry selection and preserves failed-stage proof',async()=>{
+ for(const source of ['native','legacy']){
+  const store=memory([reel('Reel_LATE',{status:'failed',failure_confirmed:true})]);await provedFailure(store,'Reel_LATE');let dispatches=0;const service=new ReelsService({repository:new ReelsRepository({store,clock}),clock,processingEnabled:true,onCommandQueued:async()=>({status:'sent'}),onQueued:async()=>{dispatches++;return {status:'sent'};}}),{operation}=await service.command({type:'retry',idempotencyKey:'late-publication-'+source,selection:{ids:['Reel_LATE']}});assert.deepEqual(operation.selected,['Reel_LATE']);
+  if(source==='native'){const video=await store.get('videos/Reel_LATE');await store.patch('videos/Reel_LATE',{analysis_key:'preserved',analysis_generation:'7',analysis_quality_status:'accepted',analysis:{summary:'Preservar conhecimento'}},{updateTime:video.updateTime});}else await store.create('reels_legacy_content/Reel_LATE',{schemaVersion:1,reelId:'Reel_LATE',status:'legacy_preserved',originalStatus:'analyzed',historical:true,executable:false,provenance:{recordHash:'a'.repeat(64),sourceSnapshotHash:'b'.repeat(64)},analysis:{summary:'Preservar legado'}});
+  const result=await service.drain({operationId:operation.id});assert.deepEqual(result.operation.accepted,[]);assert.equal(result.operation.excluded[0].reason,'already_completed');assert.equal(dispatches,0);assert.equal([...store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,1);assert.equal((await store.get('videos/Reel_LATE')).data.reels_v2.status,'failed');
+ }
+});
+
+test('a later publication blocks replay of queued jobs and the crash window before job creation',async()=>{
+ for(const savedJob of [false,true]){
+  const store=memory([reel('Reel_CRASH',{status:'failed',failure_confirmed:true})]);await provedFailure(store,'Reel_CRASH');let dispatches=0;const service=new ReelsService({repository:new ReelsRepository({store,clock}),clock,processingEnabled:true,onCommandQueued:async()=>({status:'sent'}),onQueued:async()=>{dispatches++;return {status:'sent'};}}),{operation}=await service.command({type:'retry',idempotencyKey:'published-crash-'+savedJob,selection:{ids:['Reel_CRASH']}}),id=executionId(operation.id,'Reel_CRASH','acquisition'),current=await store.get('videos/Reel_CRASH');
+  await store.patch('videos/Reel_CRASH',{reels_v2:{status:'queued',operationId:operation.id,executionId:id,stage:'acquisition'},analysis_key:'published-after-admission',analysis_generation:'9',analysis_quality_status:'accepted',analysis:{summary:'Conhecimento preservado'}},{updateTime:current.updateTime});
+  if(savedJob)await store.create('reels_executions/'+id,{id,operationId:operation.id,reelId:'Reel_CRASH',stage:'acquisition',status:'queued',attempt:1});
+  const before=structuredClone(store.docs),result=await service.drain({operationId:operation.id});assert.deepEqual(result.operation.accepted,[]);assert.equal(result.operation.excluded[0].reason,'already_completed');assert.equal(dispatches,0);assert.equal([...store.docs.keys()].filter(p=>p.startsWith('reels_executions/')).length,savedJob?2:1);
+  assert.deepEqual((await store.get('videos/Reel_CRASH')).data,before.get('videos/Reel_CRASH').data);if(savedJob)assert.deepEqual(await store.get('reels_executions/'+id),before.get('reels_executions/'+id));
+ }
+});

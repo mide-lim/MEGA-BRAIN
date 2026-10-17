@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "id": "MEG-81",
+  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "34f37ccb3aefef464ef7f095ebd93ac934a07992",
+  "objective": "Entregar alinhamento completo da entrada A processar, limpeza de falhas antigas confirmadas sem novo backup de erros, Biblioteca em árvore, Categorias editorial e atualização silenciosa; preservar publicados e pagos inconclusivos, sem novos Reels.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Ocorrência RECONCILIATION_REQUIRED e destino reconcile aparecem em português tanto no catálogo quanto no painel de detalhe, sem sugerir nova chamada; erro original completo permanece em detalhes recolhidos.",
+    "Cobertura mostra fontes, intervalos, observação, última medição e desconhecidos em português; moedas, estimativas e faturamento mantêm distinção.",
+    "Atividade destaca mensagem, Reel, worker, etapa e data; IDs e evento original estão em Detalhes do evento; histórico tem estado humanizado e datas originais.",
+    "Valores integrais Não especificado e Not specified em campos ingredient/quantity orientam a consulta às fontes salvas; JSON original fica acessível no cartão. Outros textos, quantidades explícitas e fontes permanecem literais, sem declarar presença ou ausência de medida na fonte.",
+    "Nenhum backend, contrato, worker, configuração, dado ou operação paga é alterado; testes e build somente GitHub Actions e revisão independente no head final.",
+    "Entrada padrão e contador representam apenas Reels prontos não enfileirados; total histórico e Biblioteca separados, publicados nunca entram por erro de tentativa antiga.",
+    "Biblioteca permite navegar árvore incluindo descendentes com expansão separada, busca contextual e preservação de filtros/scroll. Categorias permite organizar grupos e identificar padrões sem virar fila operacional.",
+    "Refresh preserva última leitura, foco, filtros e posição; sem avisos montados repetidamente no fluxo e com respostas obsoletas descartadas.",
+    "Limpeza exclui somente histórico/erro de falhas antigas positivamente confirmadas não publicadas; cadastro volta limpo; não criar novo backup técnico desses erros. Preservar originais válidos, publicados, operações pagas inconclusivas e seus controles. Manifesto metadata-only e precondições por versão; nenhum START ou provedor.",
+    "Toda suíte, preparação automatizada, build, smoke e conferência de código/migração/UI executam exclusivamente no GitHub Actions. Ambiente de desenvolvimento apenas edição/inspeção."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-81-web-readability.json",
+    "google-v0/web-google/app/reels/catalog.jsx",
+    "google-v0/web-google/app/reels/operations.jsx",
+    "google-v0/web-google/app/reels/preserved.jsx",
+    "google-v0/web-google/app/reels/detail.jsx",
+    "google-v0/web-google/lib/reels-display.mjs",
+    "google-v0/tests/reels-display.test.mjs",
+    "google-v0/qa/reels-fixture.mjs",
+    "google-v0/qa/reels-browser-check.mjs",
+    "google-v0/web-google/app/reels/shared.jsx",
+    "google-v0/web-google/app/reels/workspace.jsx",
+    "google-v0/web-google/app/reels/categories.jsx",
+    "google-v0/web-google/app/reels/reconciliation.jsx",
+    "google-v0/web-google/app/globals.css",
+    "google-v0/web-google/lib/reels-query-state.mjs",
+    "google-v0/lib/reels-model.mjs",
+    "google-v0/lib/reels-service.mjs",
+    "google-v0/lib/reels-api.mjs",
+    "google-v0/lib/reels-repository.mjs",
+    "google-v0/lib/reels-preserved-content.mjs",
+    "google-v0/lib/reels-taxonomy.mjs",
+    "google-v0/lib/reels-migration-history.mjs",
+    "google-v0/lib/reels-confirmed-failure-reset.mjs",
+    "google-v0/scripts/reset-confirmed-failures.mjs",
+    "google-v0/tests/reels-model.test.mjs",
+    "google-v0/tests/reels-service.test.mjs",
+    "google-v0/tests/reels-api.test.mjs",
+    "google-v0/tests/reels-repository.test.mjs",
+    "google-v0/tests/reels-confirmed-failure-reset.test.mjs",
+    "google-v0/tests/reels-query-state.test.mjs",
+    ".github/workflows/reels-alignment-review.yml",
+    "google-v0/tests/fixtures/confirmed-failure-reset-evidence.json",
+    "google-v0/qa/reels-operations-browser-check.mjs",
+    "google-v0/lib/reels-import.mjs",
+    "google-v0/tests/reels-import.test.mjs",
+    "google-v0/tests/reels-confirmed-failure-reset-emulator.test.mjs",
+    "google-v0/tests/fixtures/firestore-emulator.json",
+    "google-v0/tests/reels-preserved-content.test.mjs",
+    "ops/assert-reels-alignment-closed.py",
+    "ops/test_reels_alignment_closed.py"
+  ],
+  "context": [
+    {
+      "path": "google-v0/web-google/app/reels/catalog.jsx",
+      "reason": "Consumidor de código/destino da ocorrência",
+      "sections": [
+        "Ocorrência e destino"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/web-google/app/reels/operations.jsx",
+      "reason": "Consumidor de cobertura e atividade atual",
+      "sections": [
+        "LiveActivity",
+        "Finance"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "google-v0/web-google/app/reels/preserved.jsx",
+      "reason": "Atividade histórica somente leitura",
+      "sections": [
+        "HistoricalActivity"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/lib/reels-finance.mjs",
+      "reason": "Contrato somente leitura para renderizar cobertura sem inventar dados",
+      "sections": [
+        "read return coverage"
+      ],
+      "max_chars": 1000
+    },
+    {
+      "path": "google-v0/qa/reels-browser-check.mjs",
+      "reason": "Jornadas existentes dos três achados",
+      "sections": [
+        "attention",
+        "finance",
+        "activity",
+        "preserved"
+      ],
+      "max_chars": 2500
+    },
+    {
+      "path": "google-v0/web-google/app/reels/detail.jsx",
+      "reason": "Ocorrência do painel e apresentação do marcador de quantidade em campos estruturados",
+      "sections": [
+        "Detail occurrence notice in detail-video",
+        "Knowledge fields and SavedSources"
+      ],
+      "max_chars": 3000
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions only: existing documentation/task packet checks including this packet against base34f37",
+    "GitHub Actions only: node --test google-v0/tests/*.test.mjs and existing guards/orchestration checks",
+    "GitHub Actions only: synthetic reset/migration/adversarial tests and complete web browser journeys",
+    "GitHub Actions only: existing service image builds/smokes and frontend build"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": "Root only: positively confirmed old nonpublished failures, exact reviewed manifest with fresh versions; no new error backup. Paid inconclusive and published excluded.",
+    "live_google_mutations": "Root only reviewed web publication and positively-confirmed-error cleanup; developers read-only. All preparation/tests/conference GitHub Actions exclusively; no new providers/Reels.",
+    "merge_deploy": "Root integrates reviewed concrete package under current user product_pending_closure authorization; developer does not merge/deploy.",
+    "ci_authorization": "ALL tests/preparation/conference/build/smoke GitHub Actions only; no test execution in development or VPS.",
+    "ownership": {
+      "frontend": "Native developer owns UI/QA/styles/display query helper only",
+      "backend": "Native developer owns backend contracts/reset helper+tests only",
+      "reviewer": "Fresh independent exact-head reviewer; read-only",
+      "root": "Packet, integration commit/push/CI, state, reviewed publication/cleanup and real web acceptance"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "base_revision": 219,
+    "protocol_read": "/srv/paperclip/data/megabrain-operations/v2/protocol.json; tracked checkout has only AGENTS.md and google-v0/AGENTS.md, no native protocol file.",
+    "resume_revision": 200,
+    "correction_source": "Independent review /root/review_web_delivery on head350d322d5002e92d3e8f3994cc90b4b233321b16: original detail-panel occurrence remains. Same PR scope expansion authorized by Orchestrator.",
+    "quantity_correction": {
+      "run_id": "/root/web_quantity_copy",
+      "session_id": "01a14320-f3bd-7821-9e1d-ddb263301b98",
+      "base_revision": 205,
+      "read_revision": 206,
+      "base_head": "efb3b4a1ee55d1c1d5b3ce6da2d934ba7ddbb8f9",
+      "scope": "Six existing allowed files: task packet, detail display helper/consumer, pure tests, synthetic fixture/browser assertions; no contract/backend/data/worker changes.",
+      "authorization": "Root delegated newly observed P3 under existing human authorization; same open PR65; fresh exact-head review required."
+    }
+  }
+}

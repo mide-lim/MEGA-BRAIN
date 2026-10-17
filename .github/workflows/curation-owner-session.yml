@@ -1,0 +1,62 @@
+name: Curation owner session artifact
+on:
+  push:
+    branches: ['codex/curation-owner-session']
+    paths: ['operations/curation-owner/**', '.github/workflows/curation-owner-session.yml']
+permissions:
+  contents: read
+jobs:
+  sealed-owner-transport:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      SOURCE_COMMIT: efbf042404f2fedefcbef003b55efc3124aac846
+      PACKAGE_SHA256: b141ad4ac87e9918628f3dfbbf7729324f969ef07c523e44d2d1bd63fbff5316
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install authentication classes for synthetic tests only
+        run: python3 -m pip install google-auth==2.40.3 requests==2.32.4
+      - name: Restrict artifact to the exact operational delta
+        run: |
+          python3 - <<'PY'
+          import os,subprocess
+          changed=set(subprocess.check_output(['git','diff','--name-only',os.environ['SOURCE_COMMIT'],'HEAD'],text=True).splitlines())
+          allowed={'operations/curation-owner/apply-reels-curation-owner-session.py','operations/curation-owner/test_owner_session.py','.github/workflows/curation-owner-session.yml'}
+          if changed!=allowed:raise SystemExit('Operational artifact source scope differs.')
+          PY
+      - name: Test memory-only existing-session auth without Google or gcloud execution
+        run: python3 -m unittest discover -s operations/curation-owner -p 'test_*.py' -v
+      - name: Test unchanged operator guard suite against the session variant
+        run: |
+          cp ops/apply-reels-curation.py "$RUNNER_TEMP/reviewed-original-operator.py"
+          cp operations/curation-owner/apply-reels-curation-owner-session.py ops/apply-reels-curation.py
+          python3 -m unittest discover -s ops -p 'test_*.py' -v
+      - name: Seal source artifact and provenance
+        run: |
+          python3 - <<'PY'
+          import hashlib,importlib.metadata,json,os,pathlib,platform,zipfile
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'curation-owner-artifact';out.mkdir()
+          path=pathlib.Path('operations/curation-owner/apply-reels-curation-owner-session.py')
+          original=(pathlib.Path(os.environ['RUNNER_TEMP'])/'reviewed-original-operator.py').read_bytes()
+          payload=path.read_bytes()
+          manifest={'schemaVersion':1,'kind':'sealed_existing_owner_session_transport','sourceCommit':os.environ['SOURCE_COMMIT'],'artifactCommit':os.environ['GITHUB_SHA'],'runId':os.environ['GITHUB_RUN_ID'],'packageSHA256':os.environ['PACKAGE_SHA256'],'baseOperatorPath':'ops/apply-reels-curation.py','baseOperatorSHA256':hashlib.sha256(original).hexdigest(),'ownerScriptPath':path.name,'ownerScriptSHA256':hashlib.sha256(payload).hexdigest(),'account':'midelim.dev@gmail.com','project':'megabrain-v0-1017370021431','scope':'exact reviewed additive metadata package only','googleAuthenticationExecuted':False,'providerCalls':0,'productBuild':False,'pythonVersion':platform.python_version(),'dependencies':{key:importlib.metadata.version(key)for key in ['google-auth','requests']},'tests':['5 synthetic owner authentication and source-equivalence cases','existing ops unittest suite against owner transport variant']}
+          with zipfile.ZipFile(out/'package-owner-source.zip','w',zipfile.ZIP_DEFLATED)as archive:
+           archive.writestr(path.name,payload)
+           archive.writestr('manifest.json',json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          (out/'provenance.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n')
+          archiveHash=hashlib.sha256((out/'package-owner-source.zip').read_bytes()).hexdigest()
+          (out/'SHA256SUMS').write_text(archiveHash+'  package-owner-source.zip\n'+manifest['ownerScriptSHA256']+'  '+path.name+'\n')
+          print(json.dumps({'artifactCommit':manifest['artifactCommit'],'ownerScriptSHA256':manifest['ownerScriptSHA256'],'baseOperatorSHA256':manifest['baseOperatorSHA256'],'archiveSHA256':archiveHash,'packageSHA256':manifest['packageSHA256']}))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: curation-owner-session-${{ github.sha }}
+          path: ${{ runner.temp }}/curation-owner-artifact/
+          if-no-files-found: error
+          retention-days: 14

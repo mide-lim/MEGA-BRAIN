@@ -133,7 +133,7 @@ export function projectContextualPublication({video:raw={},legacy=null,item={},q
   if(state==='supported'&&!proofs.some(p=>p.state==='supported'&&aliases.some(a=>quoteHas(p.excerpt,a))))state='present_unverified';
   const pol=polarity(f,proofs),requestedRole=safeRole(f.role,'supporting'),role=pol==='negated'?'excluded':requestedRole==='central'?'supporting':requestedRole;
   const requestedUnits=list(f.unit_ids??f.unitIds),candidateUnits=requestedUnits.length?validUnits.filter(u=>requestedUnits.includes(u.id)):validUnits;
-  const unitIds=candidateUnits.filter(u=>proofs.some(proof=>proofBindsUnit(raw,proof,u,validUnits))).map(u=>u.id);
+  const unitIds=candidateUnits.filter(u=>proofs.some(proof=>aliases.some(alias=>quoteHas(proof.excerpt,alias))&&proofBindsUnit(raw,proof,u,validUnits))).map(u=>u.id);
   const unitLink={state:unitIds.length?'supported':'unknown',reason:unitIds.length?'SOURCE_EVIDENCE_BOUND_TO_INDEPENDENT_UNIT':'ATTRIBUTE_UNIT_ASSOCIATION_NOT_PROVEN'};
   if(requestedUnits.length&&(requestedUnits.length!==unitIds.length||!requestedUnits.every(u=>unitIds.includes(u)))){state='unknown';unitIds.splice(0);unitLink.state='unknown';unitLink.reason='DECLARED_UNIT_EVIDENCE_MISMATCH';}
   attributes.push({id:contextualHash({identity,dimension,valueId,field:f}),dimensionId:dimension,dimension,valueId,label,state,role,claimedRole:requestedRole,polarity:pol,unitLink,unitIds:[...new Set(unitIds)],evidence:proofs});

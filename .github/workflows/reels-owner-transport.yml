@@ -1,0 +1,72 @@
+name: Owner serial transport
+on:
+  push:
+    branches: [codex/meg93-owner-serial-transport]
+    paths:
+      - ops/owner-serial-transport.mjs
+      - ops/owner-serial-transport.test.mjs
+      - .github/workflows/reels-owner-transport.yml
+  pull_request:
+    paths:
+      - ops/owner-serial-transport.mjs
+      - ops/owner-serial-transport.test.mjs
+      - .github/workflows/reels-owner-transport.yml
+permissions:
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test synthetic transport only
+        run: node --test ops/owner-serial-transport.test.mjs
+      - name: Bind preload artifact to the seven unchanged reviewed sources
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/owner-serial-transport
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          import {createHash} from 'node:crypto';
+          import {join} from 'node:path';
+          const reviewedCommit='70090b0a8c26995061ecf3c317b17f58193d1608';
+          const paths=[
+            'google-v0/scripts/reset-confirmed-failures.mjs',
+            'google-v0/lib/reels-confirmed-failure-reset.mjs',
+            'google-v0/lib/google-rest.mjs',
+            'google-v0/lib/firestore.mjs',
+            'google-v0/lib/control-fragments.mjs',
+            'google-v0/lib/reels-runtime.mjs',
+            'ops/assert-reels-alignment-closed.py'
+          ];
+          const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+          const sources=paths.map(path=>{
+            const reviewed=execFileSync('git',['show',reviewedCommit+':'+path]);
+            const current=readFileSync(path);
+            if(!reviewed.equals(current))throw Error('Reviewed source changed: '+path);
+            return {path,sha256:sha(reviewed),bytes:reviewed.length,sourceCommit:reviewedCommit};
+          });
+          const preloadPath='ops/owner-serial-transport.mjs',preload=readFileSync(preloadPath);
+          mkdirSync(join(process.env.ARTIFACT_DIR,'ops'),{recursive:true});
+          writeFileSync(join(process.env.ARTIFACT_DIR,preloadPath),preload);
+          const artifactCommit=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+          const changed=execFileSync('git',['diff','--name-only',reviewedCommit,'HEAD'],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
+          const allowed=new Set([preloadPath,'ops/owner-serial-transport.test.mjs','.github/workflows/reels-owner-transport.yml']);
+          if(changed.some(path=>!allowed.has(path)))throw Error('Transport branch exceeds the three-file scope.');
+          const provenance={schemaVersion:1,kind:'owner-serial-transport',reviewedSourceCommit:reviewedCommit,artifactCommit,event:process.env.GITHUB_EVENT_NAME,workflowRun:process.env.GITHUB_RUN_ID,nodeVersion:process.version,sevenReviewedSources:sources,preload:{path:preloadPath,sha256:sha(preload),bytes:preload.length},test:{path:'ops/owner-serial-transport.test.mjs',sha256:sha(readFileSync('ops/owner-serial-transport.test.mjs')),result:'passed'},workflowSHA256:sha(readFileSync('.github/workflows/reels-owner-transport.yml')),network:'synthetic fetch only; no Google authentication or provider calls',retryAdded:false,productSourceModified:false};
+          writeFileSync(join(process.env.ARTIFACT_DIR,'provenance.json'),JSON.stringify(provenance,null,2)+'\n');
+          console.log(JSON.stringify({artifactCommit,nodeVersion:process.version,preloadSHA256:provenance.preload.sha256,reviewedSources:7}));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: owner-serial-transport-${{ github.sha }}
+          path: ${{ runner.temp }}/owner-serial-transport/
+          if-no-files-found: error
+          retention-days: 7

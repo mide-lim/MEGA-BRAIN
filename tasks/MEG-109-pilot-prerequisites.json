@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "7e26b67eb0ce86128ff255127111bdd87d3ba2a9",
+  "objective": "Fechar precondicoes do piloto: provas de permissoes efetivas, isolamento de amostra retida e recuperacao limitada das filas existentes. Separar preparo pre-ativacao de elegibilidade/execucao. Testar GitHub Actions sem processar Reels ou apagar dados.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Preflight distingue preparo tecnico pre-ativacao deexecucao; amostra retida podeestar preparada comprova deisolamento e planodeCAS futuro, mas currentEligible=false e activationAllowed=false permanecem.",
+    "Legadoincerto e reservas preservados; escopodeisolamentoindividual nao afirma conciliacaoglobal. IDs/provas reais ficam privados.",
+    "Provas IAM sao vinculadas ao principal/recurso/permissao atual; negar, unknown, deny/PAB ouerro nao vira true. NenhumaTokenCreator oupermissao geral concedida so para testar.",
+    "Recuperacaolimitada preserva execucao, outbox e resultado incerto sem nova inferencia; operadortoca somenteconfiguracao das3filas vaziasrevisadas, mantemfilaantiga e processing=false.",
+    "NenhumtaskCloudTasks criado, nenhumReel/provider chamado, nenhumhold/reserva liberado ouregistro apagado nesta entrega.",
+    "Suites, testesadversariais, build e browser executadossomenteGitHubActions noheadfinal; nenhumasuite/build naVPS.",
+    "Revisaoindependente e mapa21frentes distinguem resolvido, simuladotestado, comprovadoreal e aceitefuturo; nao alegarprograma/pilotorealconcluido."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-109-pilot-prerequisites.json",
+    "google-v0/lib/reels-pilot-readiness.mjs",
+    "google-v0/tests/reels-pilot-readiness.test.mjs",
+    "google-v0/docs/reels-pilot-preparation.md",
+    "google-v0/scripts/prepare-reels-pilot.mjs",
+    "ops/inspect-reels-runtime-iam.py",
+    "ops/test_inspect_reels_runtime_iam.py",
+    "ops/prepare-reels-queue-recovery.py",
+    "ops/test_prepare_reels_queue_recovery.py",
+    "ops/test_deploy_reels_services.py",
+    ".github/workflows/google-v0.yml"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-pilot-readiness.mjs",
+      "reason": "Existing strictprepare contract; separatepreactivation vsruntime withoutfalsegreen",
+      "sections": [
+        "prepareReelsPilot"
+      ],
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/lib/reels-command-runner.mjs",
+      "reason": "Durablerecovery/dispatch fences",
+      "sections": [
+        "run"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/docs/reels-pilot-preparation.md",
+      "reason": "Currentproposal/limits",
+      "sections": [
+        "Contrato",
+        "Sequencia"
+      ],
+      "max_chars": 2500
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py",
+    "python3 scripts/check_links.py",
+    "python3 -m unittest discover -s ops -p test_*.py",
+    "node --test google-v0/tests/*.test.mjs"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo com contexto novo sobre versão exata. Revisão técnica fica com agentes; merge/deploy final dentro da autorização correspondente. Correções no escopo já autorizadas pelo usuário."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual e AGENTS persistente v2; substituem apenas limites legados de launcher para coordenacao nativa.",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "Rootonly mayapply reviewedminimal IAMexecution and recoveryconfig changes necessaryunderspecificuserrequest, processing staysfalse; no processing/provider/tasks/datawrites/holdrelease/deletion.",
+    "merge_deploy": "No productmerge/deploy implicitly fromcoordination. Concrete reviewedpackage and corresponding human authorization required.",
+    "ci_authorization": "Suites, builds e navegador somente GitHub Actions com dados sinteticos e sem credenciais/provedores.",
+    "ownership": {
+      "runtime_permissions": "ops/inspect-reels-runtime-iam.py + its test only; readonly proof/privateIAMmatrix",
+      "isolation_recovery": "readinessmodule/test/docs + ops/prepare-reels-queue-recovery.py/test, privateisolation evidence",
+      "root": "packet/contract/CIintegration, reviewed IAM/queue application, PR and officialstate/projections",
+      "review": "freshcontextreadonly exactpackage/code/CI review andfrontmap"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json"
+  }
+}

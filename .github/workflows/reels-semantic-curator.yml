@@ -1,0 +1,74 @@
+name: Semantic curator
+on:
+  push:
+    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', '.github/workflows/reels-semantic-curator.yml']
+  pull_request:
+    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', '.github/workflows/reels-semantic-curator.yml']
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: semantic-curator-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  saved-catalogue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Semantic contracts and final worker live catalogue with synthetic adapters
+        run: node --test google-v0/tests/reels-semantic*.test.mjs google-v0/tests/reels-live-catalogue.test.mjs
+      - name: Select the finite saved499 evidence event
+        id: finite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          enabled=false
+          if [ "$GITHUB_HEAD_REF" = codex/semantic-curator-live-catalogue ] || [ "$GITHUB_REF_NAME" = codex/semantic-curator-live-catalogue ]; then
+            enabled=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .head.ref == "codex/semantic-curator-live-catalogue" and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+      - name: Receive exact immutable saved sources without Google access
+        if: steps.finite.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node ops/prepare-reels-catalogue.mjs --source google-v0/config/contextual-catalogue-source.json --output "$RUNNER_TEMP/semantic-saved-source.json"
+      - name: Rehearse all499 saved publications with abstaining synthetic inference
+        if: steps.finite.outputs.enabled == 'true'
+        run: node ops/prepare-semantic-curator.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --output "$RUNNER_TEMP/semantic-curator-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.finite.outputs.enabled == 'true'
+        with:
+          name: semantic-saved499-evidence
+          path: ${{ runner.temp }}/semantic-curator-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - run: npm ci --ignore-scripts
+        working-directory: google-v0/qa
+      - run: npx playwright install --with-deps chromium
+        working-directory: google-v0/qa
+      - name: Semantic workspace, real API and durable synthetic worker journey
+        run: node google-v0/qa/reels-semantic-browser-check.mjs
+        env:
+          MEGABRAIN_REELS_SEMANTIC_QA_OUTPUT: ${{ runner.temp }}/semantic-browser-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semantic-browser-evidence
+          path: ${{ runner.temp }}/semantic-browser-evidence/
+          retention-days: 7
+          if-no-files-found: error

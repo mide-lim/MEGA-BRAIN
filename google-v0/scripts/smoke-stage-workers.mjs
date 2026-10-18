@@ -46,6 +46,7 @@ async function checkStage(stage,{v2=false,closedEnv=false}={}){
     await response.text();
     if(v2){
       const control=await fetch(url+'/tasks/control',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(control.status,423);await control.text();
+      const curation=await fetch(url+'/tasks/curation',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(curation.status,stage==='analysis'?401:405,stage+' curation is isolated and reaches application authorization');await curation.text();
       assert.doesNotMatch(output,/Unexpected outbound I\/O/);return;
     }
     for(const path of ['/tasks/diagnose','/tasks/assisted-upload','/not-a-task']){

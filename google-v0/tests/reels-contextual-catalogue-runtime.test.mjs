@@ -125,3 +125,20 @@ test('an uncompleted or foreign editorial receipt cannot authorize index work',a
  x.store.put('reels_command_items/pending',{kind:'taxonomy_manual_assignment',operationId:op,status:'pending',assignment:{reelId:'QaFull_single'}});
  const empty=await x.runtime.reconcileEditorialOperation(op);assert.equal(empty.evaluatedCount,0);assert.equal(x.store.writes,writes);
 });
+
+test('active catalogue rejects legacy V1 discovery preview and apply before any signal/category write',async()=>{
+ const x=await setup();await seed(x);const before=clone([...x.store.docs]),writes=x.store.writes;
+ for(const preview of [true,false]){
+  const response=await x.api(request('categories',{action:'discover',preview,revision:13,id:'receitas',minSupport:2,idempotencyKey:'legacy-discovery-block-'+preview}));
+  assert.equal(response.status,409);assert.equal((await response.json()).code,'LEGACY_DISCOVERY_DISABLED');
+ }
+ assert.equal(x.store.writes,writes);assert.deepEqual([...x.store.docs],before);assert.ok(![...x.store.docs.keys()].some(p=>p.startsWith('reels_index/taxonomy_')));
+ assert.equal((await json(x,'curation/catalogue')).projectionCoverage.evaluatedCount,5);
+});
+test('inactive catalogue retains explicit legacy discovery compatibility',async()=>{
+ const x=await setup({active:false});
+ const response=await x.api(request('categories',{action:'discover',preview:true,revision:13,id:'receitas',minSupport:2,idempotencyKey:'legacy-discovery-compatible'}));
+ assert.equal(response.status,200,await response.clone().text());assert.notEqual((await response.json()).code,'LEGACY_DISCOVERY_DISABLED');
+ assert.ok([...x.store.docs.keys()].some(p=>p.startsWith('reels_index/taxonomy_')),'legacy preview remains the historical explicit index operation only before catalogue activation');
+ assert.equal(x.store.docs.has(catalogueManifestPath),false);
+});

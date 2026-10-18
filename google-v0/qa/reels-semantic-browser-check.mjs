@@ -140,7 +140,11 @@ try{
   assert.equal((await read('/curation/semantic/groups/'+manualId)).group.protected,true);
   await page.getByRole('button',{name:'Unir a outro contexto',exact:true}).click();await page.getByRole('dialog').getByLabel('Unir no contexto',{exact:true}).selectOption(fixture.expected.groupId);await confirm('group_merge');
   assert.equal((await read('/curation/semantic/groups/'+manualId)).group.status,'rejected');const merged=await read('/curation/semantic/groups/'+fixture.expected.groupId);assert.deepEqual(merged.members.map(member=>member.id).sort(),[...fixture.expected.memberIds,'QaFull_unknown'].sort(),'Merge is a union, never a doubled count');
-  await selectGroup(fixture.expected.groupName);await page.getByRole('button',{name:'Retirar contexto',exact:true}).click();await confirm('group_reject');assert.equal((await read('/curation/semantic/groups/'+fixture.expected.groupId)).group.status,'rejected');
+  await selectGroup(fixture.expected.groupName);await page.getByRole('button',{name:'Organizar publicações',exact:true}).click();dialog=page.getByRole('dialog');
+  assert.equal(await dialog.getByLabel('Incluir QaFull_single',{exact:true}).isChecked(),true);assert.equal(await dialog.getByLabel('Incluir QaFull_many',{exact:true}).isChecked(),true);await dialog.getByLabel('Incluir QaFull_unknown',{exact:true}).uncheck();await confirm('group_assign');
+  const removalPost=semanticPosts().filter(call=>call.body.action==='group_assign').at(-1);assert.deepEqual(removalPost.body.addIds,[]);assert.deepEqual(removalPost.body.removeIds,['QaFull_unknown']);assert.equal(Object.hasOwn(removalPost.body,'reelIds'),false);
+  assert.deepEqual((await read('/curation/semantic/groups/'+fixture.expected.groupId)).members.map(member=>member.id).sort(),fixture.expected.memberIds,'Removing one member preserves the entire unchanged selection');
+  await page.getByRole('button',{name:'Retirar contexto',exact:true}).click();await confirm('group_reject');assert.equal((await read('/curation/semantic/groups/'+fixture.expected.groupId)).group.status,'rejected');
   const tree=await read('/categories');assert.equal(tree.nodes.some(node=>node.id==='semantic_'+fixture.expected.groupId),false,'Rejected context leaves the shared tree');assert.equal(fixture.calls.length,paidFixtureCalls);
  });
  await record('mobile_editorial_interface_and_no_source_processing_or_external_calls',async()=>{

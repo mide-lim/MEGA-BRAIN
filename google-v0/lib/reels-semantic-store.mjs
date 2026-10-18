@@ -5,7 +5,7 @@ const allowedRead=p=>allowedWrite(p)||/^(?:videos|reels_legacy_content)\/[A-Za-z
 export async function commitSemanticStore(store,{checks,writes}){
  if(!Array.isArray(checks)||!checks.length||checks.length>1024||!Array.isArray(writes)||!writes.length||writes.length>160)throw Error('Transação semântica fora do limite.');
  const expected=new Map();for(const c of checks){if(!allowedRead(c.path)||expected.has(c.path)||c.updateTime!==null&&(typeof c.updateTime!=='string'||!c.updateTime||c.updateTime.length>100))throw Error('Precondição semântica inválida.');expected.set(c.path,c.updateTime);}
- const targets=new Set();for(const w of writes){if(!allowedWrite(w.path)||targets.has(w.path)||!expected.has(w.path)||!w.data?.kind?.startsWith('semantic_')||JSON.stringify(w.data).length>800000)throw Error('Escrita fora dos derivados semânticos.');encodeFields(w.data);targets.add(w.path);}
+ const targets=new Set();for(const w of writes){if(!allowedWrite(w.path)||targets.has(w.path)||!expected.has(w.path)||!w.data?.kind?.startsWith('semantic_')||Buffer.byteLength(JSON.stringify(w.data),'utf8')>800000)throw Error('Escrita fora dos derivados semânticos.');encodeFields(w.data);targets.add(w.path);}
  const prefix='projects/'+store.api.project+'/databases/(default)/documents/',begin=await store.api.request(store.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
  if(typeof transaction!=='string'||!transaction)throw Error('Transação semântica não confirmada.');
  let closed=false;const rollback=async()=>{try{await store.api.request(store.root+':rollback',{method:'POST',json:{transaction}});}catch{}};

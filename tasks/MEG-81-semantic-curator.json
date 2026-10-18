@@ -32,7 +32,9 @@
     "ops/test_apply_semantic_curator.py",
     ".github/workflows/reels-semantic-curator.yml",
     ".github/workflows/google-v0.yml",
-    ".github/workflows/google-deploy.yml"
+    ".github/workflows/google-deploy.yml",
+    "google-v0/web-google/lib/server.mjs",
+    "google-v0/qa/"
   ],
   "context": [
     {

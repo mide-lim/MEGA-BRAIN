@@ -1,10 +1,11 @@
+import {semanticPromptHash} from './reels-semantic-provider.mjs';
 import {semanticHash,semanticPolicyVersion} from './reels-semantic-source.mjs';
 const hash=v=>/^[a-f0-9]{64}$/.test(v??''),list=v=>Array.isArray(v)?v:[],fail=code=>{throw Object.assign(Error(code),{code});};
 export const semanticDefinitionHash=g=>semanticHash({context:g.context,kind:g.groupKind??g.kind,dimension:g.dimension??null,key:g.key,definition:g.definition,positiveCriteria:g.positiveCriteria,negativeCriteria:g.negativeCriteria});
 function metrics(rows){const m={tp:0,fp:0,fn:0,tn:0,abstained:0,total:rows.length};for(const r of rows){if(r.abstained)m.abstained++;m[r.label?r.predicted?'tp':'fn':r.predicted?'fp':'tn']++;}return {...m,precision:m.tp+m.fp?m.tp/(m.tp+m.fp):0,recall:m.tp+m.fn?m.tp/(m.tp+m.fn):0,coverage:rows.length?(rows.length-m.abstained)/rows.length:0};}
 export function evaluateSemanticCalibration({job,groups,annotations,sources,minimumPrecision=0.95,observedAt}){
- if(job?.status!=='completed'||job.phase!=='complete'||!hash(job.id)||!hash(job.cohortHash)||!hash(job.promptHash??annotations?.promptHash)||!Number.isFinite(minimumPrecision)||minimumPrecision<0.9||minimumPrecision>1)fail('CALIBRATION_JOB_OR_POLICY_INVALID');
- if(annotations?.schemaVersion!==1||annotations.model!==job.policy.model||annotations.verifierModel!==job.policy.verifierModel||annotations.promptHash!==(job.promptHash??annotations.promptHash)||annotations.cohortHash!==job.cohortHash||annotations.reviewerKind!=='independent_source_review'||typeof annotations.reviewId!=='string'||!annotations.reviewId||annotations.authorIdentity===annotations.reviewerIdentity||!annotations.reviewerIdentity)fail('CALIBRATION_INDEPENDENCE_OR_BINDING_INVALID');
+ if(job?.status!=='completed'||job.phase!=='complete'||!hash(job.id)||!hash(job.cohortHash)||job.promptHash!==semanticPromptHash||!Number.isFinite(minimumPrecision)||minimumPrecision<0.9||minimumPrecision>1)fail('CALIBRATION_JOB_OR_POLICY_INVALID');
+ if(annotations?.schemaVersion!==1||annotations.model!==job.policy.model||annotations.verifierModel!==job.policy.verifierModel||annotations.promptHash!==job.promptHash||annotations.cohortHash!==job.cohortHash||annotations.reviewerKind!=='independent_source_review'||typeof annotations.reviewId!=='string'||!annotations.reviewId||!annotations.authorIdentity||annotations.authorIdentity===annotations.reviewerIdentity||!annotations.reviewerIdentity)fail('CALIBRATION_INDEPENDENCE_OR_BINDING_INVALID');
  const byGroup=new Map(list(groups).map(g=>[g.id,g])),bySource=new Map(list(sources).map(s=>[s.id,s])),seen=new Set(),splitById=new Map(),rows=[];
  for(const a of list(annotations.labels)){
   const g=byGroup.get(a.groupId),s=bySource.get(a.reelId),key=a.groupId+':'+a.reelId;

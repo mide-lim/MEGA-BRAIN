@@ -76,6 +76,11 @@ async function main(){
  const input=JSON.parse(await readFile(path,'utf8')),result=await rehearseSavedSemanticCatalogue(input,{sourceCommit:process.env.GITHUB_SHA});
  await mkdir(out,{recursive:true});
  await writeFile(join(out,'saved499-semantic-rehearsal.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
+ const policy={version:semanticPolicyVersion,enabled:true,model:'gemini-3.5-flash',verifierModel:'gemini-3.5-flash',batchSize:8,maxSources:499,maxCalls:127,authorizationId:'semantic-saved499-'+process.env.GITHUB_SHA.slice(0,16)+'-'+result.cohortHash.slice(0,12),authorizedCohortHash:result.cohortHash,expiresAt:new Date(Date.now()+24*60*60*1000).toISOString(),autoPromotionEnabled:false,minUniqueMembers:10};
+ const operation={schemaVersion:1,kind:'finite_saved_text_curation_preparation',sourceCommit:process.env.GITHUB_SHA,createdAt:new Date().toISOString(),sourceObservationSHA256:result.sourceObservationSHA256,cohortHash:result.cohortHash,promptHash:semanticPromptHash,pins:result.preparation.pins,targetDocument:'settings/reels_v2_semantic_policy',expectedTargetExists:false,policy,policyHash:semanticHash(policy),queue:'v0-curation',workerRoute:'/tasks/curation',limits:{maxProviderCalls:127,maxSources:499,maxOutputTokensPerCall:16384,maxInputCharactersPerCall:320000,timeoutMsPerCall:90000,automaticProviderRetries:0},safety:{newReels:0,repeatedVideoOrSTTAnalyses:0,deletions:0,originalSourceWrites:0,uncertainPaidRecordsChanged:0,originalReelQueuesResumed:0,automaticCategoryPromotion:false},authorizationGranted:false,applied:false,actualProviderCalls:0,readiness:'Requires exact review, fresh source/fence checks and action-time resource authorization before application.'};
+ operation.packageHash=semanticHash(operation);
+ await writeFile(join(out,'semantic-activation-prepared.json'),JSON.stringify(operation,null,2)+'\n',{flag:'wx'});
+
  console.log(JSON.stringify({published:499,sourceDocuments:738,actualProviderCalls:0,googleWrites:0,semanticAccuracyMeasured:false,contractCompleted:result.job.status==='completed'}));
 }
 if(process.argv[1]?.endsWith('/prepare-semantic-curator.mjs'))await main();

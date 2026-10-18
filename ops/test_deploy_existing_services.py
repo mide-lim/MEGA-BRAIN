@@ -77,14 +77,16 @@ class ValidationTests(unittest.TestCase):
     def test_assisted_publication_contract_requires_one_worker_and_exact_baseline(self):
         workflow = (Path(__file__).parents[1] / '.github/workflows/google-deploy.yml').read_text()
         limits = json.loads(re.search(r"MEGABRAIN_RUNTIME_MAX_INSTANCES: '([^']+)'", workflow).group(1))
-        self.assertEqual(limits, {"worker": 1, "web": 1})
+        self.assertEqual(limits, {"worker": 1, "web": 3})
         config = {**CONFIG, "runtime_max_instances": limits}
-        deployment.validate_services(services(), config)
-        changed = services()
+        original = services()
+        original["web"]["template"]["scaling"]["maxInstanceCount"] = 3
+        deployment.validate_services(original, config)
+        changed = copy.deepcopy(original)
         changed["worker"]["template"]["scaling"]["maxInstanceCount"] = 4
         with self.assertRaises(deployment.DeploymentError):
             deployment.validate_services(changed, config)
-        self.assertNotEqual(deployment.baseline_digest(services()), deployment.baseline_digest(changed))
+        self.assertNotEqual(deployment.baseline_digest(original), deployment.baseline_digest(changed))
 
     def test_explicit_four_worker_instances_are_accepted_but_not_other_values(self):
         config = {**CONFIG, "runtime_max_instances": {"worker": 4, "web": 1}}

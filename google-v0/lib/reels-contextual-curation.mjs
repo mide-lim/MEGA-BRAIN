@@ -19,10 +19,10 @@ export class ReelsContextualCurator{
  }
  invalidate(){this.snapshot=null;}
  async snapshotData(){
-  const all=await this.repository.items(),items=all.filter(i=>i.publication?.available);
-  const durable=typeof this.repository.contextualContributions==='function'?await this.repository.contextualContributions(items):null;
+  const durable=typeof this.repository.contextualContributions==='function'?await this.repository.contextualContributions():null;
+  const all=Array.isArray(durable?.items)?durable.items:await this.repository.items(),items=all.filter(i=>i.publication?.available);
   const contributionVersion=durable?{versionHash:durable.versionHash??contextualHash(listContributions(durable).map(c=>[c.reelId,c.idempotencyKey])),sourceStale:durable.sourceStale===true,dataAsOf:durable.dataAsOf??null}:null;
-  const metadataHash=contextualHash({rule:contextualRuleHash,contributionVersion,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
+  const metadataHash=contextualHash({rule:contextualRuleHash,contributionVersion,taxonomyVersion:durable?.taxonomySnapshot?.updateTime??null,sourceVersions:durable?.sourceVersions?[...durable.sourceVersions].sort(([a],[b])=>a.localeCompare(b)):null,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
   if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock()){
    // An unchanged catalogue signature does not make a failed source refresh
    // fresh. Preserve original source observation time and disclose staleness now.
@@ -46,7 +46,7 @@ export class ReelsContextualCurator{
     }
     return projectContextualPublication({video:raw,legacy,item,qualityVerification});
    });
-   const categories=typeof this.repository.categories==='function'?await this.repository.categories():{nodes:[]};
+   const categories=typeof this.repository.categories==='function'?await this.repository.categories(durable?{snapshot:durable}:{}):{nodes:[]};
    const observations=this.repository.observation?.()??{};
    this.snapshot={metadataHash,entries:entries.filter(Boolean),nodes:categories.nodes??[],observedAt:new Date(this.clock()).toISOString(),dataAsOf:durable?.dataAsOf??observations.observedAt??new Date(started).toISOString(),expiresAt:this.clock()+this.cacheTtlMs,versionHash:contextualHash(entries.filter(Boolean).map(e=>[e.id,e.fingerprint])),missingAcceptedSource:items.length-entries.filter(Boolean).length,acceptedInventory:items.length,sourceStale:observations.cache?.stale===true||durable?.sourceStale===true,durableContributions:durable!==null};
    return this.snapshot;

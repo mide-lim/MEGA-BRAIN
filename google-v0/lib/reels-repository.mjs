@@ -50,7 +50,7 @@ export class ReelsRepository{
  async scan(collection,select){
   if(typeof this.store.query!=='function')throw Error('Store requer consulta projetada; leitura integral não permitida.');
   const records=[];let cursor;const seen=new Set();
-  do{const page=await this.store.query(collection,{select,limit:500,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Consulta não avançou.');if(cursor)seen.add(cursor);}while(cursor);
+  do{const page=await this.store.query(collection,{select,limit:1000,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Consulta não avançou.');if(cursor)seen.add(cursor);}while(cursor);
   return records;
  }
  async items(){
@@ -100,7 +100,7 @@ export class ReelsRepository{
   if(q.facets!==undefined&&(typeof q.facets!=='string'||q.facets.length>4096))throw invalid('Facetas inválidas.');
   if(hasContextualFilters(q)&&q.workspace!=='library')throw invalid('Facetas contextuais pertencem ao acervo publicado.');
  }
- async matching(query={}){
+ async matching(query={},snapshot=null){
   this.validateQuery(query);
   if(query.curationDomainId!==undefined){if(query.workspace!=='library'||!this.semanticDomains)throw invalid('Área de curadoria indisponível.');const selected=new Set(await this.semanticDomains.matchingIds(query.curationDomainId)),{curationDomainId,...rest}=query;return (await this.matching(rest)).filter(i=>selected.has(i.id));}
   const semanticId=query.semanticFacet??(/^semantic_[a-f0-9]{64}$/.test(query.category??'')?query.category.slice(9):null);
@@ -110,20 +110,24 @@ export class ReelsRepository{
    return (await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
   }
   const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
-  const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items;
+  const sourceItems=snapshot?snapshot.items:await this.items(),taxonomySnapshot=snapshot?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy');
+  const navigation=await this.navigation(sourceItems,taxonomySnapshot?.data),items=navigation.items;
   if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
   const {taxonomy}=navigation,ids=new Set([query.category]);let added=true;
   while(added){added=false;for(const node of taxonomy.nodes??[])if(ids.has(node.parentId)&&!ids.has(node.id)){ids.add(node.id);added=true;}}
-  const {category,...rest}=query,semanticMembers=this.semanticCurator?new Set(await this.semanticCurator.categoryIds(category)):new Set();return refine(items.filter(x=>matchesReel(x,rest)&&(x.categoryIds.some(id=>ids.has(id))||semanticMembers.has(x.id))));
+  const {category,...rest}=query,semanticMembers=this.semanticCurator?new Set(await this.semanticCurator.categoryIds(category,snapshot?await this.semanticCurator.freshGroups({inventorySnapshot:snapshot,taxonomySnapshot:snapshot.taxonomySnapshot}):null)):new Set();return refine(items.filter(x=>matchesReel(x,rest)&&(x.categoryIds.some(id=>ids.has(id))||semanticMembers.has(x.id))));
  }
  async list(query={}){
   this.validateQuery(query);const limit=Number(query.limit??50);if(!Number.isInteger(limit)||limit<1||limit>100)throw invalid('Limite inválido.');
   const {cursor,limit:unused,...filters}=query,hash=digest(filters),sort=query.sort??'newest';
   const key=i=>[sort==='title'?(i.title??'').toLocaleLowerCase('pt-BR'):(i.createdAt??''),i.id];
   const compare=(a,b)=>{const x=key(a),y=key(b),d=x[0]<y[0]?-1:x[0]>y[0]?1:0;return (sort==='newest'?-d:d)||(x[1]<y[1]?-1:x[1]>y[1]?1:0);};
-  const rows=(await this.matching(query)).sort(compare);let start=0;
+  // Only this ordinary library-category request shares its fresh inventory.
+  // Paid execution and other query modes retain their existing read boundaries.
+  const snapshot=query.workspace==='library'&&query.category&&!query.semanticFacet&&!query.curationDomainId&&!/^(semantic_|ctx_format_)/.test(query.category)&&this.semanticCurator?await this.contextualContributions():null;
+  const rows=(await this.matching(query,snapshot)).sort(compare);let start=0;
   if(cursor){let c;try{c=JSON.parse(Buffer.from(cursor,'base64url').toString());}catch{throw invalid('Cursor inválido.');}if(c.hash!==hash||!Array.isArray(c.key)||c.key.length!==2)throw invalid('Cursor não corresponde à consulta.');start=rows.findIndex(x=>{const k=key(x),d=k[0]<c.key[0]?-1:k[0]>c.key[0]?1:0;return ((sort==='newest'?-d:d)||(k[1]<c.key[1]?-1:k[1]>c.key[1]?1:0))>0;});if(start<0)start=rows.length;}
-  const page=rows.slice(start,start+limit);return {items:page,total:rows.length,nextCursor:start+limit<rows.length?Buffer.from(JSON.stringify({hash,key:key(page.at(-1))})).toString('base64url'):null,...this.observation()};
+  const page=rows.slice(start,start+limit);return {items:page,total:rows.length,nextCursor:start+limit<rows.length?Buffer.from(JSON.stringify({hash,key:key(page.at(-1))})).toString('base64url'):null,...(snapshot?{observedAt:snapshot.observedAt,cache:{ttlMs:0,stale:snapshot.sourceStale}}:this.observation())};
  }
  async summary(){const counts={registered:0,queued:0,running:0,waiting:0,completed:0,published:0,attention:0,ready:0,confirmedFailures:0,inconclusive:0,total:0,totalInventory:0};for(const i of await this.items()){counts.total++;if(Object.hasOwn(counts,i.status))counts[i.status]++;if(i.publication.available)counts.published++;if(eligibility(i)===null)counts.ready++;if(!i.publication.available){if(i.status==='failed')counts.confirmedFailures++;if(i.status==='uncertain')counts.inconclusive++;if(['uncertain','failed'].includes(i.status))counts.attention++;}counts.totalInventory=counts.total;}return {counts,...this.observation(),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
  async queues(){const items=await this.items(),config=Object.fromEntries(await Promise.all(['acquisition','transcription','analysis'].map(async id=>[id,(await this.store.get('reels_controls/'+id))?.data??{}])));return {stages:['acquisition','transcription','analysis'].map(id=>{const rows=items.filter(i=>i.stage===id),c=config[id]??{};return {id,name:{acquisition:'Aquisição',transcription:'Transcrição',analysis:'Análise'}[id],...Object.fromEntries(['queued','running','waiting','failed','uncertain'].map(s=>[s,rows.filter(i=>i.status===s).length])),paused:c.paused??true,desiredConcurrency:c.desiredConcurrency??null,effectiveConcurrency:c.effectiveConcurrency??null,...this.observation()};}),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
@@ -165,9 +169,9 @@ export class ReelsRepository{
   for(const e of entries){const key=[e.day??'',e.kind,e.currency??''].join(':');let g=groups.get(key);if(!g){g={day:e.day,kind:e.kind,currency:e.currency,amount:null,knownRecords:0,unknownRecords:0,billed:null};groups.set(key,g);}if(e.amount===null)g.unknownRecords++;else{g.amount=(g.amount??0)+e.amount;g.knownRecords++;}}
   return {groups:[...groups.values()].sort((a,b)=>(b.day??'').localeCompare(a.day??'')||a.kind.localeCompare(b.kind)),coverage:{records:entries.length,unknownAmounts:entries.filter(e=>e.amount===null).length,withoutDate:entries.filter(e=>e.day===null).length,billingConfirmed:false,costsComplete:false},historical:true,executable:false,observedAt:this.now(),note:'Contabilidade antiga e reservas não são fatura nem produção atual. Valores sem data permanecem sem alocação diária; ausência não significa zero.'};
  }
- async categories(){
+ async categories({snapshot:providedSnapshot=null}={}){
   // Share only this request's fresh metadata. Paid execution never uses it.
-  const snapshot=this.catalogueRuntime?await this.contextualContributions():null;
+  const snapshot=this.catalogueRuntime?(providedSnapshot??await this.contextualContributions()):null;
   const sourceItems=snapshot?snapshot.items:await this.items();
   const taxonomySnapshot=snapshot?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy');
   const navigation=await this.navigation(sourceItems,taxonomySnapshot?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));

@@ -37,7 +37,7 @@ async function seedSavedRecovery(server){
  const output={version:1,profiles:loaded.sources.map(source=>({reelId:source.id,context:'general',state:'unknown',reason:'Synthetic saved-response reconciliation fixture; no inference is executed.',units:[]})),groups:[]},envelope={...semanticEnvelope(output,job.policy.model),phase:'extract'},saved=await server.semantic.envelopeSave(batchId,envelope,binding),at=new Date().toISOString();
  const staged={...job,status:'paused',phase:'extract',reason:'SEMANTIC_SOURCE_CHANGED',callsUsed:1,cursor:0,batch:{id:batchId,status:'submitting',phase:'extract',offset:0,sourceIds:loaded.sources.map(source=>source.id),binding,bindingHash,leaseOwner:'synthetic-historical-owner',leaseUntil:'2000-01-01T00:00:00.000Z',startedAt:at,groupVersions:[]},updatedAt:at};
  await server.store.patch(path,staged,{updateTime:snapshot.updateTime});server.semanticDeliveries.length=0;
- const recovery=prepareSemanticSourceRecovery({job:staged,saved:saved.data,envelope:{...saved.data,rawResponse:envelope.rawResponse},sources:loaded.sources,sourceObservationSHA256:'d'.repeat(64),sourceCommit:'e'.repeat(40),observedAt:at});
+ const recovery=prepareSemanticSourceRecovery({job:staged,authorizationLedger:await server.semantic.authorizationLedger(staged),saved:saved.data,envelope:{...saved.data,rawResponse:envelope.rawResponse},sources:loaded.sources,sourceObservationSHA256:'d'.repeat(64),sourceCommit:'e'.repeat(40),observedAt:at});
  assert.equal(recovery.report.ready,true,JSON.stringify(recovery.report.gates));assert.ok(recovery.receipt);
  return {jobId:job.id,path,batchId,receipt:recovery.receipt,receiptPath:semanticSourceRecoveryPath(batchId),sourceCount:loaded.sources.length,rawHash:saved.data.rawHash,bindingHash:saved.data.bindingHash};
 }

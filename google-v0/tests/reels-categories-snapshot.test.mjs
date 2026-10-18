@@ -4,6 +4,7 @@ import {ReelsRepository} from '../lib/reels-repository.mjs';
 import {ReelsCatalogueRuntime} from '../lib/reels-contextual-catalogue-runtime.mjs';
 import {ReelsSemanticCurator} from '../lib/reels-semantic-curator.mjs';
 import {reelsAPI} from '../lib/reels-api.mjs';
+import {ReelsTaxonomy} from '../lib/reels-taxonomy.mjs';
 import {contextualHash} from '../lib/reels-contextual-projection.mjs';
 import {makeSemanticFixture} from './reels-semantic-fixture.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
@@ -36,7 +37,7 @@ test('categories share one fresh metadata scan pair cold and warm while preservi
  const shared=await setup(),reference=await setup({separateDerivedReads:true});
  reset(shared.store);const cold=await shared.get();assert.equal(cold.status,200);assert.deepEqual(sourceReads(shared.store),{videos:1,reels_legacy_content:1});
  // The comparison uses independent reads with the same source epochs.
- const expected=await reference.repository.categories();assert.deepEqual(cold.data,expected);
+ const expected={...await reference.repository.categories(),discovery:await new ReelsTaxonomy({repository:reference.repository}).coverage()};assert.deepEqual(cold.data,expected);
  assert.equal(node(cold.data,'ctx_format_single_recipe').count,1);
  assert.equal(node(cold.data,'ctx_format_recipe_collection').count,1);
  assert.equal(node(cold.data,'semantic_'+shared.groupId).count,1);
@@ -76,7 +77,9 @@ test('sharing keeps review-hash and contribution-content validation fail closed'
  const revoked=await s.get();assert.equal(revoked.status,200);assert.equal(node(revoked.data,'ctx_format_single_recipe').count,0);assert.equal(revoked.data.cache.stale,true);
  const contributionPath='reels_index/contextual_QaFull_many',contribution=await s.store.get(contributionPath);
  await s.store.patch(contributionPath,{contentHash:'0'.repeat(64)},{updateTime:contribution.updateTime});
- const invalid=await s.get();assert.ok(invalid.status>=500);assert.equal(invalid.data.nodes,undefined);
+ const before=structuredClone([...s.store.docs]);
+ const invalid=await s.get();assert.equal(invalid.status,409);assert.equal(invalid.data.code,'CATALOGUE_CONTRIBUTION_CORRUPT');assert.equal(invalid.data.nodes,undefined);assert.equal(invalid.data.cache?.stale===false,false);
+ assert.deepEqual([...s.store.docs],before,'GET must neither repair corrupt metadata nor change source records.');
 });
 
 test('default semantic inventory still reads new epochs and does not reuse the category snapshot',async()=>{

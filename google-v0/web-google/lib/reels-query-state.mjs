@@ -14,16 +14,16 @@ export function categoryRows(nodes,query=''){
  for(const node of nodes){if(q&&!visible.has(node.id))continue;const parent=byId.has(node.parentId)?node.parentId:null;if(!children.has(parent))children.set(parent,[]);children.get(parent).push(node);}
  return children;
 }
-export function createResourceClient(fetcher,{now=Date.now}={}){
+export function createResourceClient(fetcher,{now=Date.now,cacheTtlMs=15000}={}){
  const records=new Map();
- function record(path){if(!records.has(path)){if(records.size>=100)for(const [key,r]of records)if(!r.listeners.size&&!r.promise){records.delete(key);break;}records.set(path,{data:null,error:null,loading:false,listeners:new Set(),generation:0,revision:null,updatedAt:0});}return records.get(path);}
+ function record(path){if(!records.has(path)){if(records.size>=100)for(const [key,r]of records)if(!r.listeners.size&&!r.promise){records.delete(key);break;}records.set(path,{data:null,error:null,loading:false,listeners:new Set(),generation:0,revision:null,dataRevision:null,updatedAt:0});}return records.get(path);}
  const snapshot=r=>({data:r.data,error:r.error,loading:r.loading});
  const emit=r=>{for(const listener of r.listeners)listener(snapshot(r));};
  return {
   peek:path=>path?snapshot(record(path)):{data:null,error:null,loading:false},
   subscribe(path,listener){const r=record(path);r.listeners.add(listener);listener(snapshot(r));return()=>{r.listeners.delete(listener);if(!r.listeners.size&&r.promise){r.generation++;r.controller.abort();r.promise=null;r.loading=false;}};},
-  load(path,revision=0){const r=record(path);if(r.promise&&r.revision===revision)return r.promise;r.controller?.abort();const controller=new AbortController(),generation=++r.generation;r.controller=controller;r.revision=revision;r.loading=true;emit(r);
-   const promise=Promise.resolve().then(()=>fetcher(path,{signal:controller.signal})).then(data=>{if(r.generation===generation&&!controller.signal.aborted){r.data=data;r.error=null;r.updatedAt=now();}return data;}).catch(error=>{if(r.generation===generation&&!controller.signal.aborted)r.error=error;}).finally(()=>{if(r.generation===generation){r.loading=false;r.promise=null;emit(r);}});r.promise=promise;return promise;
+  load(path,revision=0){const r=record(path);if(r.promise&&r.revision===revision)return r.promise;const age=now()-r.updatedAt;if(!r.promise&&r.data!==null&&r.data!==undefined&&!r.error&&r.dataRevision===revision&&age>=0&&age<cacheTtlMs)return Promise.resolve(r.data);r.controller?.abort();const controller=new AbortController(),generation=++r.generation;r.controller=controller;r.revision=revision;r.loading=true;emit(r);
+   const promise=Promise.resolve().then(()=>fetcher(path,{signal:controller.signal})).then(data=>{if(r.generation===generation&&!controller.signal.aborted){r.data=data;r.dataRevision=revision;r.error=null;r.updatedAt=now();}return data;}).catch(error=>{if(r.generation===generation&&!controller.signal.aborted)r.error=error;}).finally(()=>{if(r.generation===generation){r.loading=false;r.promise=null;emit(r);}});r.promise=promise;return promise;
   }
  };
 }

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "snapshot": {
+    "schemaVersion": 1,
+    "branch": "codex/full-catalogue-calibration",
+    "stagingSourceCommit": "14306ab487ba02e9631d026cf95ccb2fb06431df",
+    "inputSHA256": "41c61b96dc59ac85929adad158d29712235083ec64a83c337a9394a2118398cd",
+    "parts": [
+      {
+        "runId": 39082779962
+      },
+      {
+        "runId": 39082781228
+      },
+      {
+        "runId": 39082782577
+      },
+      {
+        "runId": 39082783994
+      },
+      {
+        "runId": 39082785366
+      },
+      {
+        "runId": 39082786926
+      },
+      {
+        "runId": 39082788046
+      },
+      {
+        "runId": 39082789477
+      },
+      {
+        "runId": 39082790921
+      },
+      {
+        "runId": 39082792330
+      },
+      {
+        "runId": 39082793747
+      },
+      {
+        "runId": 39082795051
+      },
+      {
+        "runId": 39082796456
+      },
+      {
+        "runId": 39082797643
+      },
+      {
+        "runId": 39082798705
+      },
+      {
+        "runId": 39082800041
+      },
+      {
+        "runId": 39082801297
+      },
+      {
+        "runId": 39082802559
+      },
+      {
+        "runId": 39082803920
+      }
+    ]
+  },
+  "annotations": {
+    "schemaVersion": 1,
+    "branch": "codex/full-catalogue-calibration",
+    "stagingSourceCommit": "8dcfc878c4f474bbdb98cea10d1549d21c187405",
+    "inputSHA256": "bb342e66630ee3888eff7c46ce24b9df2455f548d741cb75df03ee1f383c6878",
+    "parts": [
+      {
+        "runId": 39082966417
+      }
+    ]
+  },
+  "annotationFiles": {
+    "full-catalogue-format-annotations-v1.json": "b434c166e2bb0e5f6725eebbab0a397371a412e7a3ee9fe7fb9738522c5a08ec",
+    "full-catalogue-blind-labels-v1.json": "b0ed5ce97b2af9fb39b794c7d3f95f2a44c745fc03d807f5ceaf2dd8aa880e3b",
+    "full-catalogue-source-stage-review-v2.json": "bc34aa2ad1b9e91ac4d4e2c8615ca5c0a24d407a10ff62dbbf18c21d491fc6dd"
+  }
+}

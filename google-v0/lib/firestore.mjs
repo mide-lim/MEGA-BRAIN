@@ -1,3 +1,4 @@
+import {isDeepStrictEqual} from 'node:util';
 import {fragmentSpec,hydrateFragments,planFragmentPatch} from './control-fragments.mjs';
 function plain(value){return value!==null&&typeof value==='object'&&Object.getPrototypeOf(value)===Object.prototype;}
 export function encodeValue(value){
@@ -99,6 +100,49 @@ export class Firestore {
     if(last){const values=orderBy.map(x=>{if(x.field==='__name__')return {referenceValue:last.name};let v={mapValue:{fields:last.fields}};for(const key of x.field.split('.'))v=v?.mapValue?.fields?.[key];if(!v)throw Error('Campo de ordenação ausente.');return v;});lastCursor=Buffer.from(JSON.stringify({collection,orderBy,values})).toString('base64url');if(docs.length===limit)nextCursor=lastCursor;}
     return {records,nextCursor,lastCursor};
   }
+  // One derived document only. Source/editorial/review/previous versions are
+  // read in the same Firestore read-write transaction as the full replacement.
+  async compareAndReplaceDerived({path,replacement,checks}){
+    const id=replacement?.reelId;
+    if(!/^[A-Za-z0-9_-]{5,32}$/.test(id??'')||path!=='reels_index/contextual_'+id||replacement.kind!=='contextual_contribution'||!Array.isArray(checks))throw Error('Mutação fora do catálogo derivado.');
+    const allowed=new Set([path,'videos/'+id,'reels_legacy_content/'+id,'settings/reels_v2_taxonomy','settings/reels_v2_contextual_catalogue','reels_index/contextual_review_'+id]);
+    if(checks.length>7)throw Error('Precondições derivadas excedem o escopo.');
+    const expected=new Map();for(const c of checks){documentPath(c.path);if(!allowed.has(c.path)&&!/^reels_quality_receipts\/quality_[a-f0-9]{64}$/.test(c.path))throw Error('Precondição fora da fonte contextual.');if(expected.has(c.path)||c.updateTime!==null&&(typeof c.updateTime!=='string'||!c.updateTime))throw Error('Precondição derivada inválida.');expected.set(c.path,c.updateTime);}
+    for(const required of [path,'videos/'+id,'settings/reels_v2_taxonomy','settings/reels_v2_contextual_catalogue','reels_index/contextual_review_'+id])if(!expected.has(required))throw Error('Fonte editorial ou revisão sem precondição.');
+    if(expected.get('videos/'+id)!==replacement.sourceVersions?.video||!expected.get('settings/reels_v2_contextual_catalogue'))throw Error('Fonte ou manifesto sem versão ativa.');
+    if(replacement.sourceVersions?.legacy&&!expected.has('reels_legacy_content/'+id))throw Error('Fonte preservada sem precondição.');
+    const prefix='projects/'+this.api.project+'/databases/(default)/documents/',begin=await this.api.request(this.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
+    if(typeof transaction!=='string'||!transaction)throw Error('Transação derivada ausente.');
+    let finished=false;
+    const rollback=async()=>{try{await this.api.request(this.root+':rollback',{method:'POST',json:{transaction}});}catch{}};
+    try{
+      const rows=await this.api.request(this.root+':batchGet',{method:'POST',json:{documents:[...expected.keys()].map(p=>prefix+p),mask:{fieldPaths:['id']},transaction}});
+      if(!Array.isArray(rows))throw Error('Resposta transacional derivada inválida.');
+      const observed=new Map();
+      for(const row of rows){
+        const name=row.found?.name??row.missing;
+        if(typeof name!=='string'||!name.startsWith(prefix)||row.found&&row.missing)throw Error('Documento transacional fora do escopo.');
+        const p=documentPath(name.slice(prefix.length));if(!expected.has(p)||observed.has(p))throw Error('Resposta transacional repetida ou externa.');
+        if(row.found&&typeof row.found.updateTime!=='string')throw Error('Versão transacional ausente.');
+        observed.set(p,row.found?row.found.updateTime:null);
+      }
+      if(observed.size!==expected.size)throw Error('Leitura transacional incompleta.');
+      if([...expected].some(([p,v])=>observed.get(p)!==v)){await rollback();finished=true;return {applied:false,reason:'SOURCE_OR_EDITORIAL_VERSION_CHANGED'};}
+      const current=expected.get(path),write={update:{name:prefix+documentPath(path),fields:encodeFields(replacement)},currentDocument:current===null?{exists:false}:{updateTime:current}};
+      let result;
+      try{
+        result=await this.metadataWrite(this.root+':commit',{method:'POST',json:{transaction,writes:[write]}});
+        if(!Array.isArray(result?.writeResults)||result.writeResults.length!==1||!result.writeResults[0].updateTime)throw Error('Confirmação derivada incompleta.');
+      }catch(error){
+        // Never repeat the write after an ambiguous acknowledgement.
+        const after=await this.get(path);
+        if(after&&isDeepStrictEqual(after.data,replacement)){finished=true;return {applied:true,updateTime:after.updateTime,reconciled:true};}
+        throw Object.assign(Error('Commit derivado não comprovado; conferir evento sem repetir análise.'),{requiresReconciliation:true,cause:error});
+      }
+      finished=true;return {applied:true,updateTime:result.writeResults[0].updateTime};
+    }finally{if(!finished)await rollback();}
+  }
+
   async commit(writes){
     if(!Array.isArray(writes)||!writes.length||writes.length>450)throw Error('Commit inválido.');
     const prefix=`projects/${this.api.project}/databases/(default)/documents/`;

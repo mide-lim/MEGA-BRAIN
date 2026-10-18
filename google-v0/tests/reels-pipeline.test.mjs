@@ -61,7 +61,7 @@ test('long-running adapter is visible as running before external result arrives'
 
 test('post-publication recurrence callback resumes saved result without another analysis',async()=>{
  let calls=0,checks=0;const x=await setup('analysis',{analyze:async()=>{calls++;return {valid:true,changes:{analysis:{summary:'published'},analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted'}};}},{onPublished:async job=>{assert.equal(job.id,x.id);checks++;if(checks===1)throw Error('index unavailable');}});
- assert.equal((await x.pipeline.run({executionId:x.id})).status,'applying');assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal(calls,1);assert.equal(checks,2);
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal((await x.store.get('reels_executions/'+x.id)).data.catalogueIndex.status,'pending');const published=await x.store.get('videos/Reel_001');assert.equal(published.data.contextual_catalogue_event.id,x.id);assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal((await x.store.get('reels_executions/'+x.id)).data.catalogueIndex.status,'completed');assert.equal((await x.store.get('videos/Reel_001')).updateTime,published.updateTime);assert.equal(calls,1);assert.equal(checks,2);
 });
 
 test('valid complement replaces automatic category baseline while preserving explicit manual choices',async()=>{
@@ -170,4 +170,17 @@ test('source evidence changed after candidate preparation cannot be overwritten 
  const f=sourceBoundFixture();let x;x=await setup('analysis',{analyze:async({video})=>{const result=await preparedPipelineResult(x.store,video,f),current=await x.store.get('videos/Reel_001');await x.store.patch('videos/Reel_001',{source_caption:{text:'Fonte posterior',capture_id:'new_capture'}},{updateTime:current.updateTime});return result;}},{requiredQualityPolicyVersion:'gate_v2'});
  const current=await x.store.get('videos/Reel_001');await x.store.patch('videos/Reel_001',f.record,{updateTime:current.updateTime});const result=await x.pipeline.run({executionId:x.id}),saved=(await x.store.get('videos/Reel_001')).data;
  assert.equal(result.reason,'QUALITY_RECEIPT_UNVERIFIED');assert.equal(saved.source_caption.capture_id,'new_capture');assert.equal(saved.analysis_key,'previous.json');assert.equal(saved.analysis.summary,'Anterior preservado');
+});
+
+test('publication and pending catalogue intent survive a crash before the secondary event is created',async()=>{
+ let paidCalls=0,indexCalls=0;
+ const x=await setup('analysis',{analyze:async()=>{paidCalls++;return {valid:true,changes:{analysis:{summary:'Saved publication'},analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted'}};}},{onPublished:async job=>{indexCalls++;assert.equal(job.id,x.id);return {committed:true};}});
+ const refresh=x.repository.refresh.bind(x.repository);let crash=true;
+ x.repository.refresh=async id=>{const current=await x.store.get('videos/'+id);if(crash&&current?.data.analysis_key==='saved'&&current.data.contextual_catalogue_event?.id===x.id){crash=false;throw Error('Synthetic process interruption after publication CAS');}return refresh(id);};
+ const interrupted=await x.pipeline.run({executionId:x.id});
+ assert.equal(interrupted.status,'applying');assert.equal(indexCalls,0);assert.equal(paidCalls,1);
+ const durable=await x.store.get('videos/Reel_001');assert.equal(durable.data.analysis_key,'saved');assert.deepEqual(durable.data.contextual_catalogue_event,{id:x.id,type:'publicationAccepted',reelId:'Reel_001',status:'pending',analysisKey:'saved',analysisGeneration:'1'});
+ assert.equal((await x.store.get('reels_executions/'+x.id)).data.status,'applying');
+ const resumed=await x.pipeline.run({executionId:x.id});assert.equal(resumed.status,'completed');assert.equal(paidCalls,1);assert.equal(indexCalls,1);assert.equal((await x.store.get('reels_executions/'+x.id)).data.catalogueIndex.status,'completed');
+ assert.equal((await x.store.get('videos/Reel_001')).data.contextual_catalogue_event.id,x.id);
 });

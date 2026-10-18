@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "id": "MEG-93",
+  "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "efbf042404f2fedefcbef003b55efc3124aac846",
+  "objective": "Calibrar499publicações salvas e manter catálogo contextual incremental por publicação aceita. Receita única/Várias receitas são formatos de Receitas; ingredientes são filtros limpos, não categorias porReel. Nenhum novoReel/replaypago/provider/exclusão/49/IAM/retomadafila.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "499publicações distintas recebem projeção identificada por fonte/revisão e prova; desconhecido é explícito, não negativo nem certificado semântico.",
+    "Árvore Receitas→Receita única/Várias receitas por unidades independentes apoiadas; ingredientes Frango/Ovo são facetas; não nomes/ingredientes/passos contados como receitas e não criar categoria porvídeo.",
+    "Catálogo durável metadata-only e incremental por publicação aceita/correção/editorial, idempotência source/rule/editorial hash e CAS atômico; fonte/manual/supressão atuais prevalecem; GET não escreve.",
+    "Falha de índice não repete análise paga nem desfaz publicação aceita; evento permanece recuperável semreprover e semadmitirnovosReels.",
+    "Bootstrap finito preparado/testado sóGitHubActions preserva análise/publicação/mídia/históricos/manuais; grava somente settings e contribuições derivadas; semdeletar.",
+    "GitHub centraliza testes/preparação/calibração/build/QA; revisor independente sela anotações antes previsões, mede limites e aceita head exato; web real demonstra totais e mesma seleção Biblioteca.",
+    "Publicação fechada necessária web e etapas que consomem hook incremental somente após revisão; nenhumprocessamento/filas/IAM/49/reserva/legado alterado."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-93-full-catalogue-calibration.json",
+    "google-v0/lib/",
+    "google-v0/tests/",
+    "google-v0/scripts/",
+    "google-v0/config/",
+    "google-v0/docs/",
+    "google-v0/web-google/",
+    "google-v0/qa/",
+    ".github/workflows/reels-catalogue-calibration.yml",
+    ".github/workflows/google-v0.yml",
+    ".github/workflows/frontend-qa.yml",
+    "ops/prepare-reels-catalogue.mjs",
+    "ops/prepare-reels-catalogue.test.mjs",
+    "ops/apply-reels-catalogue.py",
+    "ops/test_apply_reels_catalogue.py",
+    ".github/workflows/reels-alignment-review.yml",
+    "google-v0/Dockerfile.worker",
+    "ops/rehearse-reels-catalogue.py"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-contextual-curation.mjs",
+      "reason": "Índice de fontes publicadas e facetas",
+      "sections": [
+        "ReelsContextualCurator"
+      ],
+      "max_chars": 1700
+    },
+    {
+      "path": "google-v0/lib/reels-contextual-projection.mjs",
+      "reason": "Suporte conservador e identidade",
+      "sections": [
+        "projectContextualPublication"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/reels-quality-gate.mjs",
+      "reason": "Contrato opt-in existente e recibo",
+      "sections": [
+        "quality gate"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/analysis-publication.mjs",
+      "reason": "Durabilidade e pointer CAS",
+      "sections": [
+        "publication"
+      ],
+      "max_chars": 1300
+    },
+    {
+      "path": "google-v0/lib/reels-taxonomy.mjs",
+      "reason": "Gestão manual e operações de taxonomia",
+      "sections": [
+        "ReelsTaxonomy"
+      ],
+      "max_chars": 1100
+    },
+    {
+      "path": "google-v0/lib/reels-api.mjs",
+      "reason": "Rotas reais e autorização",
+      "sections": [
+        "reelsAPI"
+      ],
+      "max_chars": 900
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-93-full-catalogue-calibration.json --diff-base efbf042404f2fedefcbef003b55efc3124aac846 --diff-head HEAD",
+    "python3 scripts/check_links.py",
+    "node --test google-v0/tests/*.test.mjs",
+    "GitHub Actions catalogue snapshot preparation, browser QA, image build and closed smokes"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo fresco e versão exata/CI/manifesto; usuário autorizou implementar e conferir web sem processamento. Correções delimitadas e publicação fechada necessária incluídas; nenhuma expansão de IAM ou processamento."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual category calibration/quality + AGENTS persistente v2",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "Exact reviewed derived catalogue metadata and necessary closed web/three-stage publication only; no Reel, providers, delete,49,IAM,queue resume",
+    "merge_deploy": "Necessary to deliver requested actual web acceptance after exact independent review and CI; processing remains disabled.",
+    "ci_authorization": "All product tests/build/preparation/calibration only GitHubActions; raw existing data read via approved metadata helper; no new analysis.",
+    "ownership": {
+      "backend": "contextual-catalogue projection/index/contributions modules and tests; alignment_backend",
+      "frontend": "UI/QA; alignment_frontend",
+      "root": "repository/API/model/store CAS/events/workflows/packet/bootstrap owner operator",
+      "review": "fresh review_full_catalogue read only",
+      "contextual_backend": "contextual contributions/runtime/repository/API/storeTX/pipeline publication hooks and tests; alignment_backend",
+      "operator": "Bootstrap owner and Python tests; alignment_frontend separate branch"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies.",
+    "canonical_revision": 293
+  }
+}

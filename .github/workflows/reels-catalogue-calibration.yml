@@ -1,0 +1,76 @@
+name: Published catalogue calibration
+on:
+  push:
+    paths: ['google-v0/**', 'ops/prepare-reels-catalogue*', 'ops/apply-reels-catalogue.py', 'ops/test_apply_reels_catalogue.py', '.github/workflows/reels-catalogue-calibration.yml']
+  pull_request:
+    paths: ['google-v0/**', 'ops/prepare-reels-catalogue*', 'ops/apply-reels-catalogue.py', 'ops/test_apply_reels_catalogue.py', '.github/workflows/reels-catalogue-calibration.yml']
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: published-catalogue-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  catalogue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Validate bounded source transport and catalogue contracts
+        run: node --test ops/prepare-reels-catalogue.test.mjs google-v0/tests/reels-catalogue-preparation.test.mjs
+      - name: Select the finite reviewed source event
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          allowed=false
+          if [ "$GITHUB_HEAD_REF" = codex/full-catalogue-calibration ] || [ "$GITHUB_REF_NAME" = codex/full-catalogue-calibration ]; then
+            allowed=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            allowed="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 71 and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          if [ "$allowed" = true ] && test -f google-v0/config/contextual-catalogue-source.json; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No finite source evaluation scheduled; synthetic contracts remain active."
+          fi
+      - name: Assemble exact private source snapshot and sealed reviews
+        if: steps.source.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node ops/prepare-reels-catalogue.mjs --source google-v0/config/contextual-catalogue-source.json --output "$RUNNER_TEMP/catalogue-input.json"
+      - name: Evaluate every saved publication and prepare derived bootstrap
+        if: steps.source.outputs.available == 'true'
+        run: node google-v0/scripts/prepare-contextual-catalogue.mjs --input "$RUNNER_TEMP/catalogue-input.json" --output "$RUNNER_TEMP/catalogue-review"
+      - name: Rehearse the actual saved metadata plan with owner guards and transaction budgets
+        if: steps.source.outputs.available == 'true'
+        run: python3 ops/rehearse-reels-catalogue.py --input "$RUNNER_TEMP/catalogue-input.json" --plan "$RUNNER_TEMP/catalogue-review/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-review/owner-plan-rehearsal.json" --store "$RUNNER_TEMP/catalogue-applied-store.json"
+      - name: Verify the complete applied saved catalogue through the real API
+        if: steps.source.outputs.available == 'true'
+        run: node google-v0/scripts/verify-contextual-catalogue-store.mjs --store "$RUNNER_TEMP/catalogue-applied-store.json" --plan "$RUNNER_TEMP/catalogue-review/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-review/catalogue-runtime-rehearsal.json"
+      - name: Package exact committed owner operation without credentials
+        if: steps.source.outputs.available == 'true'
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib,json,os,pathlib,zipfile
+          source=pathlib.Path('ops/apply-reels-catalogue.py')
+          if source.is_file():
+              payload=source.read_bytes()
+              destination=pathlib.Path(os.environ['RUNNER_TEMP'])/'catalogue-review'
+              with zipfile.ZipFile(destination/'owner-sources.zip','x',compression=zipfile.ZIP_DEFLATED) as archive:
+                  archive.writestr(str(source),payload)
+                  archive.writestr('source-manifest.json',json.dumps({'sourceCommit':os.environ['GITHUB_SHA'],'files':{str(source):{'sha256':hashlib.sha256(payload).hexdigest(),'bytes':len(payload)}}},indent=2)+'\n')
+          PYTHON
+      - name: Retain reviewed derived metadata only
+        if: steps.source.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-catalogue-review
+          path: ${{ runner.temp }}/catalogue-review/
+          retention-days: 7
+          if-no-files-found: error

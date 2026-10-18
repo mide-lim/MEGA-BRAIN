@@ -7,7 +7,7 @@ import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-pr
 const list=v=>Array.isArray(v)?v:[];
 const clone=v=>structuredClone(v);
 const problem=(code,message,status=409)=>Object.assign(Error(message),{code,status});
-const compactEvidence=(m,resultId,proposalId,type='member')=>({...m,evidence:[],evidenceCount:list(m.evidence).length,evidenceRef:{resultId,proposalId,type}});
+const compactEvidence=(m,resultId,proposalId,type='member')=>({...m,evidence:[],evidenceCount:list(m.evidence).length,proofSourceBindings:Object.fromEntries(list(m.evidence).map(p=>[p.source,p.sourceIdentity])),evidenceRef:{resultId,proposalId,type}});
 const compactDecision=d=>({reelId:d.reelId,verdict:d.verdict,semanticProofHash:d.semanticProofHash,resultId:d.resultId});
 const compactGroup=g=>({...g,definition:String(g.definition??'').slice(0,600),aliases:list(g.aliases).slice(0,4).map(x=>x.slice(0,80)),positiveCriteria:list(g.positiveCriteria).slice(0,2).map(x=>x.slice(0,200)),negativeCriteria:list(g.negativeCriteria).slice(0,2).map(x=>x.slice(0,200)),projection:{bounded:true,fullDefinitionHash:semanticHash(g),limits:{definition:600,aliases:4,criteria:2,criterionCharacters:200}}});
 const groupPath=id=>'reels_index/semantic_group_'+id;
@@ -207,7 +207,7 @@ export class ReelsSemanticCurator{
   const ref=member.evidenceRef;if(!cache.has(ref.resultId)){const saved=await this.store.get(resultPath(ref.resultId));if(!saved)throw Error('Prova salva ausente.');cache.set(ref.resultId,parseSavedSemanticResponse(await this.envelopeRead(saved)));}
   const output=cache.get(ref.resultId),proposal=list(output.groups).find(g=>(g.existingGroupId??semanticHash({version:semanticContractVersion,context:g.context,kind:g.kind,dimension:g.dimension??null,key:g.key}))===ref.proposalId),source=list(ref.type==='negative'?proposal?.negativeExamples:proposal?.members).find(m=>m.reelId===member.id);
   if(!source)throw Error('Vínculo da prova salva não corresponde ao membro.');
-  return {...member,evidence:list(source.evidence).map(p=>({fieldPath:p.fieldPath,excerpt:p.excerpt,source:p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis',sourceIdentity:member.sourceIdentity,anchorHash:semanticHash({identity:member.sourceIdentity,path:p.fieldPath,excerpt:p.excerpt}),verification:'saved_semantic_result_source_anchor'}))};
+  return {...member,evidence:list(source.evidence).map(p=>({fieldPath:p.fieldPath,excerpt:p.excerpt,source:p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis',sourceIdentity:member.proofSourceBindings?.[p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis']??null,anchorHash:semanticHash({identity:member.sourceIdentity,path:p.fieldPath,excerpt:p.excerpt}),verification:'saved_semantic_result_source_anchor'}))};
  }
  async detail(id,{memberId=null}={}){
   if(!validHash(id))throw problem('INVALID_GROUP','Grupo inválido.',400);const state=await this.freshGroups(),g=state.groups.find(g=>g.id===id);if(!g)throw problem('NOT_FOUND','Grupo não encontrado.',404);

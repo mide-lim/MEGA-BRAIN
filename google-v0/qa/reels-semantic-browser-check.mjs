@@ -8,6 +8,7 @@ import {makeSemanticFixture,semanticEnvelope} from '../tests/reels-semantic-fixt
 import {semanticHash,semanticPolicyPath} from '../lib/reels-semantic-source.mjs';
 import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
 import {prepareSemanticSourceRecovery,semanticSourceRecoveryPath} from '../lib/reels-semantic-source-recovery.mjs';
+import {makeSemanticCheckpointFixture,seedSemanticAlignmentRecovery} from '../tests/reels-semantic-checkpoint-fixture.mjs';
 
 
 function makeProofNavigationFixture(){
@@ -256,7 +257,49 @@ try{
   }catch(error){await recoveryPage?.screenshot({path:join(output,'semantic-saved-response-failure.png'),fullPage:true}).catch(()=>{});throw error;}
   finally{await writeFile(join(output,'recovery-http-calls.json'),JSON.stringify(recoveryServer.calls,null,2));await recoveryContext?.close();await recoveryServer.close();}
  });
- const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
+  await record('alignment_checkpoint_is_durable_server_gated_and_explicit_release_only_enqueues_once',async()=>{
+  const checkpointFixture=makeSemanticCheckpointFixture(),checkpointServer=await startReelsFixtureServer({semanticFixture:checkpointFixture});let checkpointContext,checkpointPage;
+  try{
+   const sourcesBefore=semanticHash([...checkpointServer.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/'))),seed=await seedSemanticAlignmentRecovery({curator:checkpointServer.semantic,selection:{ids:checkpointFixture.ids}});
+   assert.equal(checkpointFixture.calls.length,0,'Saved first response must not be inferred again');
+   checkpointContext=await browser.newContext({viewport:{width:1440,height:1000}});await checkpointContext.addCookies([{name:'qa_session',value:'local',url:checkpointServer.origin}]);
+   await checkpointContext.route('**/*',route=>{if(new URL(route.request().url()).origin===checkpointServer.origin)return route.continue();failures.push('Unexpected checkpoint external request');return route.abort();});
+   checkpointPage=await checkpointContext.newPage();checkpointPage.setDefaultTimeout(20000);checkpointPage.on('pageerror',error=>failures.push(error.message));await checkpointPage.goto(checkpointServer.origin);await checkpointPage.getByRole('navigation').getByRole('button',{name:/Categorias/}).click();
+   const continuation=checkpointPage.getByRole('button',{name:'Continuar curadoria',exact:true});assert.equal(await continuation.count(),0);
+   await checkpointPage.getByRole('button',{name:'Aplicar resposta salva',exact:true}).click();
+   const applyResponse=checkpointPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='POST'&&result.request().postDataJSON()?.action==='reconcile_saved');
+   await checkpointPage.getByRole('dialog').getByRole('button',{name:'Aplicar resposta salva',exact:true}).click();const applied=await (await applyResponse).json();
+   assert.equal(applied.job.status,'prepared');assert.equal(checkpointFixture.calls.length,0);assert.equal(checkpointServer.semanticDeliveries.length,0);await checkpointPage.getByRole('dialog').waitFor({state:'hidden'});
+   // Only this explicit synthetic task runner delivers the separately released batch.
+   // maxBatches=3 proves the server checkpoint interrupts before a third call.
+   const current=(await checkpointServer.semantic.job(seed.jobId)).job;
+   await checkpointServer.semantic.runDelivery({jobId:seed.jobId,sequence:current.dispatch.sequence,outboxId:current.dispatch.outboxId,maxBatches:3});
+   const checkpoint=(await checkpointServer.semantic.job(seed.jobId)).job;
+   assert.equal(checkpoint.status,'paused');assert.equal(checkpoint.reason,'SEMANTIC_ALIGNMENT_CHECKPOINT');assert.equal(checkpoint.processed,16);assert.equal(checkpoint.callsUsed,2);assert.equal(checkpoint.canContinueAlignmentCheckpoint,true);assert.equal(checkpointServer.semanticDeliveries.length,0,'Checkpoint must not dispatch the remaining corpus');
+   const checkpointCalls=checkpointFixture.calls.length;assert.equal(checkpointCalls,1,'Only second batch invokes the synthetic provider');
+   async function refresh(){const pending=checkpointPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='GET');await checkpointPage.getByRole('button',{name:'Atualizar curadoria',exact:true}).click();return (await pending).json();}
+   const path='reels_index/semantic_job_'+seed.jobId;
+   async function setStatus(status,reason=checkpoint.reason){const saved=await checkpointServer.store.get(path);await checkpointServer.store.patch(path,{status,reason},{updateTime:saved.updateTime});}
+   for(const [status,reason] of [['uncertain',checkpoint.reason],['failed',checkpoint.reason],['running',checkpoint.reason],['paused','UNRELATED_REVIEW_REQUIRED']]){
+    await setStatus(status,reason);const overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canContinueAlignmentCheckpoint,false);assert.equal(await continuation.count(),0,'No continuation for '+status+'/'+reason);assert.equal(checkpointFixture.calls.length,checkpointCalls);
+   }
+   await setStatus('paused');const overview=await refresh();assert.equal(overview.policy.autoPromotionEnabled,false);assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canContinueAlignmentCheckpoint,true);
+   await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();await continuation.click();
+   const dialog=checkpointPage.getByRole('dialog',{name:'Continuar curadoria'});await dialog.getByText('O próximo lote está salvo e a curadoria parou neste ponto para conferência.',{exact:true}).waitFor();await dialog.getByText(/pode fazer novas chamadas de organização das análises salvas/).waitFor();
+   const hold=checkpointServer.holdNext(url=>url.pathname===semanticPath),posted=checkpointPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='POST'&&result.request().postDataJSON()?.action==='advance');
+   await dialog.getByRole('button',{name:'Continuar curadoria',exact:true}).click();await hold.started;assert.equal(await dialog.getByRole('button',{name:'Enviando comando…',exact:true}).isDisabled(),true);assert.equal(checkpointFixture.calls.length,checkpointCalls);hold.release();
+   const response=await posted;assert.equal(response.status(),200,JSON.stringify(await response.json()));const released=await response.json();assert.equal(released.job.status,'prepared');assert.equal(released.job.canContinueAlignmentCheckpoint,false);await dialog.waitFor({state:'hidden'});
+   await checkpointPage.getByText('Continuação encaminhada. O servidor seguirá a mesma curadoria autorizada; nenhuma resposta anterior foi repetida.',{exact:true}).waitFor();
+   assert.equal(await continuation.count(),0);assert.equal(checkpointFixture.calls.length,checkpointCalls,'Owner confirmation itself must not invoke a provider');assert.equal(checkpointServer.semanticDeliveries.length,1);
+   const posts=checkpointServer.calls.filter(call=>call.path===semanticPath&&call.method==='POST'),advances=posts.filter(call=>call.body.action==='advance');assert.equal(advances.length,1);assert.equal(advances[0].body.jobId,seed.jobId);assert.ok(advances[0].body.idempotencyKey.length>=8);
+   const duplicate=await checkpointContext.request.post(checkpointServer.origin+semanticPath,{headers:{Origin:checkpointServer.origin},data:advances[0].body});assert.equal(duplicate.status(),200);assert.equal((await duplicate.json()).duplicate,true);assert.equal(checkpointServer.semanticDeliveries.length,1,'Same explicit command must not enqueue twice');assert.equal(checkpointFixture.calls.length,checkpointCalls);
+   const firstResult=await checkpointServer.store.get('reels_index/semantic_result_'+seed.batchId);assert.equal(firstResult.data.processed,true);assert.equal(firstResult.data.rawHash,seed.rawHash);assert.equal(firstResult.data.bindingHash,seed.bindingHash);
+   assert.equal(semanticHash([...checkpointServer.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/'))),sourcesBefore);assert.deepEqual(checkpointServer.externalAttempts,[]);
+   await checkpointPage.screenshot({path:join(output,'semantic-alignment-checkpoint-released.png'),fullPage:true});
+  }catch(error){await checkpointPage?.screenshot({path:join(output,'semantic-alignment-checkpoint-failure.png'),fullPage:true}).catch(()=>{});throw error;}
+  finally{await writeFile(join(output,'checkpoint-http-calls.json'),JSON.stringify(checkpointServer.calls,null,2));await checkpointContext?.close();await checkpointServer.close();}
+ });
+ const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,explicitCheckpointAdvancePosts:1,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally{await browser?.close();await server.close();}

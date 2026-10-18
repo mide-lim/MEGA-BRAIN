@@ -38,10 +38,10 @@ function assertSupported(schema){
  }
 }
 test('actual adapter sends finite, supported, phase-specific schemas and shared instructions without invoking a model',async()=>{
- const requests=[],api={project:'megabrain-v0-1017370021431',async request(url,options){requests.push({url,options});return {candidates:[{finishReason:'STOP',content:{parts:[{text:'{}'}]}}]};}},provider=new ReelsSemanticProvider({api}),model='gemini-2.5-flash',requestId='f'.repeat(64),groups=[{id:'fixture-group'}],members=[{groupId:'fixture-group',reelId:sources[0].id}];
+ const requests=[],api={project:'megabrain-v0-1017370021431',async request(url,options){requests.push({url,options});return {candidates:[{finishReason:'STOP',content:{parts:[{text:'{}'}]}}]};}},provider=new ReelsSemanticProvider({api}),model='gemini-2.5-flash',requestId='f'.repeat(64),groups=[{id:'fixture-group'}],members=[{groupId:'fixture-group',reelId:sources[0].id}],negativeExamples=[{groupId:'negative-group',reelId:sources[1].id}];
  await provider.infer({sources,catalogue:{groups:[]},requestId,model});
  await provider.consolidate({groups,requestId,model});
- await provider.verify({sources,groups,members,negativeExamples:[],profiles:[],requestId,model});
+ await provider.verify({sources,groups,members,negativeExamples,profiles:[],requestId,model});
  assert.equal(requests.length,3);
  for(const [index,phase] of ['extract','consolidate','verify'].entries()){
   const call=requests[index],request=call.options.json,payload=JSON.parse(request.contents[0].parts[0].text);
@@ -57,7 +57,11 @@ test('actual adapter sends finite, supported, phase-specific schemas and shared 
  assert.equal(extract.properties.profiles.minItems,2);assert.equal(extract.properties.profiles.maxItems,2);
  assert.deepEqual(extract.properties.profiles.items.properties.reelId.enum,sources.map(s=>s.id));
  assert.equal(consolidate.properties.resolutions.minItems,1);assert.equal(consolidate.properties.resolutions.maxItems,1);
- assert.equal(verify.properties.members.minItems,1);assert.equal(verify.properties.negativeExamples.maxItems,0);
+ assert.equal(verify.properties.members.minItems,1);assert.equal(verify.properties.negativeExamples.maxItems,1);
+ for(const branch of verify.properties.members.items.anyOf){assert.deepEqual(branch.properties.reelId.enum,[sources[0].id]);assert.deepEqual(branch.properties.groupId.enum,['fixture-group']);}
+ for(const branch of verify.properties.negativeExamples.items.anyOf){assert.deepEqual(branch.properties.reelId.enum,[sources[1].id]);assert.deepEqual(branch.properties.groupId.enum,['negative-group']);}
+ assert.notStrictEqual(semanticVerificationSchema.properties.members.items,semanticVerificationSchema.properties.negativeExamples.items);
+ assert.equal(semanticVerificationSchema.properties.members.items.anyOf[0].properties.reelId.enum,undefined,'Per-request narrowing must not mutate the exported schema');
  assert.equal(semanticPromptVersion,S.version);assert.match(semanticPromptHash,/^[a-f0-9]{64}$/);
 });
 test('schema branches share enums and enforce canonical recipe format or required six-valued facet',()=>{

@@ -21,13 +21,14 @@ export function routeExistingSemanticDomain(categoryIds=[],nodes=[]){
  if(found.size!==1)return {domainId:'unassigned',routedByExistingCategory:false,semanticCertified:false,reason:found.size?'CROSS_DOMAIN_DESTINATION_PENDING':'DESTINATION_EVIDENCE_REQUIRED',candidateDomainIds:[...found].sort(),categoryIds:[...new Set(categoryIds)].sort()};
  return {domainId:[...found][0],routedByExistingCategory:true,semanticCertified:false,reason:'EXISTING_CATEGORY_OPERATIONAL_HINT',categoryIds:[...roots].sort(),candidateDomainIds:[]};
 }
-export function semanticDomainInstruction(id){
+export function semanticDomainInstruction(id,phase='extract'){
  const p=semanticDomainProfile(id);if(!p)throw Object.assign(Error('DOMAIN_PROFILE_INVALID'),{semantic_preflight:true});
- return 'Especialista operacional: '+p.label+'. '+p.instruction+' O domínio recebido é uma hipótese de organização, não um veredicto. Preserve o contexto real pela finalidade e use destinations para sugerir outro especialista quando necessário. Nunca force enquadramento; sugestão não aprova categoria. Para cada fonte devolva exatamente uma destination: state suggested com domainId específico e 1 a 8 provas literais, ou state inconclusive com domainId null e evidence vazio. Não use unassigned como destino sugerido. Não modifique decisões manuais.';
+ return 'Especialista operacional: '+p.label+'. '+p.instruction+' O domínio recebido é uma hipótese de organização, não um veredicto. Os grupos deste especialista só podem usar context: '+p.contexts.join(', ')+'. Nunca force enquadramento; fontes cuja finalidade está fora desses contextos não entram em grupos deste especialista. Não modifique decisões manuais.'+(phase==='extract'?' Para cada fonte devolva exatamente uma destination: state suggested com domainId específico e 1 a 8 provas literais, ou state inconclusive com domainId null e evidence vazio. Use destination para sugerir outro especialista quando a finalidade exigir; não crie grupo fora dos contextos permitidos. Não use unassigned como destino sugerido. Sugestão não aprova categoria.':' Não devolva destinations nesta fase; respeite exatamente o schema e os pares/IDs recebidos.');
 }
-export function semanticDomainResponseSchema(schema,phase,sources=[]){
+export function semanticDomainResponseSchema(schema,phase,sources=[],domainId){
  if(phase!=='extract')return schema;
  const copy=structuredClone(schema),string={type:'STRING'};
+ const profile=semanticDomainProfile(domainId);if(profile&&copy.properties?.groups?.items?.properties?.context)copy.properties.groups.items.properties.context.enum=[...profile.contexts];
  copy.properties.destinations={type:'ARRAY',description:'Exatamente uma decisão por ID recebido; fonte ausente ou insuficiente exige abstenção.',items:{type:'OBJECT',required:['reelId','state','domainId','reason','evidence'],properties:{reelId:{type:'STRING',enum:sources.map(s=>s.id)},state:{type:'STRING',enum:['suggested','inconclusive']},domainId:{type:'STRING',nullable:true,enum:semanticDomainProfiles.filter(p=>p.id!=='unassigned').map(p=>p.id)},reason:{...string,description:'Motivo da finalidade; não vazio, máximo 3000 caracteres.'},evidence:{type:'ARRAY',description:'Suggested exige 1..8 provas; inconclusive usa []. Provas devem ser trechos literais contínuos, máximo1600 caracteres cada.',items:{type:'OBJECT',required:['fieldPath','excerpt'],properties:{fieldPath:string,excerpt:string}}}}}};
  copy.required=[...copy.required,'destinations'];return copy;
 }

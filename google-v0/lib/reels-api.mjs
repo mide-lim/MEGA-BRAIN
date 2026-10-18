@@ -33,6 +33,7 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
    if(request.method==='POST'&&!await sameOrigin(request))throw fail('ORIGIN_REJECTED','Origem não autorizada.',403);
    if(request.method==='GET'){
     const q=query(url);
+    if(parts.length===5&&parts.slice(0,4).join('/')==='curation/semantic/domains/destinations')return response(await getDomains().destination(parts[4]));
     if(path==='curation/semantic/domains')return response(await getDomains().overview());
     if(path==='curation/semantic')return response(await getSemantic().overview());
     if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='jobs'&&parts.length===4)return response(await getSemantic().job(parts[3]));

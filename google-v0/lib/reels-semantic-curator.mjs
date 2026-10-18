@@ -1,7 +1,7 @@
 import {measureSemanticDomainRequest} from './reels-semantic-domain-budget.mjs';
 import {semanticDomainPlanPath,validateSemanticDomainDestinations} from './reels-semantic-domain-contract.mjs';
 import {prepareDomainSemanticJobPlan,semanticDomainManifestValid} from './reels-semantic-domain-planner.mjs';
-import {domainBudgetPath,domainAuthorityPath,domainQuarantinePath,validateDomainExecutionAuthority} from './reels-semantic-domain-authority.mjs';
+import {domainBudgetPath,domainAuthorityPath,domainQuarantinePath,domainClaimPath,validateDomainExecutionAuthority} from './reels-semantic-domain-authority.mjs';
 import {semanticCorrectiveCapabilityVersion,validateSemanticCorrectiveCapability,consumeSemanticCorrectiveCapability} from './reels-semantic-corrective-capability.mjs';
 import {semanticContractSpec as spec} from './reels-semantic-contract-definition.mjs';
 import {frozenSemanticSourceFromSaved} from './reels-semantic-source-v1.mjs';
@@ -44,7 +44,7 @@ export class ReelsSemanticCurator{
   const [s,p]=await Promise.all([this.inventory(),this.policy()]);
   if(!p.data.domainCuration)return {source:s,policySnapshot:p.snapshot,...prepareSemanticPlan({inventory:s.inventory,selection,policy:p.data,observedAt:this.now()})};
   const manifest=await this.store.get(semanticDomainPlanPath),prepared=prepareDomainSemanticJobPlan({inventory:s.inventory,selection,policy:p.data,manifest:manifest?.data,observedAt:this.now(),promptHash:semanticExecutionPromptHash(p.data.domainCuration.domainId)});
-  try{const auth=await this.domainAuthority(p.data,manifest);if(prepared.preview.maximumCalls>auth.budget.data.maximumCalls-auth.budget.data.callsUsed)prepared.preview.blockingReasons.push('DOMAIN_EXCEEDS_REMAINING_GLOBAL_CAP');prepared.extraChecks=auth.checks;}catch(e){prepared.preview.blockingReasons.push(e.code??'OWNER_QUARANTINE_AUTHORITY_REQUIRED');}
+  try{const claim=await this.store.get(domainClaimPath(p.data.domainCuration.authorizationGroupId,p.data.domainCuration.domainId));if(claim)prepared.preview.blockingReasons.push('DOMAIN_COHORT_ALREADY_CLAIMED');const auth=await this.domainAuthority(p.data,manifest);if(prepared.preview.maximumCalls>auth.budget.data.maximumCalls-auth.budget.data.callsUsed)prepared.preview.blockingReasons.push('DOMAIN_EXCEEDS_REMAINING_GLOBAL_CAP');prepared.extraChecks=auth.checks;}catch(e){prepared.preview.blockingReasons.push(e.code??'OWNER_QUARANTINE_AUTHORITY_REQUIRED');}
   prepared.preview.providerEnabled=prepared.preview.blockingReasons.length===0;return {source:s,policySnapshot:p.snapshot,...prepared};
  }
  async domainAuthority(policy,manifest=null){
@@ -69,8 +69,9 @@ export class ReelsSemanticCurator{
   const authorizationPath='reels_index/semantic_authorization_'+semanticHash(p.policy.authorizationId),authorization=await this.store.get(authorizationPath);if(authorization)throw problem('SEMANTIC_AUTHORIZATION_CONSUMED','Esta autorização finita já foi utilizada.');
   const coordinatorPath='reels_index/semantic_coordinator',coordinator=await this.store.get(coordinatorPath);
   if(coordinator){const previous=await this.store.get(jobPath(coordinator.data.jobId));if(coordinator.data.authorizationId===p.policy.authorizationId||previous&&['prepared','running','paused','uncertain'].includes(previous.data.status))throw problem('SEMANTIC_JOB_ALREADY_EXISTS','Esta autorização já tem uma curadoria ou resultado que exige conferência.');}
+  const claimPath=p.policy.domainCuration?domainClaimPath(p.policy.domainCuration.authorizationGroupId,p.policy.domainCuration.domainId):null;if(claimPath&&await this.store.get(claimPath))throw problem('DOMAIN_COHORT_ALREADY_CLAIMED','Este domínio já tem uma coorte reivindicada nesta autoridade.');
   const now=this.now(),job={kind:'semantic_job',schemaVersion:1,id,fingerprint,status:'prepared',total:p.pins.length,phase:'extract',cursor:0,verifyCursor:0,verificationTargetDecisions:0,pins:p.pins,cohortHash:p.preview.cohortHash,previewHash:p.previewHash,policy:p.policy,policyHash:semanticHash(p.policy),promptHash:this.expectedPromptHash({policy:p.policy}),...(p.domainCuration?{domainCuration:p.domainCuration}:{}),policyVersion:p.policySnapshot.updateTime,maxCalls:p.preview.maximumCalls,callsUsed:0,dispatch:this.dispatchFor(id,0),batch:null,createdAt:now,updatedAt:now};
-  await this.commit([{path,updateTime:null},{path:authorizationPath,updateTime:null},{path:coordinatorPath,updateTime:coordinator?.updateTime??null},{path:semanticPolicyPath,updateTime:p.policySnapshot.updateTime},...(p.extraChecks??[])], [{path,data:job},{path:authorizationPath,data:{kind:'semantic_authorization',authorizationId:p.policy.authorizationId,jobId:id,cohortHash:p.preview.cohortHash,promptHash:job.promptHash,maximumCalls:p.preview.maximumCalls,consumedAt:now}},{path:coordinatorPath,data:{kind:'semantic_coordinator',jobId:id,authorizationId:p.policy.authorizationId,cohortHash:p.preview.cohortHash,createdAt:now}}]);
+  await this.commit([{path,updateTime:null},{path:authorizationPath,updateTime:null},{path:coordinatorPath,updateTime:coordinator?.updateTime??null},{path:semanticPolicyPath,updateTime:p.policySnapshot.updateTime},...(p.extraChecks??[]),...(claimPath?[{path:claimPath,updateTime:null}]:[])], [...(claimPath?[{path:claimPath,data:{kind:'semantic_domain_claim',authorizationGroupId:p.policy.domainCuration.authorizationGroupId,domainId:p.policy.domainCuration.domainId,planHash:p.policy.domainCuration.planHash,cohortHash:p.preview.cohortHash,jobId:id,createdAt:now},createOnly:true}]:[]),{path,data:job},{path:authorizationPath,data:{kind:'semantic_authorization',authorizationId:p.policy.authorizationId,jobId:id,cohortHash:p.preview.cohortHash,promptHash:job.promptHash,maximumCalls:p.preview.maximumCalls,consumedAt:now}},{path:coordinatorPath,data:{kind:'semantic_coordinator',jobId:id,authorizationId:p.policy.authorizationId,cohortHash:p.preview.cohortHash,createdAt:now}}]);
   await this.dispatch(job);return {job:publicJob((await this.store.get(path)).data),created:true};
  }
  async dispatch(job){
@@ -208,7 +209,7 @@ export class ReelsSemanticCurator{
     let envelope;
     if(job.phase==='extract')envelope=await this.provider.infer({...phasePayload,requestId:batchId,model:job.policy.model,...(job.domainCuration?{domainId:job.domainCuration.domainId,budget:job.domainCuration.budget}:{})});
     else if(job.phase==='consolidate')envelope=await this.provider.consolidate({...phasePayload,requestId:batchId,model:job.policy.verifierModel,...(job.domainCuration?{domainId:job.domainCuration.domainId,budget:job.domainCuration.budget}:{})});
-    else envelope=await this.provider.verify({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
+    else envelope=await this.provider.verify({...phasePayload,requestId:batchId,model:job.policy.verifierModel,...(job.domainCuration?{domainId:job.domainCuration.domainId,budget:job.domainCuration.budget}:{})});
     failureStage='raw_persistence';const saved=await this.envelopeSave(batchId,envelope,binding);failureStage='saved_application';await this.applySaved(live,saved);
    }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.recordFailure(latest,error,{stage:failureStage,envelopePresent:Boolean(known)});}break;}
   }

@@ -84,13 +84,13 @@ export function semanticFailureDiagnostic(error,{stage='provider',phase=null,env
 export function semanticExecutionPromptHash(domainId){
  if(domainId===undefined||domainId===null)return semanticPromptHash;
  const profile=semanticDomainProfile(domainId);if(!profile)throw Object.assign(Error('DOMAIN_PROFILE_INVALID'),{semantic_preflight:true});
- return semanticHash({basePromptHash:semanticPromptHash,profile,instruction:semanticDomainInstruction(domainId),schema:semanticDomainResponseSchema(semanticResponseSchema,'extract',[])});
+ return semanticHash({basePromptHash:semanticPromptHash,profile,phases:['extract','consolidate','verify'].map(phase=>({phase,instruction:semanticDomainInstruction(domainId,phase),schema:semanticDomainResponseSchema(phase==='extract'?semanticResponseSchema:phase==='consolidate'?semanticConsolidationSchema:semanticVerificationSchema,phase,[],domainId)}))});
 }
 export function prepareSemanticProviderRequest({phase,payload,requestId,domainId,measurementOnly=false}){
  if(!measurementOnly&&JSON.stringify(payload).length>320000||!/^[a-f0-9]{64}$/.test(requestId??''))throw Object.assign(Error('Chamada semântica fora do pacote finito.'),{semantic_preflight:true});
  let instruction=phase==='extract'?semanticInstruction:phase==='consolidate'?semanticConsolidationInstruction:phase==='verify'?semanticVerificationInstruction:null,schema=instruction?semanticSchemaForPhase(phase,payload):null;
  if(!instruction)throw Object.assign(Error('Fase semântica inválida.'),{semantic_preflight:true});
- if(domainId!==undefined){instruction+=' '+semanticDomainInstruction(domainId);schema=semanticDomainResponseSchema(schema,phase,payload.sources??[]);}
+ if(domainId!==undefined){instruction+=' '+semanticDomainInstruction(domainId,phase);schema=semanticDomainResponseSchema(schema,phase,payload.sources??[],domainId);}
  return {systemInstruction:{parts:[{text:instruction}]},contents:[{role:'user',parts:[{text:JSON.stringify({task:'curate_saved_published_knowledge',phase,requestId,...payload})}]}],generationConfig:{temperature:0.1,maxOutputTokens:16384,responseMimeType:'application/json',responseSchema:schema}};
 }
 export class ReelsSemanticProvider{

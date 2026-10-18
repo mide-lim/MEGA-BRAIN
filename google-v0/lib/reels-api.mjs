@@ -47,6 +47,11 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(parts[0]==='commands'&&parts.length===2)return response(await service.operation(decodeURIComponent(parts[1])));
     if(parts[0]==='reconciliations'&&parts.length===2)return response(await reconciliation.inspect(decodeURIComponent(parts[1])));
    }else{const input=await body(request);
+    if(path==='curation/catalogue'){
+     if(input.action!=='reconcile'||!Array.isArray(input.reelIds)||!input.reelIds.length||input.reelIds.length>25||Object.keys(input).some(k=>!['action','reelIds'].includes(k))||input.reelIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{5,32}$/.test(id)))throw fail('INVALID_CATALOGUE_RECOVERY','Identifique até25publicações para retomar somente o índice.');
+     const results=[];for(const id of [...new Set(input.reelIds)])results.push({reelId:id,...await getCatalogue().resumePublicationIndex(id)});
+     return response({results,providerCalls:0,processingStarted:false});
+    }
     if(path==='register'){if(typeof input.links!=='string'||input.links.length>200000)throw fail('INVALID_LINKS','Links inválidos.');return response({...await repository.registerLinks(input.links),automaticProcessingStarted:false});}
     if(path==='preview')return response(await service.preview(input.selection,input.type));
     if(path==='commands')return response(await service.command(input));

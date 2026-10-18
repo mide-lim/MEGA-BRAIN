@@ -24,6 +24,37 @@ test('domain routing is operational, exact-ID based and can abstain across unrel
  assert.equal(routeExistingSemanticDomain(['cycle'],[{id:'cycle',parentId:'cycle'}]).domainId,'unassigned');
  assert.equal(semanticExecutionPromptHash(),semanticPromptHash);assert.notEqual(semanticExecutionPromptHash('food'),semanticExecutionPromptHash('technology'));
 });
+test('direct editorial children route through official root IDs or exact top-level names',()=>{
+ const roots=[['group-alimentacao','Alimentação','food'],['group-tecnologia','Tecnologia','technology'],['group-saude','Saúde e bem-estar','health'],['group-trabalho','Trabalho e negócios','business'],['group-casa','Casa e estilo','home'],['group-viagens','Viagens e lugares','travel']];
+ for(const [id,name,domain] of roots){
+  assert.equal(routeExistingSemanticDomain([id]).domainId,domain);
+  const nodes=[{id,name,parentId:null},{id:'manual_branch',name:'Ramo editorial',parentId:id},{id:'manual_child',name:'Filho',parentId:'manual_branch'}];
+  const routed=routeExistingSemanticDomain(['manual_child'],nodes);
+  assert.equal(routed.domainId,domain);assert.equal(routed.semanticCertified,false);assert.equal(routed.routedByExistingCategory,true);
+  assert.equal(routeExistingSemanticDomain(['custom_root'],[{id:'custom_root',name,parentId:null}]).domainId,domain);
+ }
+ const cultureNodes=[{id:'manual_culture_root',name:'Cultura e conhecimento',parentId:null},{id:'manual_culture_child',name:'Artes',parentId:'manual_culture_root'}];
+ assert.equal(routeExistingSemanticDomain(['manual_culture_child'],cultureNodes).domainId,'culture');
+ assert.deepEqual(semanticDomainProfiles.find(p=>p.id==='culture').contexts,['general']);
+ assert.equal(routeExistingSemanticDomain(['not_root'],[{id:'not_root',name:'Casa e estilo',parentId:'missing'}]).domainId,'unassigned');
+ assert.equal(routeExistingSemanticDomain(['unknown'],[{id:'unknown',name:'Casa e estilo pessoal',parentId:null}]).domainId,'unassigned');
+ const cross=routeExistingSemanticDomain(['group-casa','group-trabalho']);assert.equal(cross.domainId,'unassigned');assert.deepEqual(cross.candidateDomainIds,['business','home']);
+ const cyclic=[{id:'a',name:'Cultura e conhecimento',parentId:'b'},{id:'b',name:'Outros',parentId:'a'}];assert.equal(routeExistingSemanticDomain(['a'],cyclic).domainId,'unassigned');
+});
+test('operational domain totals agree with direct-root category memberships across all eight destinations',()=>{
+ const cases=[['group-alimentacao','Alimentação','food',204],['group-tecnologia','Tecnologia','technology',97],['group-saude','Saúde e bem-estar','health',32],['group-trabalho','Trabalho e negócios','business',25],['group-casa','Casa e estilo','home',58],['group-viagens','Viagens e lugares','travel',19],['manual_culture_root','Cultura e conhecimento','culture',12],['group-outros','Outros temas','unassigned',52]],nodes=cases.flatMap(([id,name])=>[{id,name,parentId:null},{id:'child_'+id,name:'Ramo editorial',parentId:id}]),totals={};
+ // Synthetic membership fixture: routing checks, not a new observation of production.
+ for(const [id,,domain,count] of cases)for(let i=0;i<count;i++){const route=routeExistingSemanticDomain(['child_'+id],nodes);assert.equal(route.domainId,domain);totals[route.domainId]=(totals[route.domainId]??0)+1;}
+ assert.deepEqual(totals,{food:204,technology:97,health:32,business:25,home:58,travel:19,culture:12,unassigned:52});assert.equal(Object.values(totals).reduce((n,v)=>n+v,0),499);
+});
+test('a previous seven-profile manifest cannot activate paid work after culture is added',async()=>{
+ const s=setup(),seed=await seedSyntheticDomainOwner({curator:s.curator}),created=await startOwnerDomain(s),path='settings/reels_v2_semantic_domain_plan',current=await s.store.get(path),older=clone(current.data),beforeBudget=await s.store.get(seed.plan.budgetPath),beforeOrigin=await s.store.get(seed.originJob.path);
+ older.domains=older.domains.filter(d=>d.id!=='culture');delete older.manifestHash;older.manifestHash=semanticHash(older);
+ assert.equal(semanticDomainManifestValid(older),false);
+ await s.store.patch(path,older,{updateTime:current.updateTime});
+ const stopped=await finishDomain(s,created);assert.equal(stopped.status,'paused');assert.equal(stopped.callsUsed,0);assert.equal(s.fixture.calls.length,0);
+ equal(await s.store.get(seed.plan.budgetPath),beforeBudget);equal(await s.store.get(seed.originJob.path),beforeOrigin);
+});
 test('full request sizing includes Unicode, instruction, schema, catalogue and JSON; batches vary by content without truncation',async()=>{
  const s=setup(),r=await records(s),before=semanticHash(r),taxonomy=(await s.store.get('settings/reels_v2_taxonomy')).data,budget={maxEstimatedInputTokens:45000,maxRequestUtf8Bytes:45000};
  const manifest=prepareSemanticDomainManifest({records:r,taxonomy,histories:[],historyCoverageConfirmed:true,prepareRequest:prepareSemanticProviderRequest,observedAt:s.now,budget});
@@ -243,3 +274,4 @@ test('compact executable batches rehydrate only the unique sealed source pins an
  }
  assert.equal(s.fixture.calls.length,0);
 });
+

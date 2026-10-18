@@ -3,95 +3,46 @@
   "id": "MEG-81",
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "8d731f06725685de919563ca905734d177e82dac",
-  "objective": "Organizar os110 publicados de Outros temas com fontes já salvas e alinhar o worker final ao catálogo editorial existente, sem nova arquitetura, novos Reels ou chamadas pagas.",
+  "base_commit": "973bc6c6315270ba2e3c1a8ac2f40e107a417a8b",
+  "objective": "Concluir a mesma entrega dos110Outros temas: alinhar os contadores e filtros por área à árvore editorial já aplicada, reconhecendo a ancestralidade real dos grupos atuais; nenhum novo serviço, análise ou chamada paga.",
   "risk": "medium",
   "acceptance_criteria": [
-    "Moda encompasses demonstrated personal style, haircut, beard and aesthetic care, keeping health and marketing distinctions.",
-    "Existing loadLiveContextCatalogue supplies current bounded editorial taxonomy with source revision separately from verified semantic groups; no invented semantic proof, lost source checks or growth beyond existing transport limits.",
-    "Finalworker prompt evaluates video, caption and STT together; irrelevant musical STT does not override explicit visual/caption theme. Fixed category IDs remain valid and contextual editorial nodes use current catalogue IDs.",
-    "Existing publication, Food tree, saved analyses, provider response reconciliation and closed processing gates remain unchanged.",
-    "GitHub Actions is the sole test and build environment. Synthetic category-selection, catalogue freshness and integration/browser checks pass on exact final head; CI has no provider/cloud mutation access for these tests.",
-    "Independent fresh reviewer accepts final head. Root organizes actual110 using saved evidence and existing web taxonomy commands, verifies production categories and preserved499; no provider calls, new Reel processing, deletions, IAM or queue activation.",
-    "Only manual editorial nodes from a valid complete current catalogue may extend report.categories; saved-response restoration uses only its original hash-matching snapshot. Missing/stale/unbound catalogues keep fixed IDs. No contextual proof or publication requirement is promoted by editorial classification."
+    "Existing domain routing recognizes real parent ancestry for official roots and exact root labels, with cycle/conflict/unknown cases still unresolved; no title or keyword inference.",
+    "Cultura e conhecimento has its own existing-profile entry with context general. Only taxonomy roots establish domain hints; semantic certification stays false.",
+    "Current finite published distribution agrees across domain summary, filters and tree: Food204 Technology97 Health32 Business25 Home58 Travel19 Culture12 Pending52, total499.",
+    "Previous seven-domain manifests remain invalid and cannot resume or authorize provider calls under the expanded profile list. Uncertain jobs, global budget, authorities, plans and processing fences are unchanged.",
+    "Only existing domain contract and its tests change, plus this packet. GitHub Actions is sole test/build environment; independent exact-head review and real web observation required. No new Reels, paid repeat, deletion, IAM or queue change."
   ],
   "allowed_paths": [
     "tasks/MEG-81-semantic-curator.json",
-    "google-v0/lib/analysis.mjs",
-    "google-v0/lib/category-taxonomy.mjs",
-    "google-v0/lib/google-operations.mjs",
-    "google-v0/lib/reels-analysis-contract.mjs",
-    "google-v0/lib/reels-quality-gate.mjs",
-    "google-v0/lib/reels-semantic-curator.mjs",
-    "google-v0/tests/category-selection.test.mjs",
-    "google-v0/tests/category-taxonomy.test.mjs",
-    "google-v0/tests/reels-live-catalogue.test.mjs"
+    "google-v0/lib/reels-semantic-domain-contract.mjs",
+    "google-v0/tests/reels-semantic-domain.test.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/analysis.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
+      "path": "google-v0/lib/reels-semantic-domain-contract.mjs",
+      "reason": "Existing taxonomy ancestor router and its domain safety regression coverage",
       "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
+        "routeExistingSemanticDomain",
+        "profiles",
+        "manifest compatibility"
       ],
-      "max_chars": 2000
+      "max_chars": 5000
     },
     {
-      "path": "google-v0/lib/category-taxonomy.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
+      "path": "google-v0/tests/reels-semantic-domain.test.mjs",
+      "reason": "Existing taxonomy ancestor router and its domain safety regression coverage",
       "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
+        "routeExistingSemanticDomain",
+        "profiles",
+        "manifest compatibility"
       ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
-      "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
-      ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/reels-analysis-contract.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
-      "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
-      ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/reels-quality-gate.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
-      "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
-      ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/reels-semantic-curator.mjs",
-      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
-      "sections": [
-        "category selection",
-        "catalogue snapshot",
-        "restore"
-      ],
-      "max_chars": 2000
+      "max_chars": 5000
     }
   ],
   "validation_commands": [
-    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 8d731f06725685de919563ca905734d177e82dac --diff-head HEAD",
-    "GitHub Actions Google v0 integration, Semantic curator, Frontend browser QA and documentation CI; no local application/test/build execution"
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 973bc6c6315270ba2e3c1a8ac2f40e107a417a8b --diff-head HEAD",
+    "GitHub Actions integration/domain/browser/documentation checks only; actual production observation through existing web/readonly API."
   ],
   "execution_budget": {
     "worker_runs": 1,
@@ -104,7 +55,7 @@
   "review": {
     "mode": "independent_agent_and_human",
     "status": "pending",
-    "reason": "Independent review of exact code and finite110 assignments, with GitHub-only tests and real web verification."
+    "reason": "Review exact bounded summary-routing correction, previous authorities remaining invalid and GitHub CI; preserve prior PR83 classifier work."
   },
   "native_coordination": {
     "authorized_by": "Current human request to organize110Other themes with saved analyses and align existing Google worker; persistent native agent authorization.",
@@ -117,7 +68,7 @@
     "ci_authorization": "All tests/builds in GitHub Actions only. No raw corpus committed.",
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
-    "canonical_revision": 399,
+    "canonical_revision": 401,
     "paid_scope": "Zero provider calls; old uncertain paid job untouched."
   }
 }

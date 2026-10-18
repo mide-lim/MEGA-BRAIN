@@ -7,6 +7,7 @@ import {mediaTools} from './media-tools.mjs';
 import {inspectMedia} from './media-inspector.mjs';
 import {workerAuthorization} from './worker-auth.mjs';
 import {ReelsRepository} from './reels-repository.mjs';
+import {ReelsCatalogueRuntime} from './reels-contextual-catalogue-runtime.mjs';
 import {ReelsPipeline,executionId,STAGES} from './reels-pipeline.mjs';
 import {ReelsDispatcher} from './reels-dispatcher.mjs';
 import {ReelsService} from './reels-service.mjs';
@@ -89,7 +90,7 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
    }
   };
   const taxonomy=new ReelsTaxonomy({repository});
-  const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,requiredQualityPolicyVersion:'gate_v2',effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
+  const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,requiredQualityPolicyVersion:'gate_v2',effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>new ReelsCatalogueRuntime({repository}).project(job.reelId,{type:'publicationAccepted',eventId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
   const service=new ReelsService({repository,processingEnabled:enabled,onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Despacho requer retomada.');return receipt;},onCommandQueued:(operation,options)=>dispatcher.enqueueControl(operation,options)});
   const runner=new ReelsCommandRunner({service,dispatcher,enabled,pageSize:25});
   runtime={pipeline,store,repository,dispatcher,service,runner};return runtime;

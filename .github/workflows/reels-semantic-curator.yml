@@ -1,9 +1,9 @@
 name: Semantic curator
 on:
   push:
-    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', 'ops/receive-semantic-recovery.mjs', '.github/workflows/reels-semantic-curator.yml']
+    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', 'ops/prepare-semantic-domain-curation.mjs', 'ops/receive-semantic-recovery.mjs', '.github/workflows/reels-semantic-curator.yml']
   pull_request:
-    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', '.github/workflows/reels-semantic-curator.yml']
+    paths: ['google-v0/**', 'ops/prepare-semantic-curator.mjs', 'ops/prepare-semantic-domain-curation.mjs', '.github/workflows/reels-semantic-curator.yml']
 permissions:
   contents: read
   actions: read
@@ -39,7 +39,7 @@ jobs:
           enabled=false
           recovery=false
           payload=false
-          if [ "$GITHUB_HEAD_REF" = codex/semantic-payload-audit ] || [ "$GITHUB_REF_NAME" = codex/semantic-payload-audit ] || [ "$GITHUB_HEAD_REF" = codex/semantic-provider-outcome-diagnostics ] || [ "$GITHUB_REF_NAME" = codex/semantic-provider-outcome-diagnostics ]; then
+          if [ "$GITHUB_HEAD_REF" = codex/semantic-payload-audit ] || [ "$GITHUB_REF_NAME" = codex/semantic-payload-audit ] || [ "$GITHUB_HEAD_REF" = codex/semantic-provider-outcome-diagnostics ] || [ "$GITHUB_REF_NAME" = codex/semantic-provider-outcome-diagnostics ] || [ "$GITHUB_HEAD_REF" = codex/semantic-domain-curators ] || [ "$GITHUB_REF_NAME" = codex/semantic-domain-curators ] || [ "$GITHUB_HEAD_REF" = codex/semantic-domain-web-tools ] || [ "$GITHUB_REF_NAME" = codex/semantic-domain-web-tools ]; then
             enabled=true
             recovery=true
             payload=true
@@ -47,13 +47,13 @@ jobs:
             enabled=true
             if [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ]; then recovery=true; fi
           elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
-            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or (.head.ref == "codex/semantic-provider-outcome-diagnostics" or .head.ref == "codex/semantic-domain-curators" or .head.ref == "codex/semantic-domain-web-tools")) and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
-            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or (.head.ref == "codex/semantic-provider-outcome-diagnostics" or .head.ref == "codex/semantic-domain-curators" or .head.ref == "codex/semantic-domain-web-tools")) and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
-            payload="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            payload="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-payload-audit" or (.head.ref == "codex/semantic-provider-outcome-diagnostics" or .head.ref == "codex/semantic-domain-curators" or .head.ref == "codex/semantic-domain-web-tools")) and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           echo "payload=$payload" >> "$GITHUB_OUTPUT"
           echo "recovery=$recovery" >> "$GITHUB_OUTPUT"
@@ -66,6 +66,9 @@ jobs:
       - name: Rehearse all499 saved publications with abstaining synthetic inference
         if: steps.finite.outputs.enabled == 'true'
         run: node ops/prepare-semantic-curator.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --output "$RUNNER_TEMP/semantic-curator-evidence"
+      - name: Measure saved499 domain scope, request bounds and unresolved destinations without inference
+        if: steps.finite.outputs.enabled == 'true'
+        run: node ops/prepare-semantic-domain-curation.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --output "$RUNNER_TEMP/semantic-curator-evidence"
       - name: Receive the one saved paid response without provider access
         if: steps.finite.outputs.recovery == 'true'
         env:
@@ -128,10 +131,22 @@ jobs:
         run: node google-v0/qa/reels-semantic-browser-check.mjs
         env:
           MEGABRAIN_REELS_SEMANTIC_QA_OUTPUT: ${{ runner.temp }}/semantic-browser-evidence
+      - name: Domain navigation, independent loading and manual capabilities through the real API
+        run: node google-v0/qa/reels-domain-browser-check.mjs
+        env:
+          MEGABRAIN_REELS_DOMAIN_QA_OUTPUT: ${{ runner.temp }}/semantic-domain-browser-evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: semantic-browser-evidence
           path: ${{ runner.temp }}/semantic-browser-evidence/
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semantic-domain-browser-evidence
+          path: ${{ runner.temp }}/semantic-domain-browser-evidence/
           retention-days: 7
           if-no-files-found: error

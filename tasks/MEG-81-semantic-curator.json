@@ -35,7 +35,8 @@
     ".github/workflows/google-v0.yml",
     ".github/workflows/google-deploy.yml",
     "google-v0/web-google/lib/server.mjs",
-    "google-v0/qa/"
+    "google-v0/qa/",
+    "ops/prepare-semantic-domain-curation.mjs"
   ],
   "context": [
     {

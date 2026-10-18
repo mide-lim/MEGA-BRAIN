@@ -31,7 +31,7 @@ function reviewedFormat(entry,{video,legacy,formatReview,previousContribution}){
  const proofs=new Map(),quotes=new Set();
  for(const e of review.evidence){
   const text=e.sourceKind==='caption'?video.source_caption?.text:e.sourceKind==='transcript'?video.transcript??legacy?.transcript:null;
-  const identity=e.sourceKind==='caption'?video.source_caption?.capture_id:e.sourceKind==='transcript'?video.transcript_key&&video.transcript_generation?video.transcript_key+'@'+video.transcript_generation:legacy?.provenance?.recordHash?'legacy:'+legacy.provenance.recordHash:null:null;
+  const identity=e.sourceKind==='caption'?video.source_caption?.capture_id:e.sourceKind==='transcript'?video.transcript_key&&video.transcript_generation?video.transcript_key+'@'+video.transcript_generation:legacy?.provenance?.recordHash?'legacy:'+legacy.provenance.recordHash:typeof video.transcript==='string'?'saved-transcript:'+entry.sourceProofHash:null:null;
   if(typeof e.id!=='string'||!e.id||proofs.has(e.id)||!identity||e.sourceIdentity!==identity||typeof e.excerpt!=='string'||!e.excerpt||e.excerpt.length>2000||typeof text!=='string'||!text.includes(e.excerpt)||quotes.has(e.excerpt))failure('CATALOGUE_FORMAT_REVIEW_ANCHOR_INVALID');
   quotes.add(e.excerpt);proofs.set(e.id,{id:e.id,source:e.sourceKind,state:'supported',excerptHash:contextualHash(e.excerpt)});
  }
@@ -52,7 +52,7 @@ function compactEntry(entry,editorial){
  const attributes=entry.attributes.filter(a=>!suppressed(a)).map(({evidence,...a})=>({...a,evidence:list(evidence).map(metadataProof)}));
  const format={...entry.format,label:formatDefinitions.find(f=>f.value===entry.format.value)?.label??entry.format.label};
  if(editorial.suppressedDimensions.includes('format'))Object.assign(format,{value:null,label:null,state:'unknown',reason:'EDITORIAL_FORMAT_SUPPRESSED'});
- return {id:entry.id,title:entry.title,searchText:entry.searchText,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,sourceManifestHash:entry.sourceManifestHash,sourceProofHash:entry.sourceProofHash,context:entry.context,format,units:entry.units.map(({evidence,...u})=>({...u,evidence:list(evidence).map(metadataProof)})),independentUnitCount:entry.independentUnitCount,attributes,coverage:entry.coverage.map(c=>editorial.suppressedDimensions.includes(c.dimensionId)?{dimensionId:c.dimensionId,state:'unknown',reason:'EDITORIAL_DIMENSION_SUPPRESSED'}:c),curation:{manual:editorial.manual,revision:editorial.revision},formatReview:entry.formatReview??null,indexVersion:entry.indexVersion,ruleHash:entry.ruleHash};
+ return {id:entry.id,title:entry.title,searchText:entry.searchText,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,sourceManifestHash:entry.sourceManifestHash,sourceProofHash:entry.sourceProofHash,context:entry.context,format,units:entry.units.map(({evidence,...u})=>({...u,evidence:list(evidence).map(metadataProof)})),independentUnitCount:entry.independentUnitCount,attributes,coverage:entry.coverage.map(c=>editorial.suppressedDimensions.includes(c.dimensionId)?{dimensionId:c.dimensionId,state:'unknown',reason:'EDITORIAL_DIMENSION_SUPPRESSED'}:c),fingerprint:contextualHash({sourceFingerprint:entry.fingerprint,format:entry.format,formatReview:entry.formatReview??null,editorial}),curation:{manual:editorial.manual,revision:editorial.revision},formatReview:entry.formatReview??null,indexVersion:entry.indexVersion,ruleHash:entry.ruleHash};
 }
 export function projectContextualContribution({item,video={},legacy=null,qualityVerification=null,editorial={},sourceVersions,formatReview=null,previousContribution=null,observedAt}={}){
  if(!item||!reelIdPattern.test(item.id??'')||!time(observedAt)||!sourceVersionsValid(sourceVersions))failure('CATALOGUE_SOURCE_VERSION_INVALID');
@@ -88,13 +88,16 @@ export function catalogueEntries(contributions,{inventoryIds=null}={}){
  }
  return entries;
 }
-export function catalogueMatchingIds(contributions,query={},nodes=[]){
+export function normalizeCatalogueQuery(query={}){
  const parsed=parseContextualQuery(query),virtual=formatDefinitions.find(f=>parsed.category==='ctx_format_'+f.value);
  const existingFormats=parsed.facets.filter(f=>f.dimension==='format');
- if(virtual&&existingFormats.length&&!existingFormats.some(f=>f.value===virtual.value))return [];
- const refined=virtual?{...parsed,category:'receitas',context:'recipe',facets:[...parsed.facets.filter(f=>f.dimension!=='format'),{dimension:'format',value:virtual.value,quantifier:'ANY'}]}:parsed;
- const entries=catalogueEntries(contributions).filter(e=>!virtual||!e.curation?.manual);
- return filterContextualEntries(entries,refined,nodes).map(e=>e.id).sort();
+ const impossible=!!(virtual&&existingFormats.length&&!existingFormats.some(f=>f.value===virtual.value));
+ return {virtual:virtual?.value??null,impossible,query:virtual?{...parsed,category:'receitas',context:'recipe',facets:[...parsed.facets.filter(f=>f.dimension!=='format'),{dimension:'format',value:virtual.value,quantifier:'ANY'}]}:parsed};
+}
+export function catalogueMatchingIds(contributions,query={},nodes=[]){
+ const normalized=normalizeCatalogueQuery(query);if(normalized.impossible)return [];
+ const entries=catalogueEntries(contributions).filter(e=>!normalized.virtual||!e.curation?.manual);
+ return filterContextualEntries(entries,normalized.query,nodes).map(e=>e.id).sort();
 }
 export function buildContextualCatalogue(contributions,{inventoryIds,observedAt,dataAsOf=observedAt,sourceStale=false,nodes=[],incremental=null}={}){
  if(!Array.isArray(inventoryIds)||new Set(inventoryIds).size!==inventoryIds.length||inventoryIds.some(id=>!reelIdPattern.test(id))||!time(observedAt)||!time(dataAsOf))failure('CATALOGUE_INVENTORY_INVALID');

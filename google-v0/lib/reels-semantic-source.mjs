@@ -13,6 +13,9 @@ export function semanticPolicy(value={}){
  const policy={version:semanticPolicyVersion,enabled:value.enabled===true,model:/^gemini-[a-z0-9.-]{1,80}$/.test(value.model??'')?value.model:null,batchSize:n(value.batchSize,8,1,12),maxCalls:n(value.maxCalls,160,1,500),maxSources:n(value.maxSources,499,1,10000),verifierModel:/^gemini-[a-z0-9.-]{1,80}$/.test(value.verifierModel??'')?value.verifierModel:null,authorizationId:typeof value.authorizationId==='string'?value.authorizationId:null,authorizedCohortHash:/^[a-f0-9]{64}$/.test(value.authorizedCohortHash??'')?value.authorizedCohortHash:null,expiresAt:typeof value.expiresAt==='string'?value.expiresAt:null,autoPromotionEnabled:value.autoPromotionEnabled===true,minUniqueMembers:n(value.minUniqueMembers,10,2,10000),calibrationReceipt:value.calibrationReceipt??null};
  return policy;
 }
+export function semanticEditorial(item,editorial={}){
+ return {manual:item?.categoryOverride?.manual===true||editorial.manual===true,revision:item?.categoryOverride?.revision??editorial.revision??null,categoryIds:item?.categoryOverride?.manual===true?item.categoryIds:[],suppressedDimensions:editorial.suppressedDimensions??[],suppressedValues:editorial.suppressedValues??[]};
+}
 export function semanticSourceFromSaved({video={},legacy=null,item,sourceVersions={},editorial={}}){
  const native=publicationAvailable(video),id=video.id??item?.id;
  if(!/^[A-Za-z0-9_-]{5,32}$/.test(id??'')||!native&&!preservedContentAvailable(legacy,id))throw Error('Somente conhecimento publicado salvo é elegível.');
@@ -28,7 +31,7 @@ export function semanticSourceFromSaved({video={},legacy=null,item,sourceVersion
  if(!fields.length)throw Error('Publicação sem texto salvo elegível.');
  const versions={video:sourceVersions.video,...(!native&&sourceVersions.legacy?{legacy:sourceVersions.legacy}:{})};
  if(typeof versions.video!=='string')throw Error('Versão da fonte ausente.');
- const ed={manual:video.taxonomy_override?.manual===true||editorial.manual===true,revision:video.taxonomy_override?.revision??editorial.revision??null,categoryIds:video.taxonomy_override?.manual===true?item.categoryIds:[],suppressedDimensions:editorial.suppressedDimensions??[],suppressedValues:editorial.suppressedValues??[]};
+ const ed=semanticEditorial(item,editorial);
  return {id,title:item.title??report?.title??report?.summary?.slice(0,120)??id,sourceIdentity:identity,sourceVersions:versions,editorial:ed,editorialHash:semanticHash(ed),fields,semanticProofHash:semanticHash({identity,fields}),truncated:truncationReasons.size>0,truncationReasons:[...truncationReasons],sourceCharacters:chars};
 }
 export function prepareSemanticPlan({inventory,selection={all:true},policy:rawPolicy={},observedAt}){

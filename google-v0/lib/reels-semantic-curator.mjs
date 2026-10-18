@@ -92,7 +92,7 @@ export class ReelsSemanticCurator{
    // regex/word-count classifier substitutes for these provider calls.
    const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:groups.map(g=>compactGroup({id:g.data.id,key:g.data.key,name:g.data.name,context:g.data.context,kind:g.data.kind,dimension:g.data.dimension,definition:g.data.definition,aliases:g.data.aliases,positiveCriteria:g.data.positiveCriteria,negativeCriteria:g.data.negativeCriteria,protected:g.data.protected,status:g.data.status}))};
    if(groups.length>128){await this.stop(snapshot,'paused','EXISTING_CATALOGUE_EXCEEDS_REVIEWED_CAP');break;}
-   const reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),selected=new Set(loaded.sources.map(s=>s.id)),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity}))),profiles=[];
+   const reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),selected=new Set(loaded.sources.map(s=>s.id)),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity,sourceReconciliation:m.sourceReconciliation??null,semanticProofHash:m.semanticProofHash,editorialHash:m.editorialHash,sourceVersions:m.sourceVersions,proofSourceBindings:m.proofSourceBindings??{}}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity,sourceReconciliation:m.sourceReconciliation??null,semanticProofHash:m.semanticProofHash,editorialHash:m.editorialHash,sourceVersions:m.sourceVersions,proofSourceBindings:m.proofSourceBindings??{}}))),profiles=[];
    if(job.phase==='verify')try{
     const proofCache=new Map();for(const m of [...members,...negativeExamples]){const full=await this.hydrateEvidence({...m,id:m.reelId},proofCache);m.evidence=full.evidence;delete m.evidenceRef;}
     for(const source of loaded.sources){const p=await this.store.get('reels_index/semantic_profile_'+source.id),saved=p?await this.store.get(resultPath(p.data.resultId)):null,pin=list(saved?.data.binding?.pins).find(x=>x.id===source.id);
@@ -126,16 +126,17 @@ export class ReelsSemanticCurator{
   const final=(await this.store.get(jobPath(jobId))).data;await this.dispatch(final);return {job:publicJob((await this.store.get(jobPath(jobId))).data)};
  }
  async stop(snapshot,status,reason){await this.commit([{path:jobPath(snapshot.data.id),updateTime:snapshot.updateTime}],[{path:jobPath(snapshot.data.id),data:{...snapshot.data,status,reason,updatedAt:this.now()}}]);}
- async applySaved(snapshot,saved){
+ async applySaved(snapshot,saved,{commandReceipt=null,deferContinuation=false}={}){
   const job=snapshot.data,batch=job.batch,currentPolicy=await this.policy();
   if(semanticHash(currentPolicy.data)!==job.policyHash||!currentPolicy.data.enabled||Date.parse(currentPolicy.data.expiresAt)<=this.clock())throw problem('SEMANTIC_AUTHORIZATION_CHANGED','Autorização mudou após a resposta salva.');
   if(!batch||saved.data.id!==batch.id||saved.data.bindingHash!==batch.bindingHash)throw Error('Resultado não pertence ao intent durável.');
   const envelope=await this.envelopeRead(saved);let output;
   try{output=parseSavedSemanticResponse(envelope);}catch(e){await this.stop(snapshot,'failed',e.code??'SAVED_RESPONSE_INVALID');return;}
   const recoverySnapshot=await this.store.get(semanticSourceRecoveryPath(batch.id)),loaded=await this.loadSources(batch.binding.pins,{recovery:{snapshot:recoverySnapshot,job,saved:saved.data}}),groups=await this.currentGroups(),byGroup=new Map(groups.map(g=>[g.data.id,g])),writes=[],checks=[{path:jobPath(job.id),updateTime:snapshot.updateTime},{path:semanticPolicyPath,updateTime:currentPolicy.snapshot.updateTime},{path:resultPath(batch.id),updateTime:saved.updateTime},...loaded.checks,...groups.map(g=>({path:g.path,updateTime:g.updateTime}))];
+  if(commandReceipt){checks.push({path:commandReceipt.path,updateTime:null});writes.push(commandReceipt);}
   // Sources and manual/group definitions must still match the exact submission.
   if(groups.some(g=>batch.groupVersions.find(x=>x.path===g.path)?.updateTime!==g.updateTime)||batch.groupVersions.some(g=>!groups.some(x=>x.path===g.path)))throw problem('SEMANTIC_EDITORIAL_CHANGED','Edição mudou após resposta salva; não repetir inferência.');
-  let next={...job,status:'running',reason:null,batch:null,updatedAt:this.now(),dispatch:this.dispatchFor(job.id,job.dispatch.sequence+1)};
+  let next={...job,status:deferContinuation?'prepared':'running',reason:deferContinuation?'SAVED_RESPONSE_APPLIED_AWAITING_DELIVERY':null,batch:null,updatedAt:this.now(),dispatch:this.dispatchFor(job.id,job.dispatch.sequence+1)};
   if(job.phase==='extract'){
    const validated=validateSemanticOutput(output,loaded.sources,{groups:groups.map(g=>g.data)});
    for(const profile of validated.profiles){const path='reels_index/semantic_profile_'+profile.reelId,old=await this.store.get(path);checks.push({path,updateTime:old?.updateTime??null});writes.push({path,data:{kind:'semantic_profile',...profile,units:profile.units.map(u=>({...u,evidence:[],evidenceCount:u.evidence.length})),jobId:job.id,resultId:batch.id,updatedAt:this.now()}});}
@@ -210,7 +211,7 @@ export class ReelsSemanticCurator{
  }
  async publicJob(j){return {...publicJob(j),canReconcileSaved:await this.reconciliationMetadata(j)};}
  async overview(){
-  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
+  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit','batch']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
   const current=profiles.filter(p=>sourceCurrent(p.data.sourceVersions,state.inventory.sourceVersions.get(p.data.reelId))),unknown=current.filter(p=>p.data.state!=='proposed').length;
   let preview;try{preview=await this.preview({all:true});}catch{preview={preview:{blockingReasons:['SAVED_INVENTORY_UNAVAILABLE']}};}
   const view=g=>({...g,members:undefined,negativeExamples:undefined,verification:g.verification?{status:g.verification.status,authorModel:g.verification.authorModel,verifierModel:g.verification.verifierModel}:null});
@@ -246,7 +247,14 @@ export class ReelsSemanticCurator{
   if(input.action==='preview')return this.preview(input.selection);
   if(input.action==='create')return this.create(input);
   if(input.action==='advance'){const j=await this.store.get(jobPath(input.jobId));if(!j)throw problem('NOT_FOUND','Curadoria não encontrada.',404);await this.dispatch(j.data);return {job:publicJob((await this.store.get(jobPath(input.jobId))).data)};}
-  if(input.action==='reconcile_saved'){const j=await this.store.get(jobPath(input.jobId)),saved=j?.data.batch?await this.store.get(resultPath(j.data.batch.id)):null;if(!j||!saved)throw problem('SEMANTIC_RESULT_NOT_RECEIVED','Nenhum resultado salvo autoriza retomada.');if(!await this.reconciliationMetadata(j.data))throw problem('SEMANTIC_SAVED_RECOVERY_NOT_READY','Resposta salva exige recibo e conferência antes de aplicar.');await this.applySaved(j,saved);return this.job(input.jobId);}
+  if(input.action==='reconcile_saved'){
+   if(input.idempotencyKey!==undefined&&(typeof input.idempotencyKey!=='string'||input.idempotencyKey.length<8||input.idempotencyKey.length>160))throw problem('INVALID_COMMAND','Chave de operação inválida.',400);
+   const commandPath=input.idempotencyKey?'reels_index/semantic_recovery_command_'+semanticHash(input.idempotencyKey):null,fingerprint=semanticHash({action:input.action,jobId:input.jobId}),prior=commandPath?await this.store.get(commandPath):null;
+   if(prior){if(prior.data.fingerprint!==fingerprint)throw problem('IDEMPOTENCY_CONFLICT','Chave reutilizada.');return {...await this.job(input.jobId),duplicate:true};}
+   const j=await this.store.get(jobPath(input.jobId)),saved=j?.data.batch?await this.store.get(resultPath(j.data.batch.id)):null;if(!j||!saved)throw problem('SEMANTIC_RESULT_NOT_RECEIVED','Nenhum resultado salvo autoriza retomada.');if(!await this.reconciliationMetadata(j.data))throw problem('SEMANTIC_SAVED_RECOVERY_NOT_READY','Resposta salva exige recibo e conferência antes de aplicar.');
+   const commandReceipt=commandPath?{path:commandPath,data:{kind:'semantic_recovery_command',fingerprint,jobId:j.data.id,resultId:saved.data.id,rawHash:saved.data.rawHash,bindingHash:saved.data.bindingHash,appliedAt:this.now()}}:null;
+   await this.applySaved(j,saved,{commandReceipt,deferContinuation:true});return this.job(input.jobId);
+  }
   return this.groupCommand(input);
  }
  async groupCommand(input){

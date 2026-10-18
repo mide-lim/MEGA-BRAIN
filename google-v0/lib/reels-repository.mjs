@@ -67,11 +67,13 @@ export class ReelsRepository{
   const taxonomy=taxonomySnapshot?.data??{},items=categoryNavigation(rawItems,taxonomy).items.filter(i=>i.publication.available),inventoryIds=items.map(i=>i.id).sort(),byId=new Map(items.map(i=>[i.id,i]));
   const active=catalogueManifestActive(manifestSnapshot?.data),contributions=[];let sourceStale=false;
   if(active){
-   const rows=await this.scanContextualIndex();
+   const [rows,reviewRows]=await Promise.all([this.scanContextualIndex(),this.scanContextualReviews()]);
+   const reviews=new Map(reviewRows.map(r=>[r.data.reelId,r.data.reviewHash]));
    for(const {data:c} of rows){
     if(c.status!=='active'||!byId.has(c.reelId))continue;
     validateContextualContribution(c);
     const current=versions.get(c.reelId),item=byId.get(c.reelId),ed=catalogueEditorialForItem(item,taxonomy);
+    if(c.entry.formatReview&&reviews.get(c.reelId)!==c.entry.formatReview.reviewHash){sourceStale=true;continue;}
     if(!current?.video||c.sourceVersions.video!==current.video||(c.sourceVersions.legacy??null)!==(current.legacy??null)||c.editorialHash!==contextualHash(ed)){sourceStale=true;continue;}
     contributions.push(c);
    }
@@ -80,6 +82,12 @@ export class ReelsRepository{
   const dataAsOf=contributions.length?contributions.map(c=>c.observedAt).filter(Boolean).sort()[0]:manifestSnapshot?.data?.dataAsOf??this.now();
   return {active,contributions,inventoryIds,items,sourceStale,dataAsOf,versionHash:contextualHash({active,contributions:contributions.map(c=>[c.reelId,c.idempotencyKey]),inventoryIds,sourceStale}),sourceVersions:versions};
  }
+ async scanContextualReviews(){
+  const records=[];let cursor;const seen=new Set();
+  do{const page=await this.store.query('reels_index',{select:['kind','reelId','reviewHash'],filters:[{field:'kind',op:'eq',value:'contextual_review'}],limit:500,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Revisões contextuais não avançaram.');if(cursor)seen.add(cursor);}while(cursor);
+  return records;
+ }
+
  async scanContextualIndex(){
   const records=[];let cursor;const seen=new Set();
   do{const page=await this.store.query('reels_index',{select:['schemaVersion','kind','policyVersion','status','reelId','sourceIdentity','sourceProofHash','ruleHash','editorialHash','sourceVersions','editorial','entry','observedAt','processingStarted','providerCalls','contentHash','idempotencyKey'],filters:[{field:'kind',op:'eq',value:'contextual_contribution'}],limit:500,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Índice contextual não avançou.');if(cursor)seen.add(cursor);}while(cursor);

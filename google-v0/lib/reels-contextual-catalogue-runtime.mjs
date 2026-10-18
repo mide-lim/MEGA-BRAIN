@@ -81,8 +81,9 @@ export class ReelsCatalogueRuntime{
  }
 
  async snapshot(items=null){return this.repository.contextualContributions(items??await this.repository.items());}
- async overview(){
-  const snapshot=await this.snapshot(),taxonomy=(await this.store.get('settings/reels_v2_taxonomy'))?.data??{},view=buildContextualCatalogue(snapshot.contributions,{inventoryIds:snapshot.inventoryIds,observedAt:this.now(),dataAsOf:snapshot.dataAsOf??this.now(),sourceStale:snapshot.sourceStale,nodes:taxonomy.nodes??[],incremental:{enabled:snapshot.active===true,eventDriven:true,noProviders:true}});
+ async overview({snapshot=null}={}){
+  snapshot??=await this.snapshot();
+  const taxonomy=(Object.hasOwn(snapshot,'taxonomySnapshot')?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy'))?.data??{},view=buildContextualCatalogue(snapshot.contributions,{inventoryIds:snapshot.inventoryIds,observedAt:this.now(),dataAsOf:snapshot.dataAsOf??this.now(),sourceStale:snapshot.sourceStale,nodes:taxonomy.nodes??[],incremental:{enabled:snapshot.active===true,eventDriven:true,noProviders:true}});
   // Explicit human membership remains visible without being mislabeled proof.
   for(const f of view.formats){
    const manualIds=list(snapshot.items).filter(i=>i.categoryResolution?.mode==='manual'&&i.categoryIds.includes(f.categoryId)).map(i=>i.id);

@@ -96,12 +96,14 @@ export class ReelsRepository{
 
  validateQuery(q){
   for(const [field,allowed]of Object.entries({workspace:['all','library','ready','attention'],attentionKind:['confirmed','uncertain'],sort:['newest','oldest','title'],status:['registered','queued','running','waiting','completed','failed','uncertain'],stage:['acquisition','transcription','analysis']}))if(q[field]&&(field==='status'?!String(q[field]).split(',').every(v=>allowed.includes(v)):!allowed.includes(q[field])))throw invalid('Filtro inválido.');
-  for(const field of ['q','category','language','tag','worker','destination','context','dimension','value'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
+  for(const field of ['q','category','language','tag','worker','destination','context','dimension','value','semanticFacet'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
   if(q.facets!==undefined&&(typeof q.facets!=='string'||q.facets.length>4096))throw invalid('Facetas inválidas.');
   if(hasContextualFilters(q)&&q.workspace!=='library')throw invalid('Facetas contextuais pertencem ao acervo publicado.');
  }
  async matching(query={}){
   this.validateQuery(query);
+  const semanticId=query.semanticFacet??(/^semantic_[a-f0-9]{64}$/.test(query.category??'')?query.category.slice(9):null);
+  if(semanticId){if(query.workspace!=='library'||!this.semanticCurator||!/^[a-f0-9]{64}$/.test(semanticId))throw invalid('Filtro semântico inválido.');const ids=new Set(await this.semanticCurator.matchingIds(semanticId,{facet:!!query.semanticFacet})),{semanticFacet,category,...rest}=query;return (await this.matching({...rest,...(category&&!category.startsWith('semantic_')?{category}:{})})).filter(i=>ids.has(i.id));}
   if(this.catalogueRuntime&&/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
    const matched=await this.catalogueRuntime.matchingIds(query),selected=new Set(matched.ids),{category,...rest}=query;
    return (await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
@@ -170,6 +172,7 @@ export class ReelsRepository{
   const ordinary=nodes.filter(n=>!/^ctx_format_(single_recipe|recipe_collection)$/.test(n.id));
   const mapped=ordinary.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false}));
   for(const f of catalogue?.formats??[]){const saved=nodes.find(n=>n.id===f.categoryId);mapped.push({...saved,id:f.categoryId,name:saved?.manual?saved.name:f.label,parentId:saved?.manual?saved.parentId:'receitas',manual:saved?.manual??false,count:f.count,directCount:f.count,patterns:[],format:f.value,filter:f.filter});}
+  if(this.semanticCurator)for(const n of await this.semanticCurator.nodes()){const old=mapped.find(x=>x.id===n.id);if(!old)mapped.push(n);}
   return {nodes:mapped,total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
  }
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}

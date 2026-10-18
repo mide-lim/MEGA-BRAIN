@@ -1,3 +1,4 @@
+import {commitSemanticStore} from './reels-semantic-store.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {fragmentSpec,hydrateFragments,planFragmentPatch} from './control-fragments.mjs';
 function plain(value){return value!==null&&typeof value==='object'&&Object.getPrototypeOf(value)===Object.prototype;}
@@ -102,6 +103,7 @@ export class Firestore {
   }
   // One derived document only. Source/editorial/review/previous versions are
   // read in the same Firestore read-write transaction as the full replacement.
+  async commitSemantic(input){return commitSemanticStore(this,input);}
   async compareAndReplaceDerived({path,replacement,checks}){
     const id=replacement?.reelId;
     if(!/^[A-Za-z0-9_-]{5,32}$/.test(id??'')||path!=='reels_index/contextual_'+id||replacement.kind!=='contextual_contribution'||!Array.isArray(checks))throw Error('Mutação fora do catálogo derivado.');

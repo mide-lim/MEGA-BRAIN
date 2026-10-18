@@ -214,7 +214,7 @@ export class ReelsSemanticCurator{
   if(memberId!==null&&!g.members.some(m=>m.id===memberId))throw problem('NOT_FOUND','Membro não encontrado.',404);
   const selected=memberId?g.members.filter(m=>m.id===memberId):g.members.slice(0,20),cache=new Map(),hydrated=new Map();for(const m of selected)hydrated.set(m.id,await this.hydrateEvidence(m,cache));
   const members=g.members.map(m=>({...hydrated.get(m.id)??m,sourceProofHash:m.semanticProofHash,proofAvailable:!!m.evidenceRef||list(m.evidence).length>0})),negatives=[];for(const m of list(g.negativeExamples).slice(0,10))negatives.push(await this.hydrateEvidence(m,cache));
-  return {group:{...g,members},members,positiveExamples:members.slice(0,5),negativeExamples:negatives,proofDetails:{hydratedMembers:selected.length,totalMembers:members.length,complete:selected.length===members.length,memberQuery:'memberId',rawPreserved:true},observedAt:state.observedAt,dataAsOf:state.dataAsOf,sourceStale:state.sourceStale,inferenceOnGet:false};
+  return {group:{...g,members},members,positiveExamples:members.slice(0,5),negativeExamples:negatives,proofDetails:{hydratedMembers:selected.length,totalMembers:members.length,complete:selected.length===members.length,memberQuery:'memberId',hydratedNegativeExamples:negatives.length,totalNegativeExamples:list(g.negativeExamples).length,negativeComplete:negatives.length===list(g.negativeExamples).length,rawPreserved:true},observedAt:state.observedAt,dataAsOf:state.dataAsOf,sourceStale:state.sourceStale,inferenceOnGet:false};
  }
  async matchingIds(id,{facet=false,state=null}={}){
   state??=await this.freshGroups();const root=state.groups.find(g=>g.id===id&&g.status==='active'&&(facet?g.kind==='facet':g.kind!=='facet'));if(!root)return [];

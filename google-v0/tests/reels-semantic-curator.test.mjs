@@ -66,3 +66,13 @@ test('editorial change while provider runs preserves paid envelope but cannot ap
  const s=setup(),original=s.fixture.provider.infer;s.curator.provider={...s.fixture.provider,infer:async input=>{const result=await original(input),snap=await s.store.get('settings/reels_v2_taxonomy');await s.store.patch('settings/reels_v2_taxonomy',{contextualSuppression:{dimensions:['ingredient']}},{updateTime:snap.updateTime});return result;}};
  await start(s);await pump(s);assert.equal((await s.curator.overview()).jobs[0].status,'paused');assert.equal(s.fixture.calls.length,1);assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_group').length,0);assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_result').length,1);
 });
+
+test('large manual source reads are bounded to eight and preserve input order and all source checks',async()=>{
+ const s=setup(),one=await s.curator.catalogue.loadSource('QaFull_single'),pins=Array.from({length:25},(_,i)=>({id:'QaRead_'+String(i).padStart(3,'0'),sourceVersions:one.sourceVersions}));let active=0,max=0;
+ s.curator.catalogue.loadSource=async id=>{active++;max=Math.max(max,active);await new Promise(r=>setImmediate(r));active--;return {...structuredClone(one),video:{...structuredClone(one.video),id},item:{...structuredClone(one.item),id},checks:[{path:'videos/'+id,updateTime:one.sourceVersions.video}]};};
+ const r=await s.curator.loadSources(pins);assert.equal(max,8);assert.equal(r.sources.length,25);assert.deepEqual(r.sources.map(x=>x.id),pins.map(x=>x.id));assert.equal(r.checks.length,25);
+});
+test('immutable authorization ledger prevents reuse after a later authorization replaces the coordinator',async()=>{
+ const s=setup();await start(s);await pump(s);const policy=await s.store.get('settings/reels_v2_semantic_policy');await s.store.patch('settings/reels_v2_semantic_policy',{authorizationId:'fixture-semantic-002'},{updateTime:policy.updateTime});let p=await s.curator.preview({all:true});await s.curator.create({selection:{all:true},previewHash:p.previewHash,idempotencyKey:'second-authorization'});await pump(s);
+ const next=await s.store.get('settings/reels_v2_semantic_policy');await s.store.patch('settings/reels_v2_semantic_policy',{authorizationId:'fixture-semantic-001'},{updateTime:next.updateTime});p=await s.curator.preview({all:true});await assert.rejects(()=>s.curator.create({selection:{all:true},previewHash:p.previewHash,idempotencyKey:'restored-old-authorization'}),{code:'SEMANTIC_AUTHORIZATION_CONSUMED'});assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_authorization').length,2);
+});

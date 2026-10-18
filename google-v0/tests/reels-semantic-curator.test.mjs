@@ -61,6 +61,9 @@ test('approved recipe format uses canonical tree and ingredient facet never crea
  assert.deepEqual((await s.repository.list({workspace:'library',category:'ctx_format_single_recipe'})).items.map(i=>i.id),['QaFull_single']);
  assert.equal((await s.repository.list({workspace:'library',semanticFacet:facet.id})).total,2);
  const nodes=await s.repository.categories();assert.equal(nodes.nodes.filter(n=>n.id==='ctx_format_single_recipe').length,1);assert.equal(nodes.nodes.some(n=>n.id==='semantic_'+facet.id),false);
+ await assert.rejects(()=>s.curator.command({action:'group_create',name:'Filho inválido',parentId:facet.id,definition:'Uma faceta não é um nó pai.',idempotencyKey:'reject-facet-parent'}),{code:'INVALID_PARENT'});
+ let child=(await s.curator.command({action:'group_create',name:'Segmento editorial',parentId:format.categoryId,definition:'Escolha editorial explícita sob o formato.',idempotencyKey:'create-format-child'})).group;child=(await s.curator.command({action:'group_assign',groupId:child.id,revision:child.revision,addIds:['QaFull_unknown'],removeIds:[],idempotencyKey:'assign-format-child'})).group;
+ assert.equal(child.parentId,'ctx_format_single_recipe');assert.deepEqual((await s.repository.list({workspace:'library',category:'ctx_format_single_recipe'})).items.map(i=>i.id).sort(),['QaFull_single','QaFull_unknown']);
 });
 test('editorial change while provider runs preserves paid envelope but cannot apply stale associations',async()=>{
  const s=setup(),original=s.fixture.provider.infer;s.curator.provider={...s.fixture.provider,infer:async input=>{const result=await original(input),snap=await s.store.get('settings/reels_v2_taxonomy');await s.store.patch('settings/reels_v2_taxonomy',{contextualSuppression:{dimensions:['ingredient']}},{updateTime:snap.updateTime});return result;}};

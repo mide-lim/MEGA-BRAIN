@@ -19,7 +19,7 @@ const responseFor=(page,path,predicate=()=>true)=>{const pending=page.waitForRes
 const postFor=(page,path)=>responseFor(page,path,(_,response)=>response.request().method()==='POST');
 async function navigate(page,label){await page.getByRole('navigation').getByRole('button',{name:new RegExp(label)}).click();await page.getByRole('heading',{name:label,exact:true,level:1}).waitFor();if(label==='Categorias'){const sources=page.locator('details.contextual-source-explorer');await page.locator('details.contextual-source-explorer > summary').waitFor();if(await sources.getAttribute('open')===null)await sources.getByText('Fontes estruturadas, formatos e ingredientes',{exact:true}).click();}}
 // API-asserting journeys deliberately expire only the read clock. Timers and UI behavior are unchanged.
-async function expireReadCache(page){await page.clock.setFixedTime(new Date(await page.evaluate(()=>Date.now()+15001)));}
+async function expireReadCache(page){await page.clock.setFixedTime(new Date(await page.evaluate(()=>Date.now()+60001)));}
 async function search(page,term){await expireReadCache(page);const response=responseFor(page,'/api/reels/items',url=>(url.searchParams.get('q')??'')===term);await page.getByLabel('Buscar no acervo').fill(term);await response;}
 async function closeDialog(page){await page.getByRole('dialog').getByRole('button',{name:'Fechar painel',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});}
 async function preview(page,button,total,eligible,type='start'){
@@ -66,7 +66,7 @@ try {
   await dialog.getByRole('button',{name:'Legenda',exact:true}).click();await dialog.getByText('Legenda original preservada de QaPub_tech',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Transcrição',exact:true}).click();await dialog.getByText('Transcrição preservada de QaPub_tech',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Análise visual',exact:true}).click();await dialog.getByText('Quadro sintético vertical.',{exact:true}).waitFor();
-  await dialog.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();const video=dialog.locator('video');await video.evaluate(element=>element.play());
+  assert.equal(await dialog.getByRole('button',{name:'Carregar vídeo privado',exact:true}).count(),0);const video=dialog.locator('video');assert.equal(await video.getAttribute('preload'),'metadata');assert.equal(await video.getAttribute('src'),'/api/media/QaPub_tech');assert.equal(server.calls.filter(call=>call.path==='/api/video/QaPub_tech').length,0);await video.focus();await video.press('Space');
   await page.waitForFunction(()=>{const video=document.querySelector('dialog video');return video&&video.readyState>=2&&video.currentTime>0&&!video.error;});
   const box=await dialog.locator('.video-preview').boundingBox();assert.ok(Math.abs(box.width/box.height-9/16)<0.03);
   await dialog.getByRole('button',{name:'Visão geral',exact:true}).click();const denied=postFor(page,'/api/reels/commands');await dialog.getByRole('button',{name:'Solicitar complemento ao servidor',exact:true}).click();assert.equal((await denied).status(),423);await dialog.getByRole('alert').filter({hasText:'PROCESSING_DISABLED'}).waitFor();
@@ -410,6 +410,21 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
   await navigate(page,'Financeiro');await page.getByRole('heading',{name:'Financeiro preservado do acervo',exact:true}).waitFor();await page.getByText('Reserva antiga',{exact:true}).waitFor();await page.getByText('Sem data comprovada',{exact:true}).waitFor();
   assert.equal([...server.store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,2);
  });
+ await record('library_reuses_navigation_without_idle_operational_scans_and_context_loads_on_demand',async()=>{
+  const library=await context.newPage(),requests=[];
+  library.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/'))requests.push({path:url.pathname,query:url.search});});
+  await library.clock.install();await library.goto(server.origin);await library.getByLabel('Selecionar Entrada 000',{exact:true}).waitFor();
+  const firstLibrary=requests.length;await navigate(library,'Biblioteca');await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();const tree=library.locator('.library-navigation');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).waitFor();
+  assert.equal(requests.slice(firstLibrary).filter(x=>x.path==='/api/reels/summary').length,0,'Library must not request the operational summary');
+  assert.equal(requests.slice(firstLibrary).filter(x=>x.path==='/api/reels/contextual').length,0,'Collapsed contextual filters must not fetch the archive');
+  const settled=requests.length;await library.clock.fastForward(60001);assert.equal(requests.length,settled,'Idle Library must not poll items, taxonomy, contextual data or summary');
+  const tech=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await tech;
+  const food=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_food');await tree.locator('.tree-name').filter({hasText:'Receitas'}).click();await food;
+  const beforeBack=requests.length;await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();assert.equal(requests.length,beforeBack,'A visited category should reuse the last fresh page without another GET');
+  const refreshed=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech');await library.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await refreshed;
+  const contextRead=responseFor(library,'/api/reels/contextual');await library.locator('.contextual-library-filters > summary').click();await contextRead;assert.ok(requests.some(x=>x.path==='/api/reels/contextual'));
+  assert.deepEqual(server.externalAttempts,[]);await library.close();
+ });
  await record('idle_and_hidden_refresh_queries_only_the_visible_workspace',async()=>{
   const idle=await context.newPage();await idle.clock.install();const categoryReads=()=>server.calls.filter(x=>x.path==='/api/reels/categories'&&x.method==='GET').length,beforeCategories=categoryReads();await idle.goto(server.origin);await idle.getByLabel('Selecionar Entrada 000',{exact:true}).waitFor();assert.equal(categoryReads(),beforeCategories,'Entry must not load editorial taxonomy');
   await navigate(idle,'Financeiro');await idle.getByRole('heading',{name:'Operação',exact:true}).waitFor();const idlePoll=responseFor(idle,'/api/reels/summary');await idle.clock.fastForward(60001);await idlePoll;assert.equal(categoryReads(),beforeCategories,'Financial polling must not load categories');
@@ -426,3 +441,4 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally {await browser?.close();await server.close();}
+

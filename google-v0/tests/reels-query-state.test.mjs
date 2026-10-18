@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {restoreCatalog,categoryPath,categoryRows,createResourceClient} from '../web-google/lib/reels-query-state.mjs';
+import {restoreCatalog,categoryPath,categoryRows,createResourceClient,resourceTtl,workspaceRefreshInterval} from '../web-google/lib/reels-query-state.mjs';
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const nodes=[{id:'food',name:'Alimentação',parentId:null},{id:'recipe',name:'Receitas',parentId:'food'},{id:'single',name:'Receita única',parentId:'recipe'},{id:'tech',name:'Tecnologia',parentId:null}];
 test('category search keeps the matching child and ancestors without unrelated roots',()=>{
@@ -62,3 +62,21 @@ test('freshness stays URL-specific and does not treat a backwards clock as curre
  await client.load('/items?q=a',1);await client.load('/items?q=b',1);await client.load('/items?q=a',1);assert.equal(calls,2);
  clock=99;await client.load('/items?q=a',1);assert.equal(calls,3);clock=1099;await client.load('/items?q=a',1);assert.equal(calls,4);offA();offB();
 });
+
+test('Library tree and visited pages remain reusable beyond operational read freshness',async()=>{
+ let calls=0,clock=100;const client=createResourceClient(async path=>({path,request:++calls}),{now:()=>clock,cacheTtlMs:resourceTtl});
+ const first='/items?workspace=library&category=food&limit=50',second='/items?workspace=library&category=single&limit=50';
+ let off=client.subscribe(first,()=>{});await client.load(first,1);off();
+ clock=30100;off=client.subscribe(second,()=>{});await client.load(second,1);off();
+ off=client.subscribe(first,()=>{});await client.load(first,1);assert.equal(calls,2);assert.equal(client.peek(first).data.request,1);
+ await client.load(first,2);assert.equal(calls,3);assert.equal(client.peek(first).data.request,3);
+ clock=90100;await client.load(first,2);assert.equal(calls,4);off();
+ assert.equal(resourceTtl('/categories'),60000);assert.equal(resourceTtl('/items?workspace=all'),15000);
+});
+test('Library browsing does not schedule the operational refresh loop',()=>{
+ assert.equal(workspaceRefreshInterval('library'),null);
+ assert.equal(workspaceRefreshInterval('categories'),null);
+ assert.equal(workspaceRefreshInterval('queues'),10000);
+ assert.equal(workspaceRefreshInterval('all'),60000);
+});
+

@@ -27,11 +27,11 @@ async function setup({separateCategoryRead=false}={}){
  if(separateCategoryRead){const categories=repository.categories.bind(repository);repository.categories=()=>categories();}
  const api=reelsAPI({repository,semantic,contextual,authorize:async()=>true,sameOrigin:async()=>true,clock});
  const get=async path=>{const response=await api(new Request('https://fixture.invalid/api/reels/'+path));return {status:response.status,data:await response.json()};};
- return {store,repository,semantic,contextual,get,advance:()=>{time+=1000;}};
+ return {store,repository,semantic,contextual,get,advance:(ms=1000)=>{time+=ms;}};
 }
 const reset=store=>{store.reads.length=0;};
 const reads=store=>Object.fromEntries(['videos','reels_legacy_content'].map(collection=>[collection,store.reads.filter(r=>r.collection===collection).length]));
-const expectedPass={videos:2,reels_legacy_content:1};
+const expectedPass={videos:3,reels_legacy_content:1},noPass={videos:0,reels_legacy_content:0};
 const selected=data=>data.items.map(x=>x.id).sort();
 
 test('contextual HTTP read shares one projected scan pass with its real category projection',async()=>{
@@ -41,19 +41,19 @@ test('contextual HTTP read shares one projected scan pass with its real category
  assert.equal(result.data.acceptedInventory,5);
  const queries=s.store.reads.filter(r=>['videos','reels_legacy_content'].includes(r.collection));
  assert.ok(queries.every(r=>!r.select.includes('analysis')&&!r.select.includes('transcript')&&!r.select.includes('source_caption')));
- // Warm caches do not authorize stale source metadata or add a second scan.
+ // Warm browse reads reuse the bounded metadata snapshot; execution sources stay fresh.
  await s.repository.items();reset(s.store);
- const warm=await s.get('contextual');assert.equal(warm.status,200);assert.deepEqual(reads(s.store),expectedPass);assert.deepEqual(warm.data,result.data);
+ const warm=await s.get('contextual');assert.equal(warm.status,200);assert.deepEqual(reads(s.store),noPass);assert.deepEqual(warm.data,result.data);
 });
 
 test('ordinary library category pagination shares fresh versions with nonempty semantic memberships',async()=>{
  const s=await setup();await s.repository.items();reset(s.store);
  const first=await s.get('items?workspace=library&category=manual-food&limit=2');assert.equal(first.status,200);assert.equal(first.data.total,3);assert.deepEqual(reads(s.store),expectedPass);
  assert.equal(first.data.items.length,2);assert.ok(first.data.nextCursor);
- reset(s.store);const last=await s.get('items?workspace=library&category=manual-food&limit=2&cursor='+encodeURIComponent(first.data.nextCursor));assert.equal(last.status,200);assert.equal(last.data.total,3);assert.deepEqual(reads(s.store),expectedPass);
+ reset(s.store);const last=await s.get('items?workspace=library&category=manual-food&limit=2&cursor='+encodeURIComponent(first.data.nextCursor));assert.equal(last.status,200);assert.equal(last.data.total,3);assert.deepEqual(reads(s.store),noPass);
  assert.deepEqual([...new Set([...selected(first.data),...selected(last.data)])].sort(),['QaFull_many','QaFull_single','QaFull_unknown']);
  const source=await s.store.get('videos/QaFull_unknown');await s.store.patch('videos/QaFull_unknown',{analysis_generation:'99'},{updateTime:source.updateTime});
- s.advance();reset(s.store);const changed=await s.get('items?workspace=library&category=manual-food&limit=25');assert.equal(changed.status,200);assert.equal(changed.data.total,2);assert.deepEqual(selected(changed.data),['QaFull_many','QaFull_single']);assert.deepEqual(reads(s.store),expectedPass);
+ s.advance(60001);reset(s.store);const changed=await s.get('items?workspace=library&category=manual-food&limit=25');assert.equal(changed.status,200);assert.equal(changed.data.total,2);assert.deepEqual(selected(changed.data),['QaFull_many','QaFull_single']);assert.deepEqual(reads(s.store),expectedPass);
  assert.equal(changed.data.observedAt,new Date(s.repository.clock()).toISOString());
 });
 
@@ -62,7 +62,7 @@ test('fresh taxonomy epochs invalidate contextual node metadata and failed scans
  await s.store.patch('settings/reels_v2_taxonomy',{revision:15,nodes:taxonomy.data.nodes.map(n=>n.id==='manual-food'?{...n,name:'Título manual atualizado'}:n)},{updateTime:taxonomy.updateTime});
  s.advance();reset(s.store);const snapshot=await s.contextual.snapshotData();assert.deepEqual(reads(s.store),expectedPass);assert.equal(snapshot.nodes.find(n=>n.id==='manual-food').name,'Título manual atualizado');
  const query=s.store.query;s.store.query=async(collection,...args)=>{if(collection==='videos')throw Error('Synthetic source metadata unavailable');return query(collection,...args);};
- const failed=await s.get('contextual');assert.equal(failed.status,503);assert.equal(failed.data.code,'SERVICE_UNAVAILABLE');assert.equal(failed.data.items,undefined);
+ s.advance(60001);const failed=await s.get('contextual');assert.equal(failed.status,503);assert.equal(failed.data.code,'SERVICE_UNAVAILABLE');assert.equal(failed.data.items,undefined);
  s.store.query=query;
  const recovered=await s.get('contextual');assert.equal(recovered.status,200);assert.equal((await s.store.get('settings/reels_v2_taxonomy')).data.revision,15);
 });
@@ -74,3 +74,4 @@ test('non-library partitions and default execution inventories keep their existi
  const first=await s.semantic.inventory(),video=await s.store.get('videos/QaFull_single');await s.store.patch('videos/QaFull_single',{analysis_generation:'100'},{updateTime:video.updateTime});
  const second=await s.semantic.inventory();assert.notEqual(first.sourceVersions.get('QaFull_single').video,second.sourceVersions.get('QaFull_single').video);
 });
+

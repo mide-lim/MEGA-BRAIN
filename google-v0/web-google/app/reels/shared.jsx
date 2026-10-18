@@ -1,8 +1,8 @@
 'use client';
 import {useEffect,useId,useRef,useState} from 'react';
 import {request,date,number,statuses,stages,text} from '../../lib/reels-client.mjs';
-import {createResourceClient,categoryRows} from '../../lib/reels-query-state.mjs';
-const resources=createResourceClient(request);
+import {createResourceClient,categoryRows,resourceTtl} from '../../lib/reels-query-state.mjs';
+const resources=createResourceClient(request,{cacheTtlMs:resourceTtl});
 export function useResource(path,revision=0){const [state,setState]=useState(()=>({path,...resources.peek(path)}));useEffect(()=>{if(!path){setState({path,data:null,error:null,loading:false});return;}const unsubscribe=resources.subscribe(path,next=>setState({path,...next}));resources.load(path,revision);return unsubscribe;},[path,revision]);return state.path===path?state:{path,...resources.peek(path),loading:!!path};}
 export function Feedback({state,retry,children}) {return <>{!state.data&&state.loading&&<div className="initial-loading" role="status">Carregando conteúdo…</div>}{!state.data&&state.error&&<div className="notice error" role="alert">{state.error.message}{retry&&<button onClick={retry}>Tentar novamente</button>}</div>}{state.data&&<>{(state.error||state.data?.cache?.stale)&&<div className="resource-warning" role="status">Última leitura preservada · atualização indisponível{retry&&<button onClick={retry}>Tentar novamente</button>}</div>}{children}</>}</>;}
 export function CategoryTree({nodes,selected,expanded,onToggle,onSelect,search='',total,allLabel='Todo o acervo publicado'}){const children=categoryRows(nodes,search);function render(parent=null,ancestors=new Set()){return(children.get(parent)||[]).filter(n=>!ancestors.has(n.id)).map(n=>{const hasChildren=nodes.some(x=>x.parentId===n.id),open=expanded.includes(n.id)||!!search;return <li key={n.id}><div className={'tree-row '+(selected===n.id?'selected':'')}><button className="tree-expand" aria-label={(open?'Recolher ':'Expandir ')+n.name} disabled={!hasChildren} aria-expanded={hasChildren?open:undefined} onClick={()=>onToggle(n.id)}>{hasChildren?(open?'−':'+'):'·'}</button><button className="tree-name" aria-pressed={selected===n.id} onClick={()=>onSelect(n.id)}><span>{n.name}</span><b>{number(n.count)}</b></button></div>{open&&<ul>{render(n.id,new Set([...ancestors,n.id]))}</ul>}</li>;});}return <><button className={'tree-total tree-all '+(!selected?'selected':'')} aria-pressed={!selected} onClick={()=>onSelect('')}><span>{allLabel}</span><b>{number(total)}</b></button><ul className="category-tree">{render()}</ul>{search&&!children.size&&<p className="muted">Nenhuma categoria encontrada.</p>}</>;}
@@ -17,3 +17,4 @@ export function DataPairs({data}){return <dl className="data-pairs">{Object.entr
 export function StagePicker(props){return <Select label="Etapa / fila" options={[['','Todas as etapas'],...Object.entries(stages)]} {...props}/>;}
 export function Message({value}){return value?<div className={'notice '+(value.error?'error':'success')} role={value.error?'alert':'status'}>{value.text}</div>:null;}
 export {date,number,text};
+

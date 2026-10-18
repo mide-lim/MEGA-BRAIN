@@ -77,7 +77,7 @@
       "max_chars": 1800
     },
     {
-      "path": "google-v0/web-google/app/reels/workspaces.jsx",
+      "path": "google-v0/web-google/app/reels/workspace.jsx",
       "reason": "Independent category/library load and manual editing controls",
       "sections": [
         "Categories",

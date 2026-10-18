@@ -1,7 +1,9 @@
 import {projectContextualPublication,contextualHash,contextualRuleHash} from './reels-contextual-projection.mjs';
 import {buildContextualIndex,filterContextualEntries,parseContextualQuery,contextualListItem} from './reels-contextual-index.mjs';
 import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
+import {catalogueEntries} from './reels-contextual-catalogue.mjs';
 import {publicationAvailable,reelIdPattern} from './reels-model.mjs';
+const listContributions=value=>Array.isArray(value)?value:Array.isArray(value?.contributions)?value.contributions:[];
 const bad=()=>Object.assign(Error('Consulta contextual inválida.'),{status:400,code:'INVALID_CONTEXTUAL_QUERY'});
 async function mapLimited(items,limit,fn){
  let cursor=0;const results=new Array(items.length);
@@ -18,17 +20,19 @@ export class ReelsContextualCurator{
  invalidate(){this.snapshot=null;}
  async snapshotData(){
   const all=await this.repository.items(),items=all.filter(i=>i.publication?.available);
-  const metadataHash=contextualHash({rule:contextualRuleHash,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
+  const durable=typeof this.repository.contextualContributions==='function'?await this.repository.contextualContributions(items):null;
+  const contributionVersion=durable?{versionHash:durable.versionHash??contextualHash(listContributions(durable).map(c=>[c.reelId,c.idempotencyKey])),sourceStale:durable.sourceStale===true,dataAsOf:durable.dataAsOf??null}:null;
+  const metadataHash=contextualHash({rule:contextualRuleHash,contributionVersion,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
   if(this.snapshot&&this.snapshot.metadataHash===metadataHash&&this.snapshot.expiresAt>this.clock()){
    // An unchanged catalogue signature does not make a failed source refresh
    // fresh. Preserve original source observation time and disclose staleness now.
    const observation=this.repository.observation?.()??{};
-   this.snapshot.sourceStale=this.snapshot.sourceStale||observation.cache?.stale===true;
+   this.snapshot.sourceStale=this.snapshot.sourceStale||observation.cache?.stale===true||durable?.sourceStale===true;
    return this.snapshot;
   }
   if(this.pending){await this.pending;return this.snapshotData();}
   this.pending=(async()=>{
-   const started=this.clock(),entries=await mapLimited(items,this.readConcurrency,async item=>{
+   const started=this.clock(),entries=durable?catalogueEntries(listContributions(durable),{inventoryIds:items.map(i=>i.id)}):await mapLimited(items,this.readConcurrency,async item=>{
     let raw={},legacy=null;
     if(item.publication.source==='legacy_preserved')legacy=(await this.repository.store.get('reels_legacy_content/'+item.id))?.data;
     else{
@@ -44,7 +48,7 @@ export class ReelsContextualCurator{
    });
    const categories=typeof this.repository.categories==='function'?await this.repository.categories():{nodes:[]};
    const observations=this.repository.observation?.()??{};
-   this.snapshot={metadataHash,entries:entries.filter(Boolean),nodes:categories.nodes??[],observedAt:new Date(this.clock()).toISOString(),dataAsOf:observations.observedAt??new Date(started).toISOString(),expiresAt:this.clock()+this.cacheTtlMs,versionHash:contextualHash(entries.filter(Boolean).map(e=>[e.id,e.fingerprint])),missingAcceptedSource:items.length-entries.filter(Boolean).length,acceptedInventory:items.length,sourceStale:observations.cache?.stale===true};
+   this.snapshot={metadataHash,entries:entries.filter(Boolean),nodes:categories.nodes??[],observedAt:new Date(this.clock()).toISOString(),dataAsOf:durable?.dataAsOf??observations.observedAt??new Date(started).toISOString(),expiresAt:this.clock()+this.cacheTtlMs,versionHash:contextualHash(entries.filter(Boolean).map(e=>[e.id,e.fingerprint])),missingAcceptedSource:items.length-entries.filter(Boolean).length,acceptedInventory:items.length,sourceStale:observations.cache?.stale===true||durable?.sourceStale===true,durableContributions:durable!==null};
    return this.snapshot;
   })();
   try{return await this.pending;}finally{this.pending=null;}

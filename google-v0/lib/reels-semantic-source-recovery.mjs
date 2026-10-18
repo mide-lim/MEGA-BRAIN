@@ -52,8 +52,10 @@ export function validateSemanticSourceRecoveryRow(row,source,pin,{legacySource=n
  if(row.proof!=='exact_original_projection_hash'||row.oldHashVerified!==true||!Array.isArray(row.originalFieldOrder)||row.originalFieldOrder.length!==source.fields.length||new Set(row.originalFieldOrder).size!==source.fields.length)return false;
  const fields=new Map(source.fields.map(f=>[f.fieldPath,f])),old=row.originalFieldOrder.map(p=>fields.get(p));return old.every(Boolean)&&semanticHash({identity:source.sourceIdentity,fields:old})===pin.semanticProofHash;
 }
+// Historical source equivalence survives a later wire-only prompt upgrade.
+// Authorization for NEW inference still checks the current prompt separately.
 export function validateSemanticSourceRecovery(receipt,{job,saved,source,pin,legacySource=null}){
- if(!semanticSourceRecoveryReceiptValid(receipt)||receipt.jobId!==job.id||receipt.batchId!==job.batch?.id||receipt.resultId!==saved.id||receipt.originalBindingHash!==job.batch.bindingHash||receipt.originalBindingHash!==saved.bindingHash||receipt.savedRawHash!==saved.rawHash||receipt.requestHash!==(saved.requestHash??null)||receipt.promptHash!==job.batch.binding.promptHash||receipt.promptHash!==job.promptHash||receipt.approvedNextPromptHash!==semanticPromptHash||saved.bindingHash!==semanticHash(saved.binding)||job.batch.bindingHash!==semanticHash(job.batch.binding)||!same(saved.binding,job.batch.binding)||receipt.rows.length!==list(job.batch.binding.pins).length)return false;
+ if(!semanticSourceRecoveryReceiptValid(receipt)||receipt.jobId!==job.id||receipt.batchId!==job.batch?.id||receipt.resultId!==saved.id||receipt.originalBindingHash!==job.batch.bindingHash||receipt.originalBindingHash!==saved.bindingHash||receipt.savedRawHash!==saved.rawHash||receipt.requestHash!==(saved.requestHash??null)||receipt.promptHash!==job.batch.binding.promptHash||receipt.promptHash!==job.promptHash||saved.bindingHash!==semanticHash(saved.binding)||job.batch.bindingHash!==semanticHash(job.batch.binding)||!same(saved.binding,job.batch.binding)||receipt.rows.length!==list(job.batch.binding.pins).length)return false;
  return validateSemanticSourceRecoveryRow(receipt.rows.find(r=>r.id===source.id),source,pin,{legacySource});
 }
 export function validateSemanticSourceRecoveryMember(receipt,member){

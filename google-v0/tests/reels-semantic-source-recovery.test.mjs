@@ -8,7 +8,7 @@ import {ReelsSemanticCurator} from '../lib/reels-semantic-curator.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
 import {makeSemanticFixture} from './reels-semantic-fixture.mjs';
 import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
-import {prepareSemanticSourceRecovery,validateSemanticSourceRecovery,reconstructLegacySemanticFieldOrder,projectRecoveredSemanticOutput,finiteSavedProjectionRule} from '../lib/reels-semantic-source-recovery.mjs';
+import {prepareSemanticSourceRecovery,semanticSourceRecoveryReceiptValid,validateSemanticPromptTransition,validateSemanticSourceRecoveryMember,validateSemanticSourceRecovery,reconstructLegacySemanticFieldOrder,projectRecoveredSemanticOutput,finiteSavedProjectionRule} from '../lib/reels-semantic-source-recovery.mjs';
 const reverseMaps=value=>Array.isArray(value)?value.map(reverseMaps):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).reverse().map(k=>[k,reverseMaps(value[k])])):value;
 function fixture(){
  const video={id:'QaRecover_1',title:'Fonte salva',status:'completed',analysis_key:'analysis/saved.json',analysis_generation:'7',analysis_quality_status:'accepted',analysis:{title:'Fonte salva',summary:'Dois pontos documentados.',knowledge:{beta:'Segundo ponto.',alpha:'Primeiro ponto.'}},source_caption:{capture_id:'caption-v1',text:'Legenda documental.'},transcript:'Transcrição preservada.'},sourceVersions={video:'2026-10-17T00:00:00.000Z'},source=semanticSourceFromSaved({video,sourceVersions});
@@ -75,7 +75,7 @@ test('saved first batch reconciliation never dispatches or infers, preserves ori
  for(const s of sources){const profile=(await store.get('reels_index/semantic_profile_'+s.id)).data;assert.equal(profile.sourceReconciliation.receiptHash,r.receipt.receiptHash);assert.equal(profile.semanticProofHash,s.semanticProofHash);}
  const next=(await store.get(path)).data;await curator.runDelivery({jobId:job.id,sequence:next.dispatch.sequence,outboxId:next.dispatch.outboxId});
  let pages=0;while(deliveries.length){assert.ok(++pages<50);const j=deliveries.shift();await curator.runDelivery({jobId:j.id,sequence:j.dispatch.sequence,outboxId:j.dispatch.outboxId,maxBatches:3});}
- const final=(await curator.job(job.id)).job;assert.equal(final.status,'completed');assert.equal(final.processed,5);assert.equal(final.verificationProcessed,5);assert.equal(final.callsUsed,7);assert.equal(fixture.calls.length,7);
+ const final=(await curator.job(job.id)).job;assert.equal(final.status,'completed');assert.equal(final.processed,5);assert.equal(final.verificationProcessed,5);assert.equal(final.callsUsed,6);assert.equal(fixture.calls.length,6);assert.equal(final.noTargetVerification.rangeCount,1);assert.equal(final.noTargetVerification.sourceCount,1);
  assert.equal(semanticHash((await curator.envelopeRead(await store.get('reels_index/semantic_result_'+batchId))).rawResponse),beforeRaw);assert.equal(semanticHash((await store.get('reels_index/semantic_result_'+batchId)).data.binding),beforeBinding);
 });
 
@@ -99,4 +99,12 @@ test('diagnostic enumerates independent profile, unit, facet and membership viol
  x.envelope.rawResponse.candidates[0].content.parts[0].text=JSON.stringify(output);x.saved.rawHash=semanticHash(x.envelope.rawResponse);const before=semanticHash(x.envelope),r=prepareSemanticSourceRecovery(x),codes=new Set(r.report.contractDiagnostics.violations.map(v=>v.code));
  for(const code of ['SEMANTIC_UNIT_INVALID','SEMANTIC_RECIPE_UNITS_SHARE_PROOF','SEMANTIC_FACET_INVALID','SEMANTIC_MEMBERSHIP_INVALID','SEMANTIC_UNIT_MEMBERSHIP_UNBOUND','SEMANTIC_NEGATIVE_EXAMPLE_INVALID'])assert.ok(codes.has(code),code);
  const facet=r.report.contractDiagnostics.violations.find(v=>v.code==='SEMANTIC_FACET_INVALID');assert.equal(facet.dimension,'topic');assert.deepEqual(facet.allowedDimensions,['ingredient','tool','method','place','purpose','other']);assert.equal(r.report.contractDiagnostics.correctionsApplied,0);assert.equal(r.receipt,null);assert.equal(semanticHash(x.envelope),before);assert.equal(JSON.stringify(r.report).includes('Private '),false);assert.equal(JSON.stringify(r.report).includes('Primeiro ponto.'),false);
+});
+
+test('historical source bridge remains exact across a wire-only prompt change but cannot authorize new inference',()=>{
+ const x=fixture(),prepared=prepareSemanticSourceRecovery(x);assert.equal(prepared.report.ready,true);const historical=structuredClone(prepared.receipt);
+ historical.approvedNextPromptHash='599038589ef3d3c55d614bc9f7fe390e23ca3b8a29a7c0cf5d19ccdf63f69f72';historical.promptTransition.toPromptHash=historical.approvedNextPromptHash;historical.transitionHash=semanticHash(historical.promptTransition);const {receiptHash,...body}=historical;historical.receiptHash=semanticHash(body);
+ assert.notEqual(historical.approvedNextPromptHash,semanticPromptHash);assert.equal(semanticSourceRecoveryReceiptValid(historical),true);assert.equal(validateSemanticSourceRecovery(historical,{job:x.job,saved:x.saved,source:x.source,pin:x.pin}),true);
+ assert.equal(validateSemanticPromptTransition(historical,x.job,{...x.saved,processed:true},null),false);
+ const changed=structuredClone(x.source);changed.fields[0].text+='changed';assert.equal(validateSemanticSourceRecovery(historical,{job:x.job,saved:x.saved,source:changed,pin:x.pin}),false);
 });

@@ -1,5 +1,5 @@
 import {frozenSemanticSourceFromSaved} from './reels-semantic-source-v1.mjs';
-import {validateSemanticSourceRecovery,semanticSourceRecoveryPath,semanticSourceRecoveryVersion,validateSemanticSourceRecoveryMember,semanticSourceRecoveryReceiptValid} from './reels-semantic-source-recovery.mjs';
+import {validateSemanticSourceRecovery,semanticSourceRecoveryPath,semanticSourceRecoveryVersion,validateSemanticSourceRecoveryMember,semanticSourceRecoveryReceiptValid,projectRecoveredSemanticOutput} from './reels-semantic-source-recovery.mjs';
 import {semanticCalibrationReceiptValid} from './reels-semantic-calibration.mjs';
 import {randomUUID} from 'node:crypto';
 import {ReelsCatalogueRuntime,catalogueEditorialForItem} from './reels-contextual-catalogue-runtime.mjs';
@@ -103,7 +103,7 @@ export class ReelsSemanticCurator{
       loaded.checks.push({path:semanticSourceRecoveryPath(saved.data.id),updateTime:recoverySnapshot.updateTime});
      }
      loaded.checks.push({path:'reels_index/semantic_profile_'+source.id,updateTime:p.updateTime},{path:resultPath(saved.data.id),updateTime:saved.updateTime});
-     const output=parseSavedSemanticResponse(await this.envelopeRead(saved)),original=list(output.profiles).find(x=>x.reelId===source.id);if(!original)throw Error('Unidades salvas ausentes.');profiles.push({...p.data,units:original.units});
+     const profileRecovery=p.data.sourceReconciliation?await this.store.get(semanticSourceRecoveryPath(saved.data.id)):null,output=projectRecoveredSemanticOutput(parseSavedSemanticResponse(await this.envelopeRead(saved)),profileRecovery?.data),original=list(output.profiles).find(x=>x.reelId===source.id);if(!original)throw Error('Unidades salvas ausentes.');profiles.push({...p.data,units:original.units});
     }
    }catch{await this.stop(snapshot,'paused','SEMANTIC_SAVED_PROOF_BINDING_CHANGED');break;}
    const phasePayload=job.phase==='extract'?{sources:loaded.sources,catalogue}:job.phase==='consolidate'?{groups:catalogue.groups}:{sources:loaded.sources,groups:catalogue.groups.filter(g=>reviewGroups.some(r=>r.data.id===g.id)),members,negativeExamples,profiles};
@@ -134,6 +134,7 @@ export class ReelsSemanticCurator{
   try{output=parseSavedSemanticResponse(envelope);}catch(e){await this.stop(snapshot,'failed',e.code??'SAVED_RESPONSE_INVALID');return;}
   const recoverySnapshot=await this.store.get(semanticSourceRecoveryPath(batch.id)),loaded=await this.loadSources(batch.binding.pins,{recovery:{snapshot:recoverySnapshot,job,saved:saved.data}}),groups=await this.currentGroups(),byGroup=new Map(groups.map(g=>[g.data.id,g])),writes=[],checks=[{path:jobPath(job.id),updateTime:snapshot.updateTime},{path:semanticPolicyPath,updateTime:currentPolicy.snapshot.updateTime},{path:resultPath(batch.id),updateTime:saved.updateTime},...loaded.checks,...groups.map(g=>({path:g.path,updateTime:g.updateTime}))];
   if(commandReceipt){checks.push({path:commandReceipt.path,updateTime:null});writes.push(commandReceipt);}
+  output=projectRecoveredSemanticOutput(output,recoverySnapshot?.data);
   // Sources and manual/group definitions must still match the exact submission.
   if(groups.some(g=>batch.groupVersions.find(x=>x.path===g.path)?.updateTime!==g.updateTime)||batch.groupVersions.some(g=>!groups.some(x=>x.path===g.path)))throw problem('SEMANTIC_EDITORIAL_CHANGED','Edição mudou após resposta salva; não repetir inferência.');
   let next={...job,status:deferContinuation?'prepared':'running',reason:deferContinuation?'SAVED_RESPONSE_APPLIED_AWAITING_DELIVERY':null,batch:null,updatedAt:this.now(),dispatch:this.dispatchFor(job.id,job.dispatch.sequence+1)};
@@ -222,7 +223,7 @@ export class ReelsSemanticCurator{
   if(!member.evidenceRef)return member;
   const ref=member.evidenceRef;if(!cache.has(ref.resultId)){const saved=await this.store.get(resultPath(ref.resultId));if(!saved)throw Error('Prova salva ausente.');cache.set(ref.resultId,parseSavedSemanticResponse(await this.envelopeRead(saved)));cache.set('metadata:'+ref.resultId,saved.data);}
   if(member.sourceReconciliation){const recovery=await this.store.get(semanticSourceRecoveryPath(member.sourceReconciliation.receiptId)),metadata=cache.get('metadata:'+ref.resultId);if(!validateSemanticSourceRecoveryMember(recovery?.data,member)||metadata.rawHash!==recovery.data.savedRawHash||metadata.bindingHash!==recovery.data.originalBindingHash)throw Error('Proveniência da citação reconciliada não confere.');}
-  const output=cache.get(ref.resultId),proposal=list(output.groups).find(g=>(g.existingGroupId??semanticHash({version:semanticContractVersion,context:g.context,kind:g.kind,dimension:g.dimension??null,key:g.key}))===ref.proposalId),source=list(ref.type==='negative'?proposal?.negativeExamples:proposal?.members).find(m=>m.reelId===member.id);
+  const recoveryReceipt=member.sourceReconciliation?await this.store.get(semanticSourceRecoveryPath(member.sourceReconciliation.receiptId)):null,output=projectRecoveredSemanticOutput(cache.get(ref.resultId),recoveryReceipt?.data),proposal=list(output.groups).find(g=>(g.existingGroupId??semanticHash({version:semanticContractVersion,context:g.context,kind:g.kind,dimension:g.dimension??null,key:g.key}))===ref.proposalId),source=list(ref.type==='negative'?proposal?.negativeExamples:proposal?.members).find(m=>m.reelId===member.id);
   if(!source)throw Error('Vínculo da prova salva não corresponde ao membro.');
   return {...member,evidence:list(source.evidence).map(p=>({fieldPath:p.fieldPath,excerpt:p.excerpt,source:p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis',sourceIdentity:member.proofSourceBindings?.[p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis']??null,anchorHash:semanticHash({identity:member.sourceIdentity,path:p.fieldPath,excerpt:p.excerpt}),verification:'saved_semantic_result_source_anchor'}))};
  }

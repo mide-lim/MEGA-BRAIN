@@ -4,6 +4,20 @@ import {validateSemanticOutput} from './reels-semantic-contract.mjs';
 import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-provider.mjs';
 export const semanticSourceRecoveryVersion='semantic-map-order-recovery-v1';
 const list=v=>Array.isArray(v)?v:[],same=(a,b)=>semanticHash(a)===semanticHash(b),hash=v=>/^[a-f0-9]{64}$/.test(v??'');
+export const finiteSavedProjectionRule=Object.freeze({version:'finite-saved-proof-abstention-v1',jobId:'e79360382d0231e58861f62238ecb166541d15b0247c98e65c22ab6e87630197',batchId:'3b13566530aaade0978c6f5a2a703ae35dedf7a119b1b613f54b8c5a6ae184fb',rawHash:'7141be0388caa6cef5034f19c5c92eab97fb0ea7358165324ceadf44d03656a5',bindingHash:'9ae32eae1eb4795460e39a743ef6be2f471e6c89baff3d95b2b409fa6df4075d',requestHash:'a61e582ddad4304f53067c290a40a62bef1a7563cca74d9532d4e6d7f7ad327c',reelId:'B0EmU9ulXsV',location:'profiles.0.units.0.evidence.0',fieldPath:'transcript',excerptSHA256:'9894d850702d74319a059e7dd0b9a61a5bf7719b54f9753a86d4da7da10f2727',reason:'PROVIDER_EVIDENCE_NOT_LITERAL'});
+const finiteProjectionScope=r=>r.jobId===finiteSavedProjectionRule.jobId&&r.batchId===finiteSavedProjectionRule.batchId&&(r.savedRawHash??r.rawHash)===finiteSavedProjectionRule.rawHash&&(r.originalBindingHash??r.bindingHash)===finiteSavedProjectionRule.bindingHash&&r.requestHash===finiteSavedProjectionRule.requestHash;
+function finiteProjection(output){
+ if(!Array.isArray(output?.profiles)||!Array.isArray(output?.groups)||output.profiles.filter(p=>p.reelId===finiteSavedProjectionRule.reelId).length!==1)throw Error('FINITE_SAVED_PROJECTION_SCOPE_INVALID');
+ const projected=structuredClone(output),excluded=finiteSavedProjectionRule.reelId;let removedPositive=0,removedNegative=0,droppedGroups=0;
+ projected.profiles=projected.profiles.map(p=>p.reelId===excluded?{...p,context:'general',state:'inconclusive',reason:finiteSavedProjectionRule.reason,units:[]}:p);
+ projected.groups=projected.groups.map(g=>{const members=list(g.members).filter(m=>m.reelId!==excluded),negativeExamples=list(g.negativeExamples).filter(m=>m.reelId!==excluded);removedPositive+=list(g.members).length-members.length;removedNegative+=list(g.negativeExamples).length-negativeExamples.length;return {...g,members,negativeExamples};}).filter(g=>{if(!g.members.length){droppedGroups++;return false;}return true;});
+ const metadata={version:finiteSavedProjectionRule.version,ruleHash:semanticHash(finiteSavedProjectionRule),originalOutputHash:semanticHash(output),projectedOutputHash:semanticHash(projected),exclusions:[{reelId:excluded,location:finiteSavedProjectionRule.location,fieldPath:finiteSavedProjectionRule.fieldPath,excerptSHA256:finiteSavedProjectionRule.excerptSHA256,reason:finiteSavedProjectionRule.reason,context:'general',state:'inconclusive',unitsRemoved:true,allPositiveAndNegativeAssociationsRemoved:true}],removedPositiveAssociations:removedPositive,removedNegativeAssociations:removedNegative,droppedGroups,rawUnchanged:true,scope:'one_reviewed_saved_response_only'};metadata.projectionHash=semanticHash(metadata);return {output:projected,metadata};
+}
+export function projectRecoveredSemanticOutput(output,receipt){
+ if(!receipt?.validatedProjection)return output;
+ if(!semanticSourceRecoveryReceiptValid(receipt)||!finiteProjectionScope(receipt))throw Error('FINITE_SAVED_PROJECTION_RECEIPT_INVALID');
+ const result=finiteProjection(output);if(!same(result.metadata,receipt.validatedProjection))throw Error('FINITE_SAVED_PROJECTION_CONTENT_CHANGED');return result.output;
+}
 export const semanticSourceRecoveryPath=batchId=>'reels_index/semantic_source_recovery_'+batchId;
 const prefixes=['title','summary','knowledge','useful_information','useful_value','claims','topics','candidate_relations','limitations'].map(x=>'analysis.'+x).concat(['caption','transcript']);
 function* permutations(keys){if(keys.length<2){yield keys;return;}for(let i=0;i<keys.length;i++)for(const rest of permutations(keys.filter((_,j)=>j!==i)))yield [keys[i],...rest];}
@@ -26,7 +40,9 @@ function completeEpochEquivalent(source,legacySource){
 }
 export function semanticSourceRecoveryReceiptValid(receipt){
  if(!receipt||receipt.kind!=='semantic_source_recovery'||receipt.version!==semanticSourceRecoveryVersion||receipt.scope!=='exact_saved_first_batch_only'||receipt.providerCalls!==0||receipt.originalBindingUnchanged!==true||receipt.rawUnchanged!==true||receipt.frozenExtractorCommit!==frozenSemanticSourceCommit||receipt.frozenExtractorBlob!==frozenSemanticSourceBlob||!hash(receipt.receiptHash)||!hash(receipt.sourceObservationSHA256)||!Array.isArray(receipt.rows)||!receipt.rows.length||new Set(receipt.rows.map(r=>r.id)).size!==receipt.rows.length)return false;
- const {receiptHash,...body}=receipt;return semanticHash(body)===receiptHash;
+ const {receiptHash,...body}=receipt;if(semanticHash(body)!==receiptHash)return false;
+ if(receipt.validatedProjection){const p=receipt.validatedProjection,{projectionHash,...projectionBody}=p;if(!finiteProjectionScope(receipt)||p.version!==finiteSavedProjectionRule.version||p.ruleHash!==semanticHash(finiteSavedProjectionRule)||projectionHash!==semanticHash(projectionBody)||p.exclusions?.length!==1||p.exclusions[0].reelId!==finiteSavedProjectionRule.reelId||p.exclusions[0].excerptSHA256!==finiteSavedProjectionRule.excerptSHA256)return false;}
+ return true;
 }
 export function validateSemanticSourceRecoveryRow(row,source,pin,{legacySource=null}={}){
  if(!row||source.sourceProjectionVersion!==semanticSourceProjectionVersion||pin.sourceProjectionVersion!==undefined||row.id!==source.id||row.oldSemanticProofHash!==pin.semanticProofHash||row.canonicalSemanticProofHash!==source.semanticProofHash||row.canonicalProjectionVersion!==semanticSourceProjectionVersion||!same(row.sourceIdentity,source.sourceIdentity)||!same(row.sourceVersions,source.sourceVersions)||!same(pin.sourceVersions,source.sourceVersions)||row.editorialHash!==source.editorialHash||pin.editorialHash!==source.editorialHash||row.fieldSetHash!==fieldSetHash(source)||row.sourceTruncated!==source.truncated||!uniquePaths(source))return false;
@@ -39,6 +55,7 @@ export function validateSemanticSourceRecovery(receipt,{job,saved,source,pin,leg
  return validateSemanticSourceRecoveryRow(receipt.rows.find(r=>r.id===source.id),source,pin,{legacySource});
 }
 export function validateSemanticSourceRecoveryMember(receipt,member){
+ if(receipt?.validatedProjection?.exclusions?.some(e=>e.reelId===member.id))return false;
  if(!semanticSourceRecoveryReceiptValid(receipt)||member.sourceReconciliation?.receiptHash!==receipt.receiptHash||member.sourceReconciliation.originalResultId!==receipt.resultId||member.sourceReconciliation.originalRawHash!==receipt.savedRawHash||member.sourceReconciliation.originalBindingHash!==receipt.originalBindingHash)return false;
  const row=receipt.rows.find(r=>r.id===member.id);return !!row&&row.oldSemanticProofHash===member.sourceReconciliation.originalSemanticProofHash&&row.canonicalSemanticProofHash===member.semanticProofHash&&row.editorialHash===member.editorialHash&&same(row.sourceVersions,member.sourceVersions)&&same(row.sourceIdentity,member.sourceIdentity);
 }
@@ -57,7 +74,13 @@ export function prepareSemanticSourceRecovery({job,saved,envelope,sources,legacy
  const authorized=gate('JOB_AUTHORIZATION_CURRENT',job.policy?.enabled===true&&semanticHash(job.policy)===job.policyHash&&Number.isFinite(Date.parse(observedAt))&&Date.parse(job.policy.expiresAt)>Date.parse(observedAt));
  const pins=list(job.batch.binding.pins),sourceMap=new Map(list(sources).map(s=>[s.id,s])),legacyMap=new Map(list(legacySources).map(s=>[s.id,s]));
  if(!gate('EXACT_BATCH_COVERAGE',pins.length>0&&pins.length<=12&&pins.length===sources.length&&sourceMap.size===pins.length&&pins.every(p=>sourceMap.has(p.id))))return {report,receipt:null};
- let contractValid=false,parsedOutput;try{parsedOutput=parseSavedSemanticResponse(envelope);validateSemanticOutput(parsedOutput,sources,{groups:[]});contractValid=gate('SAVED_OUTPUT_CONTRACT_AND_LITERAL_QUOTES_VALID',true);}catch(e){gate('SAVED_OUTPUT_CONTRACT_AND_LITERAL_QUOTES_VALID',false);report.contractError=/^[A-Z0-9_]{1,96}$/.test(e.code??'')?e.code:'SAVED_CONTRACT_INVALID';if(parsedOutput)report.evidenceDiagnostics=savedEvidenceDiagnostics(parsedOutput,sources);}
+ let contractValid=false,parsedOutput,validatedProjection=null;try{parsedOutput=parseSavedSemanticResponse(envelope);validateSemanticOutput(parsedOutput,sources,{groups:[]});contractValid=gate('SAVED_OUTPUT_CONTRACT_AND_LITERAL_QUOTES_VALID',true);}catch(e){
+  gate('SAVED_OUTPUT_CONTRACT_AND_LITERAL_QUOTES_VALID',false);report.contractError=/^[A-Z0-9_]{1,96}$/.test(e.code??'')?e.code:'SAVED_CONTRACT_INVALID';if(parsedOutput)report.evidenceDiagnostics=savedEvidenceDiagnostics(parsedOutput,sources);
+  const bad=report.evidenceDiagnostics?.invalidProofs;
+  if(report.contractError==='SEMANTIC_EVIDENCE_NOT_IN_SAVED_SOURCE'&&finiteProjectionScope({jobId:job.id,batchId:job.batch.id,...saved})&&bad?.length===1&&bad[0].reelId===finiteSavedProjectionRule.reelId&&bad[0].location===finiteSavedProjectionRule.location&&bad[0].fieldPath===finiteSavedProjectionRule.fieldPath&&bad[0].excerptSHA256===finiteSavedProjectionRule.excerptSHA256){
+   try{const projected=finiteProjection(parsedOutput);validateSemanticOutput(projected.output,sources,{groups:[]});validatedProjection=projected.metadata;contractValid=gate('EXACT_REVIEWED_SOURCE_ABSTENTION_PROJECTED_CONTRACT_VALID',true);report.validatedProjection=validatedProjection;}catch(projectedError){gate('EXACT_REVIEWED_SOURCE_ABSTENTION_PROJECTED_CONTRACT_VALID',false);report.projectedContractError=/^[A-Z0-9_]{1,96}$/.test(projectedError.code??'')?projectedError.code:'PROJECTED_CONTRACT_INVALID';}
+  }
+ }
  const rows=[];for(const pin of pins){
   const source=sourceMap.get(pin.id),legacySource=legacyMap.get(pin.id),currentJobPin=list(job.pins).find(p=>p.id===pin.id),complete=!source.truncated,versions=!!currentJobPin&&same(source.sourceVersions,pin.sourceVersions)&&same(source.sourceVersions,currentJobPin.sourceVersions),editorial=pin.editorialHash===source.editorialHash,epochEquivalent=completeEpochEquivalent(source,legacySource);
   const found=versions&&editorial?reconstructLegacySemanticFieldOrder(source,pin.semanticProofHash,{maxAttempts}):{matched:false,attempts:0,reason:!versions?'SOURCE_VERSION_CHANGED':'EDITORIAL_CHANGED'},proof=found.matched?'exact_original_projection_hash':allowCompleteEpochEquivalence&&versions&&editorial&&epochEquivalent?'complete_source_epoch_equivalence':null;
@@ -67,5 +90,6 @@ export function prepareSemanticSourceRecovery({job,saved,envelope,sources,legacy
  const sourceGate=gate('ALL_SOURCES_EXACT_HASH_OR_REVIEWED_COMPLETE_EPOCH_EQUIVALENCE',rows.length===pins.length);
  if(!authorized||!contractValid||!sourceGate)return {report,receipt:null};
  const receipt={kind:'semantic_source_recovery',version:semanticSourceRecoveryVersion,jobId:job.id,batchId:job.batch.id,resultId:saved.id,sourceCommit,sourceObservationSHA256,observedAt,originalBindingHash:saved.bindingHash,savedRawHash:saved.rawHash,requestHash:saved.requestHash??null,promptHash:job.batch.binding.promptHash,canonicalProjectionVersion:semanticSourceProjectionVersion,frozenExtractorCommit:frozenSemanticSourceCommit,frozenExtractorBlob:frozenSemanticSourceBlob,rows,scope:'exact_saved_first_batch_only',providerCalls:0,originalBindingUnchanged:true,rawUnchanged:true};
+ if(validatedProjection)receipt.validatedProjection=validatedProjection;
  receipt.receiptHash=semanticHash(receipt);report.ready=true;report.receiptHash=receipt.receiptHash;report.sourceCount=rows.length;report.exactOldHashCount=rows.filter(r=>r.oldHashVerified).length;report.completeEpochEquivalenceCount=rows.filter(r=>r.proof==='complete_source_epoch_equivalence').length;return {report,receipt};
 }

@@ -8,7 +8,7 @@ import {ReelsSemanticCurator} from '../lib/reels-semantic-curator.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
 import {makeSemanticFixture} from './reels-semantic-fixture.mjs';
 import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
-import {prepareSemanticSourceRecovery,validateSemanticSourceRecovery,reconstructLegacySemanticFieldOrder} from '../lib/reels-semantic-source-recovery.mjs';
+import {prepareSemanticSourceRecovery,validateSemanticSourceRecovery,reconstructLegacySemanticFieldOrder,projectRecoveredSemanticOutput,finiteSavedProjectionRule} from '../lib/reels-semantic-source-recovery.mjs';
 const reverseMaps=value=>Array.isArray(value)?value.map(reverseMaps):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).reverse().map(k=>[k,reverseMaps(value[k])])):value;
 function fixture(){
  const video={id:'QaRecover_1',title:'Fonte salva',status:'completed',analysis_key:'analysis/saved.json',analysis_generation:'7',analysis_quality_status:'accepted',analysis:{title:'Fonte salva',summary:'Dois pontos documentados.',knowledge:{beta:'Segundo ponto.',alpha:'Primeiro ponto.'}},source_caption:{capture_id:'caption-v1',text:'Legenda documental.'},transcript:'Transcrição preservada.'},sourceVersions={video:'2026-10-17T00:00:00.000Z'},source=semanticSourceFromSaved({video,sourceVersions});
@@ -84,4 +84,12 @@ test('invalid saved quotes are fully diagnosed with metadata only, without accep
  x.envelope.rawResponse.candidates[0].content.parts[0].text=JSON.stringify(output);x.saved.rawHash=semanticHash(x.envelope.rawResponse);
  const r=prepareSemanticSourceRecovery(x);assert.equal(r.receipt,null);assert.equal(r.report.contractError,'SEMANTIC_EVIDENCE_NOT_IN_SAVED_SOURCE');assert.equal(r.report.evidenceDiagnostics.invalidProofCount,3);assert.equal(r.report.evidenceDiagnostics.correctionsApplied,0);
  assert.deepEqual(r.report.evidenceDiagnostics.invalidProofs[0].exactElsewherePaths,['analysis.knowledge.alpha']);assert.equal(r.report.evidenceDiagnostics.invalidProofs[0].exactElsewhereUnique,true);assert.deepEqual(r.report.evidenceDiagnostics.invalidProofs[1].normalizedWhitespacePaths,['analysis.summary']);assert.equal(r.report.evidenceDiagnostics.invalidProofs[2].fieldPathExists,false);assert.equal(JSON.stringify(r.report).includes('Primeiro ponto.'),false);assert.equal(JSON.stringify(r.report).includes('Invented quotation.'),false);
+});
+
+test('finite paid-output abstention cannot be enabled by an unbound sidecar or generalized to another response',()=>{
+ const x=fixture(),r=prepareSemanticSourceRecovery(x),output=JSON.parse(x.envelope.rawResponse.candidates[0].content.parts[0].text);
+ assert.equal(projectRecoveredSemanticOutput(output,r.receipt),output);
+ const forged=structuredClone(r.receipt);forged.validatedProjection={version:finiteSavedProjectionRule.version,ruleHash:semanticHash(finiteSavedProjectionRule),originalOutputHash:semanticHash(output),projectedOutputHash:'0'.repeat(64),exclusions:[{reelId:finiteSavedProjectionRule.reelId,excerptSHA256:finiteSavedProjectionRule.excerptSHA256}]};forged.validatedProjection.projectionHash=semanticHash(forged.validatedProjection);delete forged.receiptHash;forged.receiptHash=semanticHash(forged);
+ assert.throws(()=>projectRecoveredSemanticOutput(output,forged),/FINITE_SAVED_PROJECTION_RECEIPT_INVALID/);
+ assert.equal(prepareSemanticSourceRecovery({...x,allowCompleteEpochEquivalence:true}).receipt.validatedProjection,undefined);
 });

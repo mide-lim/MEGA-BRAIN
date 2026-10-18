@@ -39,12 +39,12 @@ export class ReelsCatalogueRuntime{
  async project(id,{type='sourceCorrected',eventId=null}={}){
   if(!reelIdPattern.test(id??''))throw Error('Reel de catálogo inválido.');
   const manifest=await this.store.get(catalogueManifestPath);
-  let source=null;
-  const event={id:eventId??contextualHash({id,type,at:this.now()}),type,reelId:id},eventPath='reels_index/contextual_event_'+contextualHash({id:event.id,type,reelId:id});
+  let source=eventId?null:await this.loadSource(id);
+  const event={id:eventId??contextualHash({id,type,sourceVersions:source?.sourceVersions,editorial:source?.editorial,reviewHash:source?.formatReview?contextualHash(source.formatReview):null}),type,reelId:id},eventPath='reels_index/contextual_event_'+contextualHash({id:event.id,type,reelId:id});
   await this.store.create(eventPath,{kind:'contextual_event',schemaVersion:1,event,status:'pending',createdAt:this.now(),providerCalls:0});
   if(!catalogueManifestActive(manifest?.data))return {committed:false,pending:true,eventId:event.id,eventPath,reason:'CATALOGUE_BOOTSTRAP_NOT_ACTIVE',providerCalls:0};
   try{
-   const projector=new ReelsContextualCatalogueProjector({clock:this.clock,loadSource:async()=>source=await this.loadSource(id),loadContribution:path=>this.store.get(path),commitCAS:plan=>{
+   const projector=new ReelsContextualCatalogueProjector({clock:this.clock,loadSource:async()=>source??=await this.loadSource(id),loadContribution:path=>this.store.get(path),commitCAS:plan=>{
     if(typeof this.store.compareAndReplaceDerived!=='function')throw Error('Persistência transacional do catálogo indisponível.');
     return this.store.compareAndReplaceDerived({path:plan.path,replacement:plan.replacement,checks:[...source.checks,{path:catalogueManifestPath,updateTime:manifest.updateTime},{path:plan.path,updateTime:plan.expectedContributionUpdateTime}]});
    }});
@@ -60,6 +60,12 @@ export class ReelsCatalogueRuntime{
    return {committed:false,pending:true,eventId:event.id,eventPath,reason:'CATALOGUE_EVENT_PENDING',providerCalls:0};
   }
  }
+ async resumePublicationIndex(id){
+  const source=await this.loadSource(id),marker=source?.video?.contextual_catalogue_event;
+  if(!marker||marker.type!=='publicationAccepted'||marker.reelId!==id||typeof marker.id!=='string')return {pending:false,committed:false,reason:'NO_PUBLISHED_INDEX_INTENT',providerCalls:0};
+  return this.project(id,{type:'publicationAccepted',eventId:marker.id});
+ }
+
  async snapshot(items=null){return this.repository.contextualContributions(items??await this.repository.items());}
  async overview(){
   const snapshot=await this.snapshot(),taxonomy=(await this.store.get('settings/reels_v2_taxonomy'))?.data??{},view=buildContextualCatalogue(snapshot.contributions,{inventoryIds:snapshot.inventoryIds,observedAt:this.now(),dataAsOf:snapshot.dataAsOf??this.now(),sourceStale:snapshot.sourceStale,nodes:taxonomy.nodes??[],incremental:{enabled:snapshot.active===true,eventDriven:true,noProviders:true}});

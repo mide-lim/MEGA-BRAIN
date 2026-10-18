@@ -12,10 +12,11 @@ import {speechWordEvidence} from './reels-speech-evidence.mjs';
 
 // Legacy callers retain the reservation gate. The v2 caller supplies a
 // server-owned execution authorization, independently of financial reporting.
-export function googleOperations({api,storage,tools,preset,config,gate,executionAuthorization=null,executionIds=null,preparedAudioKey=null,inspect=inspectMedia,qualityEvidence=null,saveQualityReceipt=null}){
+export function googleOperations({api,storage,tools,preset,config,gate,executionAuthorization=null,executionIds=null,preparedAudioKey=null,inspect=inspectMedia,qualityEvidence=null,saveQualityReceipt=null,loadContextCatalog=null}){
   if(api.project!=='megabrain-v0-1017370021431'||storage.bucket!==`${api.project}-media`)throw new Error('Adaptadores fora do projeto v0.');
   if(typeof gate!=='function'&&typeof executionAuthorization!=='function')throw new Error('Autorização de execução obrigatória.');
   if(executionAuthorization!==null&&typeof executionAuthorization!=='function'||executionIds!==null&&typeof executionIds!=='function'||preparedAudioKey!==null&&typeof preparedAudioKey!=='function')throw Error('Contexto de execução inválido.');
+  if(loadContextCatalog!==null&&typeof loadContextCatalog!=='function')throw Error('Leitura do catálogo vigente inválida.');
   const qualityMode=!!executionAuthorization&&config.reels_quality_policy_version==='gate_v2';
   if(qualityMode&&typeof saveQualityReceipt!=='function')throw Error('Persistência de recibo de qualidade obrigatória para o worker v2.');
   async function admitted(id,stage,videoId){
@@ -193,7 +194,8 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const caption=await captionFor(video,executionId);
       const analysisRecord={...video,...caption};
       if(qualityMode){const qualityGate=sourcePreflight(analysisRecord);if(qualityGate)return {...result(video.id,'analysis',{analysis_review_reasons:['quality_source_unverified'],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null},null,null),qualityGate,qualityPublication:null};}
-      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model,taxonomySignalsEnabled:config.reels_taxonomy_signals_enabled===true,qualityGateV2Enabled:qualityMode,contextCatalogSnapshot:qualityMode?config.reels_context_catalog_snapshot??null:null});
+      const contextCatalogSnapshot=qualityMode?await readAnalysisContextCatalogue(loadContextCatalog,{videoId:video.id,record:analysisRecord}):null;
+      const request=buildAnalysisRequest({record:analysisRecord,bucket:storage.bucket,preset,model:config.gemini_model,taxonomySignalsEnabled:config.reels_taxonomy_signals_enabled===true,qualityGateV2Enabled:qualityMode,contextCatalogSnapshot});
       let attempt=analysisAttempts.length;const callDiagnostics=[];
       const submit=()=>at('submit_analysis',()=>{
         const remainingMs=Math.floor(deadline-performance.now());
@@ -204,7 +206,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`;
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const usage=measureGeminiUsage(response,{model:config.gemini_model,location:'global'});
-      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage}));
+      const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage,...(qualityMode?{context_catalogue_receipt:{snapshotHash:contextCatalogSnapshot.snapshotHash,state:contextCatalogSnapshot.state,version:contextCatalogSnapshot.version,policyVersion:contextCatalogSnapshot.policyVersion??null,dataAsOf:contextCatalogSnapshot.dataAsOf??null},context_catalogue_snapshot:contextCatalogSnapshot}:{})}));
       if(qualityMode){const prepared=await qualityChanges(response,analysisRecord,{key,generation:raw.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},cost,usage),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication};}
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
@@ -219,4 +221,20 @@ export function createMediaInspectionReceipt({video,media,bytes}){
  const sourceIdentity=qualitySourceManifest(video).video;if(!sourceIdentity)throw Error('Geração da mídia inspecionada ausente.');
  const receipt={kind:'media-inspector',version:1,sourceIdentity,contentSha256:sha256(bytes),contentBytes:bytes.length,decodePassed:true,probePassed:true,durationSeconds:media.duration_seconds,expectedAudio:media.hasAudio,audioTrackPresent:media.hasAudio,audioStatus:media.audio_status,semanticPixelsReviewed:false};
  return {...receipt,receiptId:'media_'+qualityDigest(receipt)};
+}
+
+ 
+// Executed for each new final-analysis request, never at lazy runtime startup.
+// A missing catalogue is explicit; old environment snapshots cannot masquerade
+// as a current read. Saved-response reconciliation does not read or replay it.
+export async function readAnalysisContextCatalogue(loader,context){
+ const missing=reason=>{const snapshot={version:'semantic-curator-v1',state:'unavailable',reason,groups:[],noProviders:true};return {...snapshot,snapshotHash:sha256(Buffer.from(JSON.stringify(snapshot)))};};
+ if(typeof loader!=='function')return missing('LIVE_CATALOGUE_LOADER_MISSING');
+ try{
+  const value=await loader(context);
+  if(!value||value.version!=='semantic-curator-v1'||!['available','stale','unavailable'].includes(value.state)||!Array.isArray(value.groups)||value.groups.length>64||value.noProviders!==true||!/^[a-f0-9]{64}$/.test(value.snapshotHash??''))return missing('LIVE_CATALOGUE_INVALID');
+  const encoded=JSON.stringify(value);
+  if(Buffer.byteLength(encoded,'utf8')>30000)return missing('COMPACT_CATALOGUE_LIMIT');
+  return JSON.parse(encoded);
+ }catch{return missing('LIVE_CATALOGUE_READ_UNAVAILABLE');}
 }

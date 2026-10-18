@@ -169,7 +169,8 @@ export class ReelsSemanticCurator{
   if(prior){if(prior.data.jobId!==job.id||prior.data.bindingHash!==batch.bindingHash)throw problem('SEMANTIC_ATTEMPT_CONFLICT','Diagnóstico pertence a outro envio.');return;}
   const diagnostic=semanticFailureDiagnostic(error,{stage,phase:batch.phase,envelopePresent}),now=this.now();
   const status=!envelopePresent||error.requiresReconciliation?'uncertain':stage==='saved_application'&&error.status===409?'paused':'failed';
-  const reason=envelopePresent?'SAVED_RESPONSE_REQUIRES_REVIEW':'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN';
+  const savedCodes=['SEMANTIC_MERGE_CONTRADICTORY_EVIDENCE','SEMANTIC_GROUP_CONTRADICTORY_EVIDENCE','SEMANTIC_SOURCE_CHANGED','SEMANTIC_VERSION_CHANGED','SEMANTIC_AUTHORIZATION_CHANGED'];
+  const reason=envelopePresent?(stage==='saved_application'&&savedCodes.includes(error.code)?error.code:'SAVED_RESPONSE_REQUIRES_REVIEW'):'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN';
   const attempt={kind:'semantic_attempt',schemaVersion:1,id:batch.id,jobId:job.id,bindingHash:batch.bindingHash,phase:batch.phase,cursor:batch.offset,callsUsed:job.callsUsed,diagnostic,recordedAt:now};
   const next={...job,status,reason,providerDiagnostic:{attemptId:batch.id,...diagnostic},updatedAt:now};
   try{await this.commit([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path,updateTime:null}],[{path,data:attempt},{path:jobPath(job.id),data:next}]);}

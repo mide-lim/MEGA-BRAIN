@@ -33,16 +33,16 @@ export class ReelsCatalogueRuntime{
   }
   const entry=projectContextualPublication({video,legacy,item,qualityVerification}),candidate=this.trustedReviewLoader?await this.trustedReviewLoader({id,reviewSnapshot,entry}):reviewSnapshot?.data?.review??reviewSnapshot?.data??null;
   // A review of a previous source version is retained as history, never reused.
-  const formatReview=candidate?.sourceProofHash===entry?.sourceProofHash?candidate:null;
+  const formatReview=candidate?.sourceProofHash===entry?.sourceProofHash&&(!reviewSnapshot?.data.reviewHash||reviewSnapshot.data.reviewHash===contextualHash(candidate))?candidate:null;
   return {video,legacy,item,qualityVerification,editorial:catalogueEditorialForItem(item,taxonomy),sourceVersions:{video:videoSnapshot.updateTime,...(legacySnapshot?{legacy:legacySnapshot.updateTime}:{})},formatReview,reviewVersion:{path:reviewPath,updateTime:reviewSnapshot?.updateTime??null},checks};
  }
  async project(id,{type='sourceCorrected',eventId=null}={}){
   if(!reelIdPattern.test(id??''))throw Error('Reel de catálogo inválido.');
   const manifest=await this.store.get(catalogueManifestPath);
-  if(!catalogueManifestActive(manifest?.data))return {committed:false,pending:true,reason:'CATALOGUE_BOOTSTRAP_NOT_ACTIVE',providerCalls:0};
   let source=null;
   const event={id:eventId??contextualHash({id,type,at:this.now()}),type,reelId:id},eventPath='reels_index/contextual_event_'+contextualHash({id:event.id,type,reelId:id});
   await this.store.create(eventPath,{kind:'contextual_event',schemaVersion:1,event,status:'pending',createdAt:this.now(),providerCalls:0});
+  if(!catalogueManifestActive(manifest?.data))return {committed:false,pending:true,eventId:event.id,eventPath,reason:'CATALOGUE_BOOTSTRAP_NOT_ACTIVE',providerCalls:0};
   try{
    const projector=new ReelsContextualCatalogueProjector({clock:this.clock,loadSource:async()=>source=await this.loadSource(id),loadContribution:path=>this.store.get(path),commitCAS:plan=>{
     if(typeof this.store.compareAndReplaceDerived!=='function')throw Error('Persistência transacional do catálogo indisponível.');

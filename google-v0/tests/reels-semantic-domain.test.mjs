@@ -92,7 +92,7 @@ async function startOwnerDomain(s,domainId='food',authorizationId='synthetic-dom
 }
 async function finishDomain(s,created){let job=created.job;for(let n=0;n<8&&!['completed','paused','uncertain'].includes(job.status);n++)job=(await s.curator.runDelivery({jobId:job.id,sequence:job.dispatch.sequence,outboxId:job.dispatch.outboxId,maxBatches:3})).job;return job;}
 function realDomainProvider(captured,{destinations=false}={}){
- return new ReelsSemanticProvider({api:{project:'synthetic-domain-ci',async request(_url,{json}){
+ return new ReelsSemanticProvider({api:{project:'megabrain-v0-1017370021431',async request(_url,{json}){
   const input=JSON.parse(json.contents[0].parts[0].text);captured.push({input,request:clone(json)});
   const proof=s=>({fieldPath:s.fields[0].fieldPath,excerpt:s.fields[0].text.slice(0,80)});let output;
   if(input.phase==='extract')output={version:1,profiles:input.sources.map(s=>({reelId:s.id,context:'recipe',state:'proposed',reason:'Synthetic saved purpose evidence.',units:[]})),groups:[{key:'domain-food-example',name:'Preparos sintéticos',kind:'segment',context:'recipe',definition:'Synthetic recurring purpose, not a semantic accuracy claim.',aliases:[],positiveCriteria:['Saved preparation purpose.'],negativeCriteria:['Different saved purpose.'],members:[{reelId:input.sources[0].id,role:'central',unitIds:[],evidence:[proof(input.sources[0])]}],negativeExamples:input.sources.slice(1).map(s=>({reelId:s.id,reason:'Synthetic different purpose.',evidence:[proof(s)]}))}],destinations:input.sources.map(s=>destinations?{reelId:s.id,state:'suggested',domainId:'technology',reason:'Synthetic source-bound destination hypothesis.',evidence:[proof(s)]}:{reelId:s.id,state:'inconclusive',domainId:null,reason:'Insufficient destination evidence.',evidence:[]})};
@@ -155,4 +155,25 @@ test('a source nominally routed to food can suggest technology but cannot create
  assert.throws(()=>validateSemanticDomainDestinations({groups:[{context:'technology'}],destinations:[d]},[source],'food'),{code:'DOMAIN_GROUP_CONTEXT_OUTSIDE_PROFILE'});
  const request=prepareSemanticProviderRequest({phase:'extract',payload:{sources:[source],catalogue:{groups:[]}},requestId:'a'.repeat(64),domainId:'food'});
  assert.deepEqual(request.generationConfig.responseSchema.properties.groups.items.properties.context.enum,['recipe','health','home']);
+});
+
+test('one unchanged root owner policy starts two different allowed specialists serially without configuration writes',async()=>{
+ const s=setup(),seed=await seedSyntheticDomainOwner({curator:s.curator}),root=await s.store.get('settings/reels_v2_semantic_policy'),original=semanticHash([await s.store.get(seed.originJob.path),await s.store.get(seed.originLedger.path)]);
+ const preview=await s.domains.command({action:'preview',domainId:'food'}),created=await s.domains.command({action:'create',domainId:'food',previewHash:preview.previewHash,idempotencyKey:'synthetic-root-food-once'});assert.equal((await finishDomain(s,created)).status,'completed');
+ const view=await s.domains.overview();assert.equal(view.domains.find(d=>d.id==='food').canStart,false);assert.equal(view.domains.find(d=>d.id==='technology').canStart,true);
+ const nextPreview=await s.domains.command({action:'preview',domainId:'technology'}),tech=await s.domains.command({action:'create',domainId:'technology',previewHash:nextPreview.previewHash,idempotencyKey:'synthetic-root-tech-once'});assert.equal((await finishDomain(s,tech)).status,'completed');
+ const first=(await s.store.get('reels_index/semantic_job_'+created.job.id)).data,second=(await s.store.get('reels_index/semantic_job_'+tech.job.id)).data;assert.notEqual(first.policy.authorizationId,second.policy.authorizationId);assert.equal(first.rootPolicyHash,semanticHash(root.data));assert.equal(second.rootPolicyHash,first.rootPolicyHash);
+ equal(await s.store.get('settings/reels_v2_semantic_policy'),root);assert.equal((await s.store.get(seed.plan.budgetPath)).data.callsUsed,6);assert.equal(semanticHash([await s.store.get(seed.originJob.path),await s.store.get(seed.originLedger.path)]),original);
+});
+test('a root policy edit between domain creation and delivery fails closed before any submission',async()=>{
+ const s=setup();await seedSyntheticDomainOwner({curator:s.curator});const p=await s.domains.command({action:'preview',domainId:'food'}),created=await s.domains.command({action:'create',domainId:'food',previewHash:p.previewHash,idempotencyKey:'synthetic-root-race-once'}),root=await s.store.get('settings/reels_v2_semantic_policy');
+ await s.store.patch('settings/reels_v2_semantic_policy',{...root.data,authorizationId:'synthetic-other-root'},{updateTime:root.updateTime});const job=await finishDomain(s,created);assert.equal(job.status,'paused');assert.equal(job.reason,'SEMANTIC_AUTHORIZATION_CHANGED');assert.equal(job.callsUsed,0);assert.equal(s.fixture.calls.length,0);
+});
+
+test('a requested specialist outside the sealed allowedDomains cannot start or submit',async()=>{
+ const s=setup(),seed=await seedSyntheticDomainOwner({curator:s.curator}),a=await s.store.get(seed.plan.authorityPath),body=clone(a.data);delete body.authorityHash;body.approval.allowedDomains=['food'];const authority={...body,authorityHash:semanticHash(body)};
+ s.store.docs.set(seed.plan.authorityPath,{data:authority,updateTime:a.updateTime});
+ for(const path of [seed.plan.budgetPath,seed.plan.quarantinePath]){const d=s.store.docs.get(path);d.data.authorityHash=authority.authorityHash;}
+ const p=await s.curator.preview({domainId:'technology'});assert.equal(p.preview.providerEnabled,false);assert.ok(p.preview.blockingReasons.includes('DOMAIN_GLOBAL_AUTHORITY_INVALID'));
+ await assert.rejects(()=>s.domains.command({action:'create',domainId:'technology',previewHash:p.previewHash,idempotencyKey:'synthetic-denied-tech'}),{code:'DOMAIN_START_NOT_AUTHORIZED'});assert.equal(s.fixture.calls.length,0);
 });

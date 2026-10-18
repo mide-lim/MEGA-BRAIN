@@ -3,7 +3,7 @@
 Importing this module performs no I/O. Production execution is owner Cloud Shell
 only; preparation and tests belong exclusively to GitHub Actions.
 """
-import argparse, datetime, hashlib, json, pathlib, re, subprocess, sys, time
+import argparse, datetime, hashlib, http.client, ipaddress, json, pathlib, re, socket, ssl, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from urllib import request as urlrequest, parse as urlparse, error as urlerror
 
@@ -22,6 +22,7 @@ MAX_TX_SECONDS = 18
 CHUNK_SIZE = 100
 READ_BATCH_SIZE = 500
 PROBE_WORKERS = 4
+GOOGLE_HOSTS = frozenset(['firestore.googleapis.com','run.googleapis.com','cloudtasks.googleapis.com'])
 
 class GuardError(ValueError): pass
 class AmbiguousCommit(RuntimeError): pass
@@ -246,15 +247,95 @@ class CatalogueBootstrap:
    return {'status':'applied_verified','activationCommit':status,'stagedDocuments':len(self.expected),'writes':sum(c['newDocuments']for c in self.chunks)+2,'chunks':self.chunks}
   except Exception:self.client.rollback(tx);raise
 
+def google_host(url):
+ try:
+  parsed=urlparse.urlsplit(url)
+  allowed=parsed.scheme=='https'and parsed.hostname in GOOGLE_HOSTS and parsed.port in [None,443]and parsed.username is None and parsed.password is None and not parsed.fragment
+ except (ValueError,TypeError):allowed=False
+ need(allowed,'GOOGLE_ENDPOINT_NOT_ALLOWED')
+ return parsed.hostname
+
+def require_verified_context(context):
+ need(context.verify_mode==ssl.CERT_REQUIRED and context.check_hostname is True,'GOOGLE_TLS_VERIFICATION_REQUIRED')
+
+def require_direct_transport():
+ proxies=urlrequest.getproxies()
+ need(not any(value for key,value in proxies.items()if key.lower()in ['http','https','all']),'GOOGLE_PROXY_CONFIGURED_UNSUPPORTED')
+
+class GoogleIPv4Resolver:
+ """At most three DNS lookups per owner execution, including failed lookups."""
+ def __init__(self):
+  self.locks={host:threading.Lock()for host in GOOGLE_HOSTS};self.answers={};self.failed=set()
+ def address(self,host):
+  need(host in GOOGLE_HOSTS,'GOOGLE_ENDPOINT_NOT_ALLOWED')
+  with self.locks[host]:
+   need(host not in self.failed,'GOOGLE_DNS_UNAVAILABLE')
+   if host not in self.answers:
+    try:
+     rows=socket.getaddrinfo(host,443,family=socket.AF_INET,type=socket.SOCK_STREAM,proto=socket.IPPROTO_TCP)
+     addresses=[]
+     for family,kind,protocol,_,address in rows:
+      if family==socket.AF_INET and kind==socket.SOCK_STREAM and protocol in [0,socket.IPPROTO_TCP]:
+       ip=str(ipaddress.IPv4Address(address[0]))
+       if ip not in addresses:addresses.append(ip)
+     need(bool(addresses)and len(addresses)<=16,'GOOGLE_DNS_UNAVAILABLE')
+     # Pin one resolved IPv4 for this short-lived execution. No connection or
+     # HTTP retry and no global resolver/hosts/IPv6 configuration is changed.
+     self.answers[host]=addresses[0]
+    except Exception:
+     self.failed.add(host);raise GuardError('GOOGLE_DNS_UNAVAILABLE') from None
+   return self.answers[host]
+
+class GoogleIPv4HTTPSConnection(http.client.HTTPSConnection):
+ def __init__(self,host,timeout=15,resolver=None,context=None):
+  host=google_host('https://'+host);require_verified_context(context)
+  super().__init__(host,port=443,timeout=timeout,context=context)
+  self.resolver=resolver
+ def connect(self):
+  need(not self._tunnel_host,'GOOGLE_PROXY_CONFIGURED_UNSUPPORTED')
+  require_verified_context(self._context)
+  address=self.resolver.address(self.host)
+  raw=socket.socket(socket.AF_INET,socket.SOCK_STREAM,socket.IPPROTO_TCP)
+  try:
+   raw.settimeout(self.timeout);raw.connect((address,443))
+   # The IP selects the socket only. The original DNS host remains the TLS
+   # server name and certificate hostname; HTTPS Host remains unchanged.
+   self.sock=self._context.wrap_socket(raw,server_hostname=self.host)
+  except Exception:
+   raw.close();raise
+
+class GoogleHTTPSHandler(urlrequest.HTTPSHandler):
+ def __init__(self,resolver,context):
+  super().__init__(context=context);self.resolver=resolver;self.context=context
+ def https_open(self,req):
+  host=google_host(req.full_url)
+  need(req.get_header('Host',host)==host,'GOOGLE_HOST_OVERRIDE_NOT_ALLOWED')
+  def connection(host,timeout=15,**kwargs):
+   return GoogleIPv4HTTPSConnection(host,timeout=timeout,resolver=self.resolver,context=self.context)
+  return self.do_open(connection,req)
+
+class GoogleNoRedirect(urlrequest.HTTPRedirectHandler):
+ def redirect_request(self,req,fp,code,msg,headers,newurl):
+  raise GuardError('GOOGLE_REDIRECT_NOT_ALLOWED')
+
 class GoogleClient:
- def __init__(self,token):self.token=token
+ def __init__(self,token,resolver=None,context=None):
+  # Refuse configured proxies explicitly, without logging their values. Direct
+  # IPv4 transport must never silently bypass an existing proxy policy.
+  require_direct_transport()
+  self.token=token;self.resolver=resolver or GoogleIPv4Resolver();self.context=context or ssl.create_default_context()
+  require_verified_context(self.context)
  def _request(self,method,url,payload=None,params=None):
-  need(urlparse.urlsplit(url).hostname in ['firestore.googleapis.com','run.googleapis.com','cloudtasks.googleapis.com'],'GOOGLE_ENDPOINT_NOT_ALLOWED')
+  host=google_host(url);need(method in ['GET','POST'],'GOOGLE_METHOD_NOT_ALLOWED');require_direct_transport()
   if params:url+='?'+urlparse.urlencode(params,doseq=True)
   body=None if payload is None else canonical(payload).encode()
-  request=urlrequest.Request(url,data=body,method=method,headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
+  request=urlrequest.Request(url,data=body,method=method,headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json','Host':host})
+  # A fresh opener owns its handlers for each request; only the bounded,
+  # synchronized DNS cache and immutable verified SSL context are shared.
+  opener=urlrequest.build_opener(urlrequest.ProxyHandler({}),GoogleHTTPSHandler(self.resolver,self.context),GoogleNoRedirect())
   try:
-   with urlrequest.urlopen(request,timeout=15)as response:raw=response.read(MAX_TX_BYTES+1)
+   with opener.open(request,timeout=15)as response:raw=response.read(MAX_TX_BYTES+1)
+  except GuardError:raise
   except urlerror.HTTPError as error:raise GuardError('GOOGLE_HTTP_'+str(error.code)) from None
   except Exception:raise GuardError('GOOGLE_REQUEST_UNCERTAIN') from None
   need(len(raw)<=MAX_TX_BYTES,'GOOGLE_RESPONSE_TOO_LARGE')
@@ -289,8 +370,8 @@ class GoogleClient:
   need(len(body)<=202,'WRITE_BUDGET')
   self._request('POST',BASE+':commit',{'transaction':tx,'writes':body})
  def probe_closed(self):
-  # Each urllib call owns its Request/connection; this client holds only an
-  # immutable token. No shared HTTP session, cookies or mutable response cache.
+  # Every request owns its opener/connection. Only the bounded DNS cache and
+  # verified SSL context are shared; no global opener/socket monkeypatch.
   targets=[('queue',s)for s in ['acquisition','transcription','analysis','processing']]+[('service',s)for s in ['web','acquisition','transcription','analysis']]
   def probe(target):
    kind,name=target

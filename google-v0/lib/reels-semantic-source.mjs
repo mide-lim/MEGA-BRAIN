@@ -1,12 +1,14 @@
+import {semanticContractSpec} from './reels-semantic-contract-definition.mjs';
 import {createHash} from 'node:crypto';
 import {publicationAvailable,projectReel} from './reels-model.mjs';
 import {preservedContentAvailable,withPreservedSummary} from './reels-preserved-content.mjs';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 export const semanticHash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
+export const semanticSourceProjectionVersion='saved-text-projection-v2';
 export const semanticPolicyVersion='semantic-curator-v1';
-export const semanticContexts=['recipe','technology','health','travel','business','home','general'];
+export const semanticContexts=semanticContractSpec.contexts;
 export const semanticStatuses=['prepared','running','paused','completed','uncertain','failed','cancelled'];
-export const semanticGroupKinds=['context','format','facet','segment'];
+export const semanticGroupKinds=semanticContractSpec.groupKinds;
 export const semanticPolicyPath='settings/reels_v2_semantic_policy';
 export function semanticPolicy(value={}){
  const n=(v,d,min,max)=>Number.isSafeInteger(v)&&v>=min&&v<=max?v:d;
@@ -24,15 +26,16 @@ export function semanticSourceFromSaved({video={},legacy=null,item,sourceVersion
  const report=native?video.analysis:legacy.analysis,fields=[],sourceIdentity=native?'analysis:'+video.analysis_key+'@'+video.analysis_generation:'legacy:'+legacy.provenance.recordHash;
  let chars=0;const truncationReasons=new Set();
  const add=(fieldPath,text,source='saved_analysis',identity=sourceIdentity)=>{if(typeof text!=='string'||!text.trim())return;if(chars>=24000||fields.length>=96){truncationReasons.add('TOTAL_TEXT_OR_FIELD_LIMIT');return;}const captured=text.trim().slice(0,Math.min(12000,24000-chars));if(captured.length<text.trim().length)truncationReasons.add('FIELD_OR_TOTAL_TEXT_TRUNCATED:'+fieldPath);fields.push({fieldPath,text:captured,source,sourceIdentity:identity});chars+=captured.length;};
- const walk=(v,path,depth=0)=>{if(depth>5){truncationReasons.add('STRUCTURE_DEPTH_LIMIT:'+path);return;}if(Array.isArray(v)&&v.length>32)truncationReasons.add('ARRAY_LIMIT:'+path);if(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length>32)truncationReasons.add('OBJECT_FIELD_LIMIT:'+path);if(typeof v==='string')add(path,v);else if(Array.isArray(v))v.slice(0,32).forEach((x,i)=>walk(x,path+'.'+i,depth+1));else if(v&&typeof v==='object')for(const k of Object.keys(v).filter(k=>/^[A-Za-z][A-Za-z0-9_]*$/.test(k)).slice(0,32))walk(v[k],path+'.'+k,depth+1);};
+ const walk=(v,path,depth=0)=>{if(depth>5){truncationReasons.add('STRUCTURE_DEPTH_LIMIT:'+path);return;}if(Array.isArray(v)&&v.length>32)truncationReasons.add('ARRAY_LIMIT:'+path);if(v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length>32)truncationReasons.add('OBJECT_FIELD_LIMIT:'+path);if(typeof v==='string')add(path,v);else if(Array.isArray(v))v.slice(0,32).forEach((x,i)=>walk(x,path+'.'+i,depth+1));else if(v&&typeof v==='object')for(const k of Object.keys(v).sort().filter(k=>/^[A-Za-z][A-Za-z0-9_]*$/.test(k)).slice(0,32))walk(v[k],path+'.'+k,depth+1);};
  for(const key of ['title','summary','knowledge','useful_information','useful_value','claims','topics','candidate_relations','limitations'])walk(report?.[key],'analysis.'+key);
  add('caption',video.source_caption?.text??legacy?.caption,'caption',video.source_caption?.capture_id??sourceIdentity);
  add('transcript',native?video.transcript:legacy?.transcript,'transcript',video.transcript_key&&video.transcript_generation?video.transcript_key+'@'+video.transcript_generation:sourceIdentity);
  if(!fields.length)throw Error('Publicação sem texto salvo elegível.');
+ fields.sort((a,b)=>{const x=a.fieldPath.split('.'),y=b.fieldPath.split('.');for(let i=0;i<Math.min(x.length,y.length);i++){if(x[i]===y[i])continue;return /^\d+$/.test(x[i])&&/^\d+$/.test(y[i])?Number(x[i])-Number(y[i]):x[i]<y[i]?-1:1;}return x.length-y.length;});
  const versions={video:sourceVersions.video,...(!native&&sourceVersions.legacy?{legacy:sourceVersions.legacy}:{})};
  if(typeof versions.video!=='string')throw Error('Versão da fonte ausente.');
  const ed=semanticEditorial(item,editorial);
- return {id,title:item.title??report?.title??report?.summary?.slice(0,120)??id,sourceIdentity:identity,sourceVersions:versions,editorial:ed,editorialHash:semanticHash(ed),fields,semanticProofHash:semanticHash({identity,fields}),truncated:truncationReasons.size>0,truncationReasons:[...truncationReasons],sourceCharacters:chars};
+ return {sourceProjectionVersion:semanticSourceProjectionVersion,id,title:item.title??report?.title??report?.summary?.slice(0,120)??id,sourceIdentity:identity,sourceVersions:versions,editorial:ed,editorialHash:semanticHash(ed),fields,semanticProofHash:semanticHash({version:semanticSourceProjectionVersion,identity,fields}),truncated:truncationReasons.size>0,truncationReasons:[...truncationReasons],sourceCharacters:chars};
 }
 export function prepareSemanticPlan({inventory,selection={all:true},policy:rawPolicy={},observedAt}){
  const policy=semanticPolicy(rawPolicy),all=[...inventory].filter(x=>x.publicationAvailable!==false).sort((a,b)=>a.id.localeCompare(b.id)),byId=new Map(all.map(x=>[x.id,x]));

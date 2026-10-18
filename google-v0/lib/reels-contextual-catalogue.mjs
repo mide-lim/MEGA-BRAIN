@@ -14,16 +14,11 @@ const states=()=>Object.fromEntries(coverageStates.map(s=>[s,0]));
 const sameIdentity=(a,b)=>a?.kind===b?.kind&&(a?.kind==='native'?a.analysisKey===b.analysisKey&&String(a.analysisGeneration)===String(b.analysisGeneration):a?.kind==='legacy_preserved'&&a.recordHash===b.recordHash&&a.sourceSnapshotHash===b.sourceSnapshotHash);
 const sourceVersionsValid=v=>obj(v)&&time(v.video)&&(v.legacy===undefined||v.legacy===null||time(v.legacy));
 export const contextualContributionPath=id=>{if(!reelIdPattern.test(id??''))failure('CATALOGUE_REEL_ID_INVALID');return 'reels_index/contextual_'+id;};
-function editorialMetadata(item,editorial={}){
+export function catalogueEditorialMetadata(item,editorial={}){
  const manual=item?.categoryOverride?.manual===true||item?.categoryResolution?.mode==='manual'||editorial.manual===true;
- return {manual,revision:editorial.revision??item?.categoryOverride?.revision??null,suppressedDimensions:[...new Set(list(editorial.suppressedDimensions).filter(x=>typeof x==='string'))].sort(),suppressedValues:list(editorial.suppressedValues).filter(x=>obj(x)&&typeof x.dimension==='string'&&typeof x.value==='string').map(x=>({dimension:x.dimension,value:x.value})).sort((a,b)=>(a.dimension+':'+a.value).localeCompare(b.dimension+':'+b.value)),categoryIds:[...new Set(list(item?.categoryIds))].sort()};
+ return {manual,revision:editorial.revision??item?.categoryOverride?.revision??null,suppressedDimensions:[...new Set(list(editorial.suppressedDimensions).filter(x=>typeof x==='string'))].sort(),suppressedValues:list(editorial.suppressedValues).filter(x=>obj(x)&&typeof x.dimension==='string'&&typeof x.value==='string').map(x=>({dimension:x.dimension,value:x.value})).sort((a,b)=>(a.dimension+':'+a.value).localeCompare(b.dimension+':'+b.value)),categoryIds:manual?[...new Set(list(item?.categoryIds))].sort():[]};
 }
 function reviewedFormat(entry,{video,legacy,formatReview,previousContribution}){
- const preserved=previousContribution?.data??previousContribution;
- if(!formatReview&&preserved?.entry?.formatReview&&preserved.sourceProofHash===entry.sourceProofHash&&sameIdentity(preserved.sourceIdentity,entry.sourceIdentity)){
-  catalogueEntries([preserved]);
-  return {...entry,format:preserved.entry.format,units:preserved.entry.units,independentUnitCount:preserved.entry.independentUnitCount,attributes:[...entry.attributes.filter(a=>a.dimensionId!=='format').map(a=>({...a,unitIds:[]})),...preserved.entry.attributes.filter(a=>a.dimensionId==='format')],formatReview:preserved.entry.formatReview,coverage:entry.coverage.map(c=>c.dimensionId==='format'?preserved.entry.format:c)};
- }
  const candidate=entry.format.state==='supported',v2=entry.sourceIdentity.qualityPolicyVersion==='gate_v2'&&entry.format.reason==='EXACT_FORMAT_AND_INDEPENDENT_UNITS_REVIEWED';
  let result={...entry,attributes:entry.attributes.map(a=>a.dimensionId==='format'&&candidate&&!v2?{...a,state:'present_unverified',role:'unknown',reason:'COMPLETE_RECIPE_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:a)};
  if(candidate&&!v2){result.format={...entry.format,state:'present_unverified',reason:'TEMPORAL_UNITS_ONLY_NOT_SEMANTIC_COMPLETENESS'};result.independentUnitCount=null;result.units=entry.units.map(u=>({...u,state:'present_unverified',complete:false}));result.attributes=result.attributes.map(a=>({...a,unitIds:[]}));}
@@ -49,7 +44,7 @@ function reviewedFormat(entry,{video,legacy,formatReview,previousContribution}){
  if(review.value==='single_recipe'&&units.length!==1||review.value==='recipe_collection'&&units.length<2)failure('CATALOGUE_FORMAT_REVIEW_COUNT_MISMATCH');
  const format={dimensionId:'format',value:review.value,label:formatDefinitions.find(f=>f.value===review.value).label,state:'supported',reason:'INDEPENDENT_SAVED_SOURCE_FORMAT_REVIEW'};
  const reviewHash=contextualHash(review),attribute={id:contextualHash({reviewHash,value:review.value}),dimension:'format',dimensionId:'format',valueId:review.value,label:format.label,state:'supported',role:'central',polarity:'positive',unitIds:units.map(u=>u.id),evidence:[...proofs.values()]};
- return {...entry,format,units,independentUnitCount:units.length,attributes:[...entry.attributes.filter(a=>a.dimensionId!=='format').map(a=>({...a,unitIds:[]})),attribute],formatReview:{reviewId:review.reviewId,reviewHash,sourceSnapshotHash:review.sourceSnapshotHash,sourceProofHash:review.sourceProofHash,reviewer,reviewedAt:review.reviewedAt,basis:'independent_saved_source_review_not_video_accuracy_measurement',evidence:[...proofs.values()]},coverage:entry.coverage.map(c=>c.dimensionId==='format'?format:c)};
+ return {...entry,format,units,independentUnitCount:units.length,attributes:[...entry.attributes.filter(a=>a.dimensionId!=='format').map(a=>({...a,unitIds:[]})),attribute],formatReview:{value:review.value,reviewId:review.reviewId,reviewHash,sourceSnapshotHash:review.sourceSnapshotHash,sourceProofHash:review.sourceProofHash,reviewer,reviewedAt:review.reviewedAt,basis:'independent_saved_source_review_not_video_accuracy_measurement',evidence:[...proofs.values()]},coverage:entry.coverage.map(c=>c.dimensionId==='format'?format:c)};
 }
 
 function compactEntry(entry,editorial){
@@ -66,7 +61,7 @@ export function projectContextualContribution({item,video={},legacy=null,quality
  if(accepted&&item.publication?.available===false)failure('CATALOGUE_ITEM_PUBLICATION_MISMATCH');
  const projected=projectContextualPublication({item,video,legacy,qualityVerification});if(!projected)return null;
  const supported=reviewedFormat(projected,{video,legacy,formatReview,previousContribution});
- const ed=editorialMetadata({...item,categoryOverride:{...item.categoryOverride,manual:item.categoryOverride?.manual===true||video.taxonomy_override?.manual===true}},editorial),editorialHash=contextualHash(ed),entry=compactEntry(supported,ed);
+ const ed=catalogueEditorialMetadata({...item,categoryOverride:{...item.categoryOverride,manual:item.categoryOverride?.manual===true||video.taxonomy_override?.manual===true}},editorial),editorialHash=contextualHash(ed),entry=compactEntry(supported,ed);
  const identity={reelId:item.id,sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash,ruleHash:contextualRuleHash,editorialHash,sourceVersions};
  const contribution={schemaVersion:1,kind:'contextual_contribution',policyVersion:contextualCataloguePolicy.version,status:'active',reelId:item.id,...identity,editorial:ed,entry,observedAt,processingStarted:false,providerCalls:0};
  contribution.contentHash=contextualHash({identity,entry});
@@ -123,7 +118,7 @@ export function reconcileContextualContribution({event,currentSource,previousCon
  const replacement=next??{schemaVersion:1,kind:'contextual_contribution',policyVersion:contextualCataloguePolicy.version,status:'removed',reelId:id,sourceVersions:currentSource.sourceVersions,ruleHash:contextualRuleHash,observedAt,reason:'PUBLICATION_NO_LONGER_ACCEPTED',processingStarted:false,providerCalls:0};
  if(!next){replacement.contentHash=contextualHash({status:replacement.status,reelId:id,sourceVersions:replacement.sourceVersions,ruleHash:replacement.ruleHash});replacement.idempotencyKey=contextualHash({kind:replacement.kind,contentHash:replacement.contentHash});}
  if(previous?.idempotencyKey===replacement.idempotencyKey)return {action:'noop',reason:'EXACT_CONTRIBUTION_ALREADY_CURRENT',path,idempotencyKey:replacement.idempotencyKey};
- return {action:next?'upsert':'remove',path,replacement,expectedPreviousHash:previous?.contentHash??null,expectedSourceVersions:currentSource.sourceVersions,expectedEditorialHash:next?.editorialHash??null,eventId:event.id,idempotencyKey:replacement.idempotencyKey};
+ return {action:next?'upsert':'remove',path,replacement,expectedPreviousHash:previous?.contentHash??null,expectedSourceVersions:currentSource.sourceVersions,expectedEditorialHash:next?.editorialHash??null,expectedFormatReviewHash:currentSource.formatReview?contextualHash(currentSource.formatReview):null,expectedReviewVersion:currentSource.reviewVersion??null,eventId:event.id,idempotencyKey:replacement.idempotencyKey};
 }
 /** Root-owned port must atomically verify source/editorial/previous versions. */
 export class ReelsContextualCatalogueProjector{
@@ -149,7 +144,9 @@ export function prepareContextualCatalogue(input={}){
   let source;try{source=JSON.parse(record.sourceJson);}catch{failure('CATALOGUE_CAPTURE_JSON_INVALID');}
   const id=source.item?.id,row=catalog.get(id);if(!row||seen.has(id))failure('CATALOGUE_CAPTURE_INVENTORY_MISMATCH');seen.add(id);
   const item={...source.item,categoryIds:row.categoryIds??source.item.categoryIds,publication:{...source.item.publication,available:true},categoryOverride:{...source.item.categoryOverride,manual:row.manual===true}};
-  const sourceVersions=source.sourceUpdateTime,contribution=projectContextualContribution({...source,item,sourceVersions,editorial:row.editorial??{},formatReview:input.formatReviews?.find(r=>r.reelId===id)??null,observedAt:input.observedAt});
+  const formatReview=input.formatReviews?.find(r=>r.reelId===id)??null;
+  if(formatReview&&formatReview.sourceSnapshotHash!==record.sourceSnapshotHash)failure('CATALOGUE_FORMAT_REVIEW_CAPTURE_MISMATCH');
+  const sourceVersions=source.sourceUpdateTime,contribution=projectContextualContribution({...source,item,sourceVersions,editorial:row.editorial??{},formatReview,observedAt:input.observedAt});
   if(!contribution||row.sourceIdentity&&!sameIdentity(row.sourceIdentity,contribution.sourceIdentity))failure('CATALOGUE_CAPTURE_PUBLICATION_MISMATCH');
   contributions.push({path:contextualContributionPath(id),data:contribution});bindings.push({reelId:id,sourceSnapshotHash:record.sourceSnapshotHash,sourceIdentity:contribution.sourceIdentity,sourceProofHash:contribution.sourceProofHash,sourceVersions});
  }

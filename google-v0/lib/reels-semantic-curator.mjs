@@ -6,6 +6,7 @@ import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-pr
 const list=v=>Array.isArray(v)?v:[];
 const clone=v=>structuredClone(v);
 const problem=(code,message,status=409)=>Object.assign(Error(message),{code,status});
+const compactGroup=g=>({...g,definition:String(g.definition??'').slice(0,600),aliases:list(g.aliases).slice(0,4).map(x=>x.slice(0,80)),positiveCriteria:list(g.positiveCriteria).slice(0,2).map(x=>x.slice(0,200)),negativeCriteria:list(g.negativeCriteria).slice(0,2).map(x=>x.slice(0,200)),projection:{bounded:true,fullDefinitionHash:semanticHash(g),limits:{definition:600,aliases:4,criteria:2,criterionCharacters:200}}});
 const groupPath=id=>'reels_index/semantic_group_'+id;
 const jobPath=id=>'reels_index/semantic_job_'+id;
 const resultPath=id=>'reels_index/semantic_result_'+id;
@@ -85,8 +86,12 @@ export class ReelsSemanticCurator{
    const groups=await this.currentGroups();
    // Include all current definitions for cross-batch semantic reuse. No fixed
    // regex/word-count classifier substitutes for these provider calls.
-   const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:groups.map(g=>({id:g.data.id,key:g.data.key,name:g.data.name,context:g.data.context,kind:g.data.kind,dimension:g.data.dimension,definition:g.data.definition,aliases:g.data.aliases,positiveCriteria:g.data.positiveCriteria,negativeCriteria:g.data.negativeCriteria,protected:g.data.protected,status:g.data.status}))};
-   if(groups.length>128){await this.stop(snapshot,'paused','GROUP_LIMIT_REQUIRES_EDITORIAL_CONSOLIDATION');break;}
+   const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:groups.map(g=>compactGroup({id:g.data.id,key:g.data.key,name:g.data.name,context:g.data.context,kind:g.data.kind,dimension:g.data.dimension,definition:g.data.definition,aliases:g.data.aliases,positiveCriteria:g.data.positiveCriteria,negativeCriteria:g.data.negativeCriteria,protected:g.data.protected,status:g.data.status}))};
+   if(groups.length>128){await this.stop(snapshot,'paused','EXISTING_CATALOGUE_EXCEEDS_REVIEWED_CAP');break;}
+   const reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),selected=new Set(loaded.sources.map(s=>s.id)),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence}))),profiles=[];
+   if(job.phase==='verify')for(const id of selected){const p=await this.store.get('reels_index/semantic_profile_'+id);if(p)profiles.push(p.data);}
+   const phasePayload=job.phase==='extract'?{sources:loaded.sources,catalogue}:job.phase==='consolidate'?{groups:catalogue.groups}:{sources:loaded.sources,groups:catalogue.groups.filter(g=>reviewGroups.some(r=>r.data.id===g.id)),members,negativeExamples,profiles};
+   if(JSON.stringify(phasePayload).length>320000){await this.stop(snapshot,'paused','SEMANTIC_INPUT_LIMIT_BEFORE_SUBMISSION');break;}
    const batchId=semanticHash({jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor}),binding={jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor,pins:loaded.sources.map(s=>({id:s.id,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:semanticPromptHash},batch={id:batchId,status:'submitting',phase:job.phase,offset:binding.cursor,sourceIds:loaded.sources.map(s=>s.id),bindingHash:semanticHash(binding),binding,leaseOwner:randomUUID(),leaseUntil:new Date(this.clock()+this.leaseMs).toISOString(),startedAt:this.now(),groupVersions:groups.map(g=>({path:g.path,updateTime:g.updateTime}))};
    if(typeof this.provider?.[job.phase==='extract'?'infer':job.phase==='consolidate'?'consolidate':'verify']!=='function'){await this.stop(snapshot,'paused','SEMANTIC_PROVIDER_NOT_READY');break;}
    const checks=this.uniqueChecks([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path:semanticPolicyPath,updateTime:p.snapshot?.updateTime??null},...loaded.checks,...groups.map(g=>({path:g.path,updateTime:g.updateTime}))]);
@@ -96,12 +101,9 @@ export class ReelsSemanticCurator{
    try{
     if(!this.provider)throw Error('Provider semântico não configurado.');
     let envelope;
-    if(job.phase==='extract')envelope=await this.provider.infer({sources:loaded.sources,catalogue,requestId:batchId,model:job.policy.model});
-    else if(job.phase==='consolidate')envelope=await this.provider.consolidate({groups:catalogue.groups.map(g=>({...g,definition:g.definition.slice(0,1200),aliases:list(g.aliases).slice(0,8),positiveCriteria:list(g.positiveCriteria).slice(0,3),negativeCriteria:list(g.negativeCriteria).slice(0,3)})),requestId:batchId,model:job.policy.verifierModel});
-    else{
-     const selected=new Set(loaded.sources.map(s=>s.id)),reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence})));
-     envelope=await this.provider.verify({sources:loaded.sources,groups:catalogue.groups.filter(g=>reviewGroups.some(r=>r.data.id===g.id)),members,negativeExamples,requestId:batchId,model:job.policy.verifierModel});
-    }
+    if(job.phase==='extract')envelope=await this.provider.infer({...phasePayload,requestId:batchId,model:job.policy.model});
+    else if(job.phase==='consolidate')envelope=await this.provider.consolidate({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
+    else envelope=await this.provider.verify({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
     const saved=await this.envelopeSave(batchId,envelope,binding);await this.applySaved(live,saved);
    }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.stop(latest,error.requiresReconciliation?'uncertain':error.status===409?'paused':known?'failed':'uncertain',error.code??(known?'SAVED_RESPONSE_REQUIRES_REVIEW':'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN'));};break;}
   }
@@ -121,7 +123,9 @@ export class ReelsSemanticCurator{
   if(job.phase==='extract'){
    const validated=validateSemanticOutput(output,loaded.sources,{groups:groups.map(g=>g.data)});
    for(const profile of validated.profiles){const path='reels_index/semantic_profile_'+profile.reelId,old=await this.store.get(path);checks.push({path,updateTime:old?.updateTime??null});writes.push({path,data:{kind:'semantic_profile',...profile,jobId:job.id,resultId:batch.id,updatedAt:this.now()}});}
+   let groupSlots=Math.max(0,128-groups.length);const overflow=[];
    for(const proposal of validated.groups){
+    if(!byGroup.has(proposal.id)&&groupSlots--<=0){overflow.push(proposal.id);continue;}
     const old=byGroup.get(proposal.id),prior=old?.data;
     if(prior?.protected||prior?.manual||prior?.status==='rejected')continue;
     const members=new Map(list(prior?.members).map(m=>[m.id,m]));for(const m of proposal.members)if(!m.manualProtected)members.set(m.id,m);
@@ -129,6 +133,7 @@ export class ReelsSemanticCurator{
     const data={...prior,...proposal,kind:'semantic_group',groupKind:proposal.kind,jobIds:[...new Set([...list(prior?.jobIds),job.id])],originJobId:prior?.originJobId??job.id,members:[...members.values()],negativeExamples:[...negative.values()],revision:(prior?.revision??0)+1,status:prior?.status==='active'?'candidate':'candidate',protected:prior?.protected??false,manual:prior?.manual??false,verification:{status:'pending',members:[],negativeExamples:[]},updatedAt:this.now()};
     const path=groupPath(proposal.id);if(!old)checks.push({path,updateTime:null});writes.push({path,data});
    }
+   next.proposalOverflow=[...list(job.proposalOverflow),...overflow];next.proposalLimit=128;next.coverageLimit=overflow.length?'PROPOSALS_RETAINED_IN_RAW_NOT_PROMOTED':job.coverageLimit??null;
    next.cursor=Math.min(job.pins.length,job.cursor+loaded.sources.length);if(next.cursor===job.pins.length)next.phase='consolidate';
   }else if(job.phase==='consolidate'){
    if(output.version!==1||!Array.isArray(output.resolutions)||output.resolutions.length!==groups.length)throw Error('Consolidação global incompleta.');

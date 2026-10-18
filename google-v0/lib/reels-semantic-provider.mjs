@@ -1,3 +1,5 @@
+import {semanticDomainInstruction,semanticDomainResponseSchema,semanticDomainProfile} from './reels-semantic-domain-contract.mjs';
+import {measureSemanticDomainRequest} from './reels-semantic-domain-budget.mjs';
 import {semanticHash} from './reels-semantic-source.mjs';
 import {semanticContractSpec as spec} from './reels-semantic-contract-definition.mjs';
 const L=spec.limits;
@@ -79,19 +81,35 @@ export function semanticFailureDiagnostic(error,{stage='provider',phase=null,env
  return {version:'semantic-provider-diagnostic-v1',origin:provider?'semantic_provider':stage==='saved_application'?'saved_application':'semantic_persistence',phase:['extract','consolidate','verify'].includes(phase)?phase:null,operationStage:['provider','raw_persistence','saved_application'].includes(stage)?stage:null,apiService:['vertex_ai','firestore','cloud_tasks','storage','speech'].includes(g?.api_service)?g.api_service:null,outcome,requestStage,httpStatus:status,providerStatus:provider&&providerStatuses.has(error?.provider_diagnostic?.status)?error.provider_diagnostic.status:null,dispatchAttempted:dispatched,responseReceived:received,responseBodyComplete:typeof g?.response_body_complete==='boolean'?g.response_body_complete:null,errorName:['Error','TypeError','SyntaxError','AbortError','TimeoutError','RangeError'].includes(error?.name)?error.name:null,errorCode:safeCode(error?.code)??safeCode(error?.cause?.code),elapsedMs:Number.isSafeInteger(g?.elapsed_ms)&&g.elapsed_ms>=0?g.elapsed_ms:null,timeoutMs:Number.isSafeInteger(g?.timeout_ms)&&g.timeout_ms>0&&g.timeout_ms<=840000?g.timeout_ms:null,attempt:Number.isSafeInteger(g?.attempt)&&g.attempt>0&&g.attempt<=3?g.attempt:null,model:provider&&typeof g?.model==='string'&&/^gemini-[a-z0-9.-]{1,80}$/.test(g.model)?g.model:null,requestId:provider&&typeof g?.request_id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(g.request_id)?g.request_id:null,providerEnvelopeReturned:!provider,envelopePresent:envelopePresent===true,billingOutcome:'not_determined',retryAllowed:false};
 }
 
+export function semanticExecutionPromptHash(domainId){
+ if(domainId===undefined||domainId===null)return semanticPromptHash;
+ const profile=semanticDomainProfile(domainId);if(!profile)throw Object.assign(Error('DOMAIN_PROFILE_INVALID'),{semantic_preflight:true});
+ return semanticHash({basePromptHash:semanticPromptHash,profile,instruction:semanticDomainInstruction(domainId),schema:semanticDomainResponseSchema(semanticResponseSchema,'extract',[])});
+}
+export function prepareSemanticProviderRequest({phase,payload,requestId,domainId,measurementOnly=false}){
+ if(!measurementOnly&&JSON.stringify(payload).length>320000||!/^[a-f0-9]{64}$/.test(requestId??''))throw Object.assign(Error('Chamada semântica fora do pacote finito.'),{semantic_preflight:true});
+ let instruction=phase==='extract'?semanticInstruction:phase==='consolidate'?semanticConsolidationInstruction:phase==='verify'?semanticVerificationInstruction:null,schema=instruction?semanticSchemaForPhase(phase,payload):null;
+ if(!instruction)throw Object.assign(Error('Fase semântica inválida.'),{semantic_preflight:true});
+ if(domainId!==undefined){instruction+=' '+semanticDomainInstruction(domainId);schema=semanticDomainResponseSchema(schema,phase,payload.sources??[]);}
+ return {systemInstruction:{parts:[{text:instruction}]},contents:[{role:'user',parts:[{text:JSON.stringify({task:'curate_saved_published_knowledge',phase,requestId,...payload})}]}],generationConfig:{temperature:0.1,maxOutputTokens:16384,responseMimeType:'application/json',responseSchema:schema}};
+}
 export class ReelsSemanticProvider{
  constructor({api}){if(!api?.request||api.project!=='megabrain-v0-1017370021431')throw Error('Provider semântico exige projeto isolado.');this.api=api;}
- async call({phase,payload,requestId,model}){
-  if(!/^gemini-[a-z0-9.-]{1,80}$/.test(model??'')||JSON.stringify(payload).length>320000||!/^[a-f0-9]{64}$/.test(requestId??''))throw Object.assign(Error('Chamada semântica fora do pacote finito.'),{semantic_preflight:true});
-  const instruction=phase==='extract'?semanticInstruction:phase==='consolidate'?semanticConsolidationInstruction:phase==='verify'?semanticVerificationInstruction:null,schema=instruction?semanticSchemaForPhase(phase,payload):null;
-  if(!instruction)throw Object.assign(Error('Fase semântica inválida.'),{semantic_preflight:true});
-  const request={systemInstruction:{parts:[{text:instruction}]},contents:[{role:'user',parts:[{text:JSON.stringify({task:'curate_saved_published_knowledge',phase,requestId,...payload})}]}],generationConfig:{temperature:0.1,maxOutputTokens:16384,responseMimeType:'application/json',responseSchema:schema}};
+ async call({phase,payload,requestId,model,domainId,budget}){
+  if(!/^gemini-[a-z0-9.-]{1,80}$/.test(model??''))throw Object.assign(Error('Modelo semântico inválido.'),{semantic_preflight:true});
+  const request=prepareSemanticProviderRequest({phase,payload,requestId,domainId});
+  if(domainId!==undefined&&!measureSemanticDomainRequest(request,budget).withinBudget)throw Object.assign(Error('DOMAIN_INPUT_BUDGET_EXCEEDED'),{code:'DOMAIN_INPUT_BUDGET_EXCEEDED',semantic_preflight:true});
   const response=await this.api.request('https://aiplatform.googleapis.com/v1/projects/'+this.api.project+'/locations/global/publishers/google/models/'+model+':generateContent',{method:'POST',json:request,timeoutMs:90000,operationStep:'submit_analysis',model,attempt:1});
   // Return the received paid envelope even when incomplete/invalid. The caller
   // persists it before parsing or validating and never regenerates it.
   return {rawResponse:response,usage:response?.usageMetadata??null,providerResponseId:typeof response?.responseId==='string'?response.responseId:null,requestHash:semanticHash(request),model,phase};
  }
- async infer({sources,catalogue,requestId,model}){if(!Array.isArray(sources)||!sources.length||sources.length>12)throw Object.assign(Error('Lote semântico inválido.'),{semantic_preflight:true});return this.call({phase:'extract',payload:{sources,catalogue},requestId,model});}
+ preflight({phase,sources,catalogue,groups,members,negativeExamples,profiles,requestId,domainId,budget}){
+  if(domainId===undefined)return null;const payload=phase==='extract'?{sources,catalogue}:phase==='consolidate'?{groups}:{sources,groups,members,negativeExamples,profiles:profiles??[]},request=prepareSemanticProviderRequest({phase,payload,requestId,domainId}),measurement=measureSemanticDomainRequest(request,budget);
+  if(!measurement.withinBudget)throw Object.assign(Error('DOMAIN_INPUT_BUDGET_EXCEEDED'),{code:'DOMAIN_INPUT_BUDGET_EXCEEDED',semantic_preflight:true});
+  return {...measurement,requestHash:semanticHash(request),promptHash:semanticExecutionPromptHash(domainId)};
+ }
+ async infer({sources,catalogue,requestId,model,domainId,budget}){if(!Array.isArray(sources)||!sources.length||sources.length>12)throw Object.assign(Error('Lote semântico inválido.'),{semantic_preflight:true});return this.call({phase:'extract',payload:{sources,catalogue},requestId,model,domainId,budget});}
  async consolidate(input){return this.call({...input,phase:'consolidate',payload:{groups:input.groups}});}
  async verify(input){return this.call({...input,phase:'verify',payload:{sources:input.sources,groups:input.groups,members:input.members,negativeExamples:input.negativeExamples,profiles:input.profiles??[]}});}
 }

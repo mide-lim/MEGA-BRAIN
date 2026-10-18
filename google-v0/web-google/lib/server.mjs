@@ -36,6 +36,6 @@ export function reelsRoutes(){
   const repository=new ReelsRepository({store:new Firestore(api)});
   // Processing remains off unless protected configuration explicitly selects v2.
   const runtime=reelsWebRuntime({repository,api,config:s});
-  reelsBackend=reelsAPI({repository,authorize:authenticated,sameOrigin,processingEnabled:runtime.processingEnabled,service:runtime.service,reconciliation:runtime.reconciliation});}
+  reelsBackend=reelsAPI({repository,authorize:authenticated,sameOrigin,processingEnabled:runtime.processingEnabled,service:runtime.service,reconciliation:runtime.reconciliation,semantic:runtime.semantic});}
  return reelsBackend;
 }

@@ -129,6 +129,7 @@ try{
   await dialog.getByLabel('Contexto acima',{exact:true}).selectOption(fixture.expected.groupId);const created=await confirm('group_create');manualId=created.group.id;assert.equal(created.group.status,'active');
   await selectGroup('Preparo de casa');await page.getByRole('button',{name:'Organizar publicações',exact:true}).click();dialog=page.getByRole('dialog');
   await dialog.getByLabel('Incluir QaFull_unknown',{exact:true}).check();await confirm('group_assign');
+  const assignmentPost=semanticPosts().filter(call=>call.body.action==='group_assign').at(-1);assert.deepEqual(assignmentPost.body.addIds,['QaFull_unknown']);assert.deepEqual(assignmentPost.body.removeIds,[]);assert.equal(Object.hasOwn(assignmentPost.body,'reelIds'),false,'UI sends an explicit delta, not a page-sized replacement');
   const assigned=await read('/curation/semantic/groups/'+manualId);assert.deepEqual(assigned.members.map(member=>member.id),['QaFull_unknown']);
   const parentTree=await read('/categories'),parentNode=parentTree.nodes.find(node=>node.id==='semantic_'+fixture.expected.groupId),childNode=parentTree.nodes.find(node=>node.id==='semantic_'+manualId);
   assert.equal(childNode.parentId,parentNode.id,'Manual child must join the same navigable tree');assert.equal(parentNode.count,3,'Parent count is the unique union including child members');

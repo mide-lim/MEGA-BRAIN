@@ -32,7 +32,7 @@
         "contextualContributions",
         "items"
       ],
-      "max_chars": 6500
+      "max_chars": 3000
     },
     {
       "path": "google-v0/lib/reels-contextual-catalogue-runtime.mjs",
@@ -40,7 +40,7 @@
       "sections": [
         "overview"
       ],
-      "max_chars": 4000
+      "max_chars": 2000
     },
     {
       "path": "google-v0/lib/reels-semantic-curator.mjs",
@@ -49,7 +49,7 @@
         "freshGroups",
         "inventory"
       ],
-      "max_chars": 5000
+      "max_chars": 3500
     },
     {
       "path": "google-v0/web-google/lib/reels-query-state.mjs",
@@ -57,7 +57,7 @@
       "sections": [
         "createResourceClient"
       ],
-      "max_chars": 4000
+      "max_chars": 3000
     }
   ],
   "validation_commands": [

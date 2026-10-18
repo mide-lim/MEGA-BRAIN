@@ -138,7 +138,7 @@ export class ReelsPipeline {
   if(nextStage){const nextId=executionId(job.operationId,job.reelId,nextStage),queuedAt=nowISO(this.clock);await ensure(this.store,'reels_executions/'+nextId,{id:nextId,operationId:job.operationId,reelId:job.reelId,stage:nextStage,status:'queued',attempt:1,predecessorId:job.id,queuedAt,createdAt:queuedAt});
    await this.markVideo({...job,stage:nextStage,id:nextId},'queued',{},job.id);const next=await this.store.get('reels_executions/'+nextId);await queueOutbox(this.store,next.data,{onQueued:this.onQueued,clock:this.clock});}
   await this.repository.refresh?.(job.reelId);
-  if(job.stage==='analysis'&&this.onPublished)await this.onPublished(job);
+  if(job.stage==='analysis'&&this.onPublished){try{await this.onPublished(job);}catch{ /* Durable publication succeeds even when the secondary catalogue event requires recovery. */ }}
   await this.release(job);await this.emit(job,'stage_completed');
   await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock)});
   return {status:'completed',executionId:job.id,nextStage:nextStage??null};

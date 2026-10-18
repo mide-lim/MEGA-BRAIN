@@ -1,3 +1,6 @@
+import {ReelsSemanticCurator,loadLiveContextCatalogue} from './reels-semantic-curator.mjs';
+import {ReelsSemanticProvider} from './reels-semantic-provider.mjs';
+import {ReelsSemanticDispatcher} from './reels-semantic-dispatcher.mjs';
 import {GoogleREST} from './google-rest.mjs';
 import {serviceIdentity} from './service-identity.mjs';
 import {Firestore} from './firestore.mjs';
@@ -25,8 +28,14 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
  const enabled=reelsProcessingEnabled(config);
  // Factories are lazy: a disabled runtime never requests service identity,
  // creates provider adapters, reads a database or dispatches a task.
- let runtime;
+ let runtime,semanticRuntime;
  const auth=authorize??(enabled?workerAuthorization({audience:config.worker_origin}):null);
+ function buildSemantic(){
+  if(semanticRuntime)return semanticRuntime;
+  if(dependencies.semantic)return semanticRuntime=dependencies.semantic;
+  const api=dependencies.api??new GoogleREST({project:PROJECT,buckets:[PROJECT+'-media'],tokenProvider:serviceIdentity({project:PROJECT,account:'v0-worker'})}),store=dependencies.store??new Firestore(api),repository=dependencies.repository??new ReelsRepository({store}),dispatcher=new ReelsSemanticDispatcher({api,workerOrigin:config.worker_origin});
+  return semanticRuntime=new ReelsSemanticCurator({repository,provider:dependencies.semanticProvider??new ReelsSemanticProvider({api}),enqueue:job=>dispatcher.enqueue(job)});
+ }
  function build(){
   if(runtime)return runtime;
   const api=dependencies.api??new GoogleREST({project:PROJECT,buckets:[PROJECT+'-media'],tokenProvider:serviceIdentity({project:PROJECT,account:'v0-worker'})});
@@ -51,7 +60,7 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     return api.request(url,options);
    }};
    const video=input.video??await repository.raw(job.reelId);
-   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true,reels_quality_policy_version:'gate_v2'},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null,inspect:dependencies.inspect??inspectMedia,qualityEvidence:{mediaInspection:video?.media_inspection_receipt??null,transcriptionReceipt:video?.transcription_receipt??null},saveQualityReceipt:async receipt=>{
+   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true,reels_quality_policy_version:'gate_v2'},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null,inspect:dependencies.inspect??inspectMedia,loadContextCatalog:()=>loadLiveContextCatalogue(repository),qualityEvidence:{mediaInspection:video?.media_inspection_receipt??null,transcriptionReceipt:video?.transcription_receipt??null},saveQualityReceipt:async receipt=>{
     const path='reels_quality_receipts/'+receipt.id,receiptHash=qualityDigest(receipt);
     const created=await store.create(path,receipt),saved=created.created?created:await store.get(path);
     if(!saved?.data||qualityDigest(saved.data)!==receiptHash)throw Error('Recibo de qualidade salvo diverge; ponteiro preservado.');
@@ -96,6 +105,13 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
   runtime={pipeline,store,repository,dispatcher,service,runner};return runtime;
  }
  return async request=>{
+  const requestedRoute=new URL(request.url).pathname;
+  if(requestedRoute==='/tasks/curation'){
+   if(stage!=='analysis'||request.method!=='POST')return Response.json({error:'Rota fora da etapa fixa.'},{status:405});
+   try{const curationAuth=authorize??workerAuthorization({audience:config.worker_origin});if(await curationAuth(request)!==true)return Response.json({error:'Acesso negado.'},{status:401});}catch{return Response.json({error:'Autenticação indisponível.'},{status:401});}
+   let payload;try{const text=await request.text();if(Buffer.byteLength(text)>2048)throw Error();payload=JSON.parse(text);if(!payload||Object.keys(payload).some(k=>!['jobId','sequence','outboxId'].includes(k))||!/^[a-f0-9]{64}$/.test(payload.jobId??'')||!Number.isSafeInteger(payload.sequence)||payload.sequence<0||!/^[a-f0-9]{64}$/.test(payload.outboxId??''))throw Error();}catch{return Response.json({error:'Entrega de curadoria inválida.'},{status:400});}
+   try{return Response.json(await buildSemantic().runDelivery({...payload,maxBatches:3}),{headers:{'Cache-Control':'no-store'}});}catch(e){return Response.json({error:'Curadoria requer conferência; fontes preservadas.',code:e.code??'CURATION_UNAVAILABLE'},{status:e.status>=400&&e.status<600?e.status:503,headers:{'Cache-Control':'no-store'}});}
+  }
   if(!enabled)return denied();
   if(await auth?.(request)!==true)return Response.json({error:'Acesso negado.'},{status:401});
   const route=new URL(request.url).pathname,control=route==='/tasks/control';

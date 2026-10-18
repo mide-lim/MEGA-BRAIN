@@ -21,7 +21,8 @@
     "google-v0/lib/reels-semantic-curator.mjs",
     "google-v0/tests/reels-categories-snapshot.test.mjs",
     "google-v0/web-google/lib/reels-query-state.mjs",
-    "google-v0/tests/reels-query-state.test.mjs"
+    "google-v0/tests/reels-query-state.test.mjs",
+    "google-v0/qa/reels-browser-check.mjs"
   ],
   "context": [
     {

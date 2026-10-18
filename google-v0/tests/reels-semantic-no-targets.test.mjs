@@ -41,3 +41,20 @@ test('499-source tail and exhausted127-attempt cap can finish genuinely empty ve
  for(let n=0;n<22;n++){const j=(await read(s)).data;if(j.status==='completed')break;await step(s,3);}
  const final=(await read(s)).data,r=receipts(s);assert.equal(final.status,'completed');assert.equal(final.verifyCursor,499);assert.equal(final.callsUsed,127);assert.equal(s.provider.calls.length,count);assert.equal(s.provider.calls.filter(c=>c.phase==='verify').length,0);assert.equal(r.length,63);assert.deepEqual([r.at(-1).fromCursor,r.at(-1).toCursor,r.at(-1).sourceIds.length],[496,499,3]);assert.equal(new Set(r.flatMap(x=>x.sourceIds)).size,499);assert.equal(final.noTargetVerification.sourceCount,499);assert.equal((await s.curator.job(s.id)).job.verificationTargetDecisions,0);
 });
+
+test('coordinator epoch fences a concurrent eligible group from another job; manual phantom groups are excluded from the normal target predicate',async()=>{
+ for(const change of ['coordinator_and_eligible_group','manual_phantom']){
+  const s=await setup();await toVerify(s);const j=(await read(s)).data,original=s.store.commitSemantic,groupId='b'.repeat(64),path='reels_index/semantic_group_'+groupId;let raced=false;
+  s.store.commitSemantic=async plan=>{if(!raced&&plan.writes.some(w=>w.data.kind==='semantic_no_targets')){raced=true;if(change==='manual_phantom'){const made=await s.curator.command({action:'group_create',name:'Grupo manual concorrente',parentId:null,definition:'Escolha editorial explícita.',idempotencyKey:'concurrent-manual-create'});await s.curator.command({action:'group_assign',groupId:made.group.id,revision:made.group.revision,addIds:[j.pins[0].id],removeIds:[],idempotencyKey:'concurrent-manual-assign'});}else{storeGroup(s,path,groupId);const g=await s.store.get(path);await s.store.patch(path,{members:[{id:j.pins[0].id,role:'central'}]},{updateTime:g.updateTime});const p='reels_index/semantic_coordinator',snap=await s.store.get(p);await s.store.patch(p,{jobId:'c'.repeat(64)},{updateTime:snap.updateTime});}}return original(plan);};
+  const calls=s.provider.calls.length;await step(s);assert.equal(raced,true);assert.equal(s.provider.calls.length,calls);
+  if(change==='coordinator_and_eligible_group'){assert.equal((await read(s)).data.verifyCursor,0);assert.equal(receipts(s).length,0);}
+  else{assert.equal((await read(s)).data.verifyCursor,2);assert.equal(receipts(s).length,1);assert.equal(receipts(s)[0].externalCollectionCAS,false);}
+ }
+});
+test('missing or mismatched current coordinator fails closed without a skip receipt or provider call',async()=>{
+ for(const change of ['missing','authorization','cohort']){
+  const s=await setup();await toVerify(s);const p='reels_index/semantic_coordinator',snap=await s.store.get(p);
+  if(change==='missing')s.store.docs.delete(p);else await s.store.patch(p,change==='authorization'?{authorizationId:'different-authorization'}:{cohortHash:'0'.repeat(64)},{updateTime:snap.updateTime});
+  const n=s.provider.calls.length;await step(s);assert.equal((await read(s)).data.verifyCursor,0);assert.equal(receipts(s).length,0);assert.equal(s.provider.calls.length,n);
+ }
+});

@@ -2,11 +2,13 @@ import {semanticCalibrationReceiptValid} from './reels-semantic-calibration.mjs'
 import {randomUUID} from 'node:crypto';
 import {ReelsCatalogueRuntime,catalogueEditorialForItem} from './reels-contextual-catalogue-runtime.mjs';
 import {semanticHash,semanticPolicy,semanticPolicyPath,semanticPolicyVersion,semanticSourceFromSaved,semanticEditorial,prepareSemanticPlan} from './reels-semantic-source.mjs';
-import {validateSemanticOutput,automaticSemanticPromotion} from './reels-semantic-contract.mjs';
+import {validateSemanticOutput,automaticSemanticPromotion,semanticContractVersion} from './reels-semantic-contract.mjs';
 import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-provider.mjs';
 const list=v=>Array.isArray(v)?v:[];
 const clone=v=>structuredClone(v);
 const problem=(code,message,status=409)=>Object.assign(Error(message),{code,status});
+const compactEvidence=(m,resultId,proposalId,type='member')=>({...m,evidence:[],evidenceCount:list(m.evidence).length,evidenceRef:{resultId,proposalId,type}});
+const compactDecision=d=>({reelId:d.reelId,verdict:d.verdict,semanticProofHash:d.semanticProofHash,resultId:d.resultId});
 const compactGroup=g=>({...g,definition:String(g.definition??'').slice(0,600),aliases:list(g.aliases).slice(0,4).map(x=>x.slice(0,80)),positiveCriteria:list(g.positiveCriteria).slice(0,2).map(x=>x.slice(0,200)),negativeCriteria:list(g.negativeCriteria).slice(0,2).map(x=>x.slice(0,200)),projection:{bounded:true,fullDefinitionHash:semanticHash(g),limits:{definition:600,aliases:4,criteria:2,criterionCharacters:200}}});
 const groupPath=id=>'reels_index/semantic_group_'+id;
 const jobPath=id=>'reels_index/semantic_job_'+id;
@@ -89,7 +91,7 @@ export class ReelsSemanticCurator{
    const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:groups.map(g=>compactGroup({id:g.data.id,key:g.data.key,name:g.data.name,context:g.data.context,kind:g.data.kind,dimension:g.data.dimension,definition:g.data.definition,aliases:g.data.aliases,positiveCriteria:g.data.positiveCriteria,negativeCriteria:g.data.negativeCriteria,protected:g.data.protected,status:g.data.status}))};
    if(groups.length>128){await this.stop(snapshot,'paused','EXISTING_CATALOGUE_EXCEEDS_REVIEWED_CAP');break;}
    const reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),selected=new Set(loaded.sources.map(s=>s.id)),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence}))),profiles=[];
-   if(job.phase==='verify')for(const id of selected){const p=await this.store.get('reels_index/semantic_profile_'+id);if(p)profiles.push(p.data);}
+   if(job.phase==='verify')for(const id of selected){const p=await this.store.get('reels_index/semantic_profile_'+id);if(p){const raw=await this.envelopeRead(await this.store.get(resultPath(p.data.resultId))),output=parseSavedSemanticResponse(raw),original=list(output.profiles).find(x=>x.reelId===id);profiles.push({...p.data,units:original?.units??[]});}}
    const phasePayload=job.phase==='extract'?{sources:loaded.sources,catalogue}:job.phase==='consolidate'?{groups:catalogue.groups}:{sources:loaded.sources,groups:catalogue.groups.filter(g=>reviewGroups.some(r=>r.data.id===g.id)),members,negativeExamples,profiles};
    if(JSON.stringify(phasePayload).length>320000){await this.stop(snapshot,'paused','SEMANTIC_INPUT_LIMIT_BEFORE_SUBMISSION');break;}
    const batchId=semanticHash({jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor}),binding={jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor,pins:loaded.sources.map(s=>({id:s.id,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:semanticPromptHash},batch={id:batchId,status:'submitting',phase:job.phase,offset:binding.cursor,sourceIds:loaded.sources.map(s=>s.id),bindingHash:semanticHash(binding),binding,leaseOwner:randomUUID(),leaseUntil:new Date(this.clock()+this.leaseMs).toISOString(),startedAt:this.now(),groupVersions:groups.map(g=>({path:g.path,updateTime:g.updateTime}))};
@@ -122,14 +124,14 @@ export class ReelsSemanticCurator{
   let next={...job,status:'running',batch:null,updatedAt:this.now(),dispatch:this.dispatchFor(job.id,job.dispatch.sequence+1)};
   if(job.phase==='extract'){
    const validated=validateSemanticOutput(output,loaded.sources,{groups:groups.map(g=>g.data)});
-   for(const profile of validated.profiles){const path='reels_index/semantic_profile_'+profile.reelId,old=await this.store.get(path);checks.push({path,updateTime:old?.updateTime??null});writes.push({path,data:{kind:'semantic_profile',...profile,jobId:job.id,resultId:batch.id,updatedAt:this.now()}});}
+   for(const profile of validated.profiles){const path='reels_index/semantic_profile_'+profile.reelId,old=await this.store.get(path);checks.push({path,updateTime:old?.updateTime??null});writes.push({path,data:{kind:'semantic_profile',...profile,units:profile.units.map(u=>({...u,evidence:[],evidenceCount:u.evidence.length})),jobId:job.id,resultId:batch.id,updatedAt:this.now()}});}
    let groupSlots=Math.max(0,128-groups.length);const overflow=[];
    for(const proposal of validated.groups){
     if(!byGroup.has(proposal.id)&&groupSlots--<=0){overflow.push(proposal.id);continue;}
     const old=byGroup.get(proposal.id),prior=old?.data;
     if(prior?.protected||prior?.manual||prior?.status==='rejected')continue;
-    const members=new Map(list(prior?.members).map(m=>[m.id,m]));for(const m of proposal.members)if(!m.manualProtected)members.set(m.id,m);
-    const negative=new Map(list(prior?.negativeExamples).map(m=>[m.id,m]));for(const m of proposal.negativeExamples)negative.set(m.id,m);
+    const members=new Map(list(prior?.members).map(m=>[m.id,m]));for(const m of proposal.members)if(!m.manualProtected)members.set(m.id,compactEvidence(m,batch.id,proposal.id));
+    const negative=new Map(list(prior?.negativeExamples).map(m=>[m.id,m]));for(const m of proposal.negativeExamples)negative.set(m.id,compactEvidence(m,batch.id,proposal.id,'negative'));
     const data={...prior,...proposal,kind:'semantic_group',groupKind:proposal.kind,jobIds:[...new Set([...list(prior?.jobIds),job.id])],originJobId:prior?.originJobId??job.id,members:[...members.values()],negativeExamples:[...negative.values()],revision:(prior?.revision??0)+1,status:prior?.status==='active'?'candidate':'candidate',protected:prior?.protected??false,manual:prior?.manual??false,verification:{status:'pending',members:[],negativeExamples:[]},updatedAt:this.now()};
     const path=groupPath(proposal.id);if(!old)checks.push({path,updateTime:null});writes.push({path,data});
    }
@@ -164,7 +166,7 @@ export class ReelsSemanticCurator{
    for(const row of groups){
     const g=row.data;if(g.status==='rejected'||g.protected||g.manual)continue;
     const prior=g.verification??{},m=new Map(list(prior.members).map(x=>[x.reelId,x])),n=new Map(list(prior.negativeExamples).map(x=>[x.reelId,x]));
-    for(const d of memberDecisions.values())if(d.groupId===g.id)m.set(d.reelId,d);for(const d of negativeDecisions.values())if(d.groupId===g.id)n.set(d.reelId,d);
+    for(const d of memberDecisions.values())if(d.groupId===g.id)m.set(d.reelId,compactDecision(d));for(const d of negativeDecisions.values())if(d.groupId===g.id)n.set(d.reelId,compactDecision(d));
     const verified=g.members.every(x=>m.get(x.id)?.verdict==='supported'&&m.get(x.id).semanticProofHash===x.semanticProofHash)&&list(g.negativeExamples).every(x=>n.get(x.id)?.verdict==='supported'&&n.get(x.id).semanticProofHash===x.semanticProofHash),verification={status:verified?'supported':'pending',members:[...m.values()],negativeExamples:[...n.values()],authorModel:job.policy.model,verifierModel:job.policy.verifierModel,independentPhase:true,promptHash:semanticPromptHash};
     const promotion=automaticSemanticPromotion({...g,verification},job.policy,{promptHash:semanticPromptHash});
     writes.push({path:row.path,data:{...g,kind:'semantic_group',groupKind:g.kind,verification,status:verified&&promotion.allowed?'active':'candidate',reason:verified?promotion.reason:'INDEPENDENT_VERIFICATION_PENDING_OR_INCONCLUSIVE',revision:g.revision+1,activationMinimum:job.policy.minUniqueMembers,updatedAt:this.now(),categoryId:verified&&promotion.allowed&&g.kind!=='facet'?(g.kind==='format'?'ctx_format_'+g.key:'semantic_'+g.id):null}});
@@ -194,7 +196,20 @@ export class ReelsSemanticCurator{
   return {policy:{...p.data,calibrationReceipt:undefined,providerConfigured:!!p.data.model&&!!p.data.verifierModel,calibrated:semanticCalibrationReceiptValid(p.data.calibrationReceipt),blockingReasons:preview.preview.blockingReasons},coverage:{published:state.inventory.inventory.length,evaluated:current.length,unknown,pending:Math.max(0,state.inventory.inventory.length-current.length),stale:profiles.length-current.length},jobs:jobs.map(r=>publicJob(r.data)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)),groups:state.groups.map(view),proposals:state.groups.filter(g=>g.status==='candidate').map(view),observedAt:state.observedAt,dataAsOf:state.dataAsOf,sourceStale:state.sourceStale,inferenceOnGet:false};
  }
  async job(id){if(!validHash(id))throw problem('INVALID_JOB','Curadoria inválida.',400);const j=await this.store.get(jobPath(id));if(!j)throw problem('NOT_FOUND','Curadoria não encontrada.',404);return {job:publicJob(j.data),observedAt:this.now(),inferenceOnGet:false};}
- async detail(id){if(!validHash(id))throw problem('INVALID_GROUP','Grupo inválido.',400);const state=await this.freshGroups(),g=state.groups.find(g=>g.id===id);if(!g)throw problem('NOT_FOUND','Grupo não encontrado.',404);return {group:g,members:g.members.map(m=>({...m,sourceProofHash:m.semanticProofHash})),positiveExamples:g.members.slice(0,5),negativeExamples:g.negativeExamples,observedAt:state.observedAt,dataAsOf:state.dataAsOf,sourceStale:state.sourceStale,inferenceOnGet:false};}
+ async hydrateEvidence(member,cache=new Map()){
+  if(!member.evidenceRef)return member;
+  const ref=member.evidenceRef;if(!cache.has(ref.resultId)){const saved=await this.store.get(resultPath(ref.resultId));if(!saved)throw Error('Prova salva ausente.');cache.set(ref.resultId,parseSavedSemanticResponse(await this.envelopeRead(saved)));}
+  const output=cache.get(ref.resultId),proposal=list(output.groups).find(g=>(g.existingGroupId??semanticHash({version:semanticContractVersion,context:g.context,kind:g.kind,dimension:g.dimension??null,key:g.key}))===ref.proposalId),source=list(ref.type==='negative'?proposal?.negativeExamples:proposal?.members).find(m=>m.reelId===member.id);
+  if(!source)throw Error('Vínculo da prova salva não corresponde ao membro.');
+  return {...member,evidence:list(source.evidence).map(p=>({fieldPath:p.fieldPath,excerpt:p.excerpt,source:p.fieldPath==='caption'?'caption':p.fieldPath==='transcript'?'transcript':'saved_analysis',sourceIdentity:member.sourceIdentity,anchorHash:semanticHash({identity:member.sourceIdentity,path:p.fieldPath,excerpt:p.excerpt}),verification:'saved_semantic_result_source_anchor'}))};
+ }
+ async detail(id,{memberId=null}={}){
+  if(!validHash(id))throw problem('INVALID_GROUP','Grupo inválido.',400);const state=await this.freshGroups(),g=state.groups.find(g=>g.id===id);if(!g)throw problem('NOT_FOUND','Grupo não encontrado.',404);
+  if(memberId!==null&&!g.members.some(m=>m.id===memberId))throw problem('NOT_FOUND','Membro não encontrado.',404);
+  const selected=memberId?g.members.filter(m=>m.id===memberId):g.members.slice(0,20),cache=new Map(),hydrated=new Map();for(const m of selected)hydrated.set(m.id,await this.hydrateEvidence(m,cache));
+  const members=g.members.map(m=>({...hydrated.get(m.id)??m,sourceProofHash:m.semanticProofHash,proofAvailable:!!m.evidenceRef||list(m.evidence).length>0})),negatives=[];for(const m of list(g.negativeExamples).slice(0,10))negatives.push(await this.hydrateEvidence(m,cache));
+  return {group:{...g,members},members,positiveExamples:members.slice(0,5),negativeExamples:negatives,proofDetails:{hydratedMembers:selected.length,totalMembers:members.length,complete:selected.length===members.length,memberQuery:'memberId',rawPreserved:true},observedAt:state.observedAt,dataAsOf:state.dataAsOf,sourceStale:state.sourceStale,inferenceOnGet:false};
+ }
  async matchingIds(id,{facet=false,state=null}={}){
   state??=await this.freshGroups();const root=state.groups.find(g=>g.id===id&&g.status==='active'&&(facet?g.kind==='facet':g.kind!=='facet'));if(!root)return [];
   const ids=new Set([id]);if(!facet){let changed=true;while(changed){changed=false;for(const g of state.groups)if(g.status==='active'&&!['facet','format'].includes(g.kind)&&(ids.has(g.parentId)||ids.has(String(g.parentId).replace(/^semantic_/,'')))&&!ids.has(g.id)){ids.add(g.id);changed=true;}}}

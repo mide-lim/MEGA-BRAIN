@@ -11,7 +11,7 @@ import {videoBytes} from './video-base64.mjs';
 import {reelsWebRuntime} from '../lib/reels-web-runtime.mjs';
 import {ReelsCommandRunner} from '../lib/reels-command-runner.mjs';
 import {executionId} from '../lib/reels-pipeline.mjs';
-import {ReelsCatalogueRuntime} from '../lib/reels-catalogue-runtime.mjs';
+import {ReelsCatalogueRuntime} from '../lib/reels-contextual-catalogue-runtime.mjs';
 
 // Same isolated esbuild/HTTP pattern as server.mjs; the legacy harness is retained.
 // This mounts the real Workspace and operational API, injecting only the database.
@@ -37,6 +37,7 @@ export async function startReelsFixtureServer({operational=false}={}) {
  try {
   // Explicit fixture bootstrap through the same metadata-only runtime used by
   // publication events. GET requests never create contributions.
+  await store.create('settings/reels_v2_contextual_catalogue',{schemaVersion:1,status:'active',policyVersion:'saved-publication-catalogue-v1',operationId:'0'.repeat(64),sourceObservationSHA256:'0'.repeat(64),sourceHash:'0'.repeat(64),inventoryIds:['QaPub_tech','QaPub_food'],inventoryCount:2,evaluatedCount:2,observedAt:fixture.at,activatedBy:'synthetic_fixture_bootstrap',incremental:{enabled:true,eventDriven:true,noProviders:true}});
   await seedSavedContributions(['QaPub_tech','QaPub_food']);
   const entry=join(temp,'entry.jsx');await writeFile(entry,`import React from 'react';import {createRoot} from 'react-dom/client';import Workspace from ${JSON.stringify(resolve(root,'../web-google/app/reels/workspace.jsx'))};createRoot(document.getElementById('root')).render(<Workspace/>);`);
   await build({entryPoints:[entry],outfile:join(temp,'app.js'),bundle:true,platform:'browser',jsx:'automatic',nodePaths:[join(root,'node_modules')],define:{'process.env.NODE_ENV':'"production"'},logLevel:'silent'});

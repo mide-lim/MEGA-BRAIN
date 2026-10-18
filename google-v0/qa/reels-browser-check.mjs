@@ -8,6 +8,7 @@ import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration
 import {calibrationReportView} from '../lib/reels-curation-calibration.mjs';
 import {makeContextualCalibrationFixture} from '../tests/reels-contextual-calibration-fixture.mjs';
 import {makeFullCatalogueFixture} from '../tests/reels-contextual-catalogue-fixture.mjs';
+import {contextualHash} from '../lib/reels-contextual-projection.mjs';
 
 const output=process.env.MEGABRAIN_REELS_QA_OUTPUT??join(tmpdir(),'megabrain-reels-qa-results');
 await mkdir(output,{recursive:true});
@@ -196,7 +197,7 @@ try {
   // below run in GitHub Actions only. No accepted-publication provider is called.
   const fixture=makeFullCatalogueFixture(),sources=fixture.records.map(record=>JSON.parse(record.sourceJson)),ids=sources.map(source=>source.item.id),cataloguePage=await context.newPage();
   for(const source of sources){assert.equal((await server.store.create('videos/'+source.item.id,source.video)).created,true);if(source.legacy)assert.equal((await server.store.create('reels_legacy_content/'+source.item.id,source.legacy)).created,true);}
-  for(const review of fixture.formatReviews)await server.store.create('reels_index/contextual_review_'+review.reelId,review);
+  for(const review of fixture.formatReviews)await server.store.create('reels_index/contextual_review_'+review.reelId,{kind:'contextual_review',reelId:review.reelId,reviewHash:contextualHash(review),review});
   await server.seedSavedContributions(ids);
   const beforeCommands=server.calls.filter(call=>call.path==='/api/reels/commands'&&call.method==='POST').length;
   const contributionCount=()=>[...server.store.docs.values()].filter(record=>record.data?.kind==='contextual_contribution'&&record.data.status==='active').length;

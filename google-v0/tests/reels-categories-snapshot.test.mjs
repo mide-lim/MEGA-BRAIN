@@ -86,3 +86,25 @@ test('default semantic inventory still reads new epochs and does not reuse the c
  const after=await s.semantic.inventory();assert.notEqual(before.sourceVersions.get('QaFull_single').video,after.sourceVersions.get('QaFull_single').video);
  assert.deepEqual(sourceReads(s.store),{videos:2,reels_legacy_content:2});
 });
+
+test('only empty virtual formats shadowed by a populated same-parent manual sibling are hidden',async()=>{
+ const s=await setup(),initial=await s.get(),singleName=node(initial.data,'ctx_format_single_recipe').name,manyName=node(initial.data,'ctx_format_recipe_collection').name;
+ const tax=await s.store.get('settings/reels_v2_taxonomy');
+ await s.store.patch('settings/reels_v2_taxonomy',{revision:14,nodes:[...tax.data.nodes,{id:'food-single-manual',name:' '+singleName.toUpperCase()+' ',parentId:'receitas',manual:true},{id:'food-many-manual',name:manyName,parentId:'receitas',manual:true},{id:'food-other-parent',name:manyName,parentId:'group-alimentacao',manual:true}]},{updateTime:tax.updateTime});
+ const unknown=await s.store.get('videos/QaFull_unknown');
+ await s.store.patch('videos/QaFull_unknown',{categoryIds:['food-single-manual','food-other-parent'],taxonomy_override:{manual:true,revision:14}},{updateTime:unknown.updateTime});
+ const populated=await s.get();assert.equal(populated.status,200);
+ assert.equal(node(populated.data,'ctx_format_single_recipe').count,1,'Populated virtual format must remain despite a manual sibling.');
+ const manifest=await s.store.get('settings/reels_v2_contextual_catalogue');
+ await s.store.patch('settings/reels_v2_contextual_catalogue',{status:'staged'},{updateTime:manifest.updateTime});
+ const empty=await s.get();assert.equal(empty.status,200);
+ assert.equal(node(empty.data,'ctx_format_single_recipe'),undefined);
+ assert.equal(node(empty.data,'food-single-manual').count,1);
+ assert.equal(node(empty.data,'food-many-manual').count,0,'An empty manual category must remain visible.');
+ assert.equal(node(empty.data,'ctx_format_recipe_collection').count,0,'An empty manual sibling or a populated different-parent sibling cannot hide the virtual format.');
+ const many=await s.store.get('videos/QaFull_many');
+ await s.store.patch('videos/QaFull_many',{categoryIds:['food-many-manual'],taxonomy_override:{manual:true,revision:14}},{updateTime:many.updateTime});
+ const hidden=await s.get();assert.equal(hidden.status,200);assert.equal(node(hidden.data,'ctx_format_recipe_collection'),undefined);assert.equal(node(hidden.data,'food-many-manual').count,1);
+ assert.equal((await s.repository.list({workspace:'library',category:'ctx_format_single_recipe'})).total,0,'Direct canonical filters still resolve normally.');
+ assert.equal((await s.store.get('settings/reels_v2_taxonomy')).data.nodes.some(n=>n.id==='food-many-manual'),true);
+});

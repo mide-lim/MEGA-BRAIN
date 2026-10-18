@@ -1,0 +1,79 @@
+name: Catalogue owner recovery
+on:
+  push:
+    paths: ['ops/apply-reels-catalogue.py', 'ops/test_apply_reels_catalogue.py', 'ops/rehearse-reels-catalogue.py', '.github/workflows/reels-catalogue-recovery.yml']
+  pull_request:
+    paths: ['ops/apply-reels-catalogue.py', 'ops/test_apply_reels_catalogue.py', 'ops/rehearse-reels-catalogue.py', '.github/workflows/reels-catalogue-recovery.yml']
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: catalogue-owner-recovery-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.19.0'
+      - name: Test timing, commit ambiguity and create-only recovery without cloud access
+        run: python3 -m unittest discover -s ops -p 'test_apply_reels_catalogue.py'
+      - name: Select the exact finite recovery event
+        id: finite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          enabled=false
+          if [ "$GITHUB_HEAD_REF" = codex/catalogue-owner-latency ] || [ "$GITHUB_REF_NAME" = codex/catalogue-owner-latency ]; then
+            enabled=true
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 72 and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+      - name: Receive the immutable original plan and exact saved source
+        if: steps.finite.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12120685539/zip" > "$RUNNER_TEMP/original-catalogue-package.zip"
+          python3 - <<'PYTHON'
+          import hashlib,json,os,pathlib,zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP']);raw=(root/'original-catalogue-package.zip').read_bytes()
+          assert hashlib.sha256(raw).hexdigest()=='4effa9cf99dddda3b25b59b309ceb1a34c32da3326dd470f6aa01381029dff0d'
+          destination=root/'catalogue-owner-recovery';destination.mkdir()
+          with zipfile.ZipFile(root/'original-catalogue-package.zip') as z:plan=z.read('bootstrap-plan.json')
+          assert hashlib.sha256(plan).hexdigest()=='5982c134641d7c39e419e7c22f739226948fe976f332f686cc620ff1a7beeb52'
+          value=json.loads(plan);assert value['sourceCommit']=='73fab36349982fbfeb474eed79aaf52e5f270ae1'
+          assert value['operationId']=='4cca726d03c93cd56ec71d0eabf3498690c2b77d0c3e8714fceff377a67a09cf'
+          (destination/'bootstrap-plan.json').write_bytes(plan)
+          PYTHON
+          node ops/prepare-reels-catalogue.mjs --source google-v0/config/contextual-catalogue-source.json --output "$RUNNER_TEMP/catalogue-input.json"
+      - name: Rehearse the actual507 staged metadata recovery through the owner and real API
+        if: steps.finite.outputs.enabled == 'true'
+        run: |
+          python3 ops/rehearse-reels-catalogue.py --input "$RUNNER_TEMP/catalogue-input.json" --plan "$RUNNER_TEMP/catalogue-owner-recovery/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-owner-recovery/owner-recovery-rehearsal.json" --store "$RUNNER_TEMP/catalogue-applied-store.json" --staged-existing
+          node google-v0/scripts/verify-contextual-catalogue-store.mjs --store "$RUNNER_TEMP/catalogue-applied-store.json" --plan "$RUNNER_TEMP/catalogue-owner-recovery/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-owner-recovery/catalogue-runtime-rehearsal.json"
+      - name: Package exact repaired operator without credentials
+        if: steps.finite.outputs.enabled == 'true'
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib,json,os,pathlib,zipfile
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'catalogue-owner-recovery'
+          source=pathlib.Path('ops/apply-reels-catalogue.py');raw=source.read_bytes()
+          provenance={'operatorSourceCommit':os.environ['GITHUB_SHA'],'productSourceCommit':'73fab36349982fbfeb474eed79aaf52e5f270ae1','planSHA256':hashlib.sha256((root/'bootstrap-plan.json').read_bytes()).hexdigest(),'scriptSHA256':hashlib.sha256(raw).hexdigest(),'operationId':'4cca726d03c93cd56ec71d0eabf3498690c2b77d0c3e8714fceff377a67a09cf','alreadyStaged':507,'maximumRecoveryWrites':2,'actualGoogleWrites':0,'providers':0,'processing':False,'simulationOnly':True}
+          with zipfile.ZipFile(root/'owner-sources.zip','x',compression=zipfile.ZIP_DEFLATED) as z:
+              z.writestr(str(source),raw);z.writestr('source-manifest.json',json.dumps(provenance,indent=2)+'\n')
+          (root/'recovery-provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
+          PYTHON
+      - name: Retain bounded recovery evidence only
+        if: steps.finite.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogue-owner-recovery
+          path: ${{ runner.temp }}/catalogue-owner-recovery/
+          retention-days: 7
+          if-no-files-found: error

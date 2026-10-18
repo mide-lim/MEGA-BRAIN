@@ -1,8 +1,13 @@
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
-import {CorrectiveOwnerMetadataClient,correctiveOwnerScope,correctiveServiceConfigurationHash,inspectCorrectiveFences,loadConventionalOwnerSession,commitCorrectiveMetadata} from '../../ops/apply-semantic-corrective-capability.mjs';
+import {CorrectiveOwnerMetadataClient,correctiveOwnerScope,correctiveServiceConfigurationHash,inspectCorrectiveFences,loadConventionalOwnerSession,commitCorrectiveMetadata,correctiveOwnerMain,collectCorrectivePreparation} from '../../ops/apply-semantic-corrective-capability.mjs';
 import {encodeFields,decodeFields} from '../lib/firestore.mjs';
-import {semanticHash} from '../lib/reels-semantic-source.mjs';
+import {semanticHash,semanticSourceFromSaved} from '../lib/reels-semantic-source.mjs';
+import {memoryReelsStore} from '../qa/reels-fixture.mjs';
+import {ReelsRepository} from '../lib/reels-repository.mjs';
+import {ReelsCatalogueRuntime} from '../lib/reels-contextual-catalogue-runtime.mjs';
 import {rejectedSemanticRecoveryScope as S,rejectedSemanticRecoveryPath} from '../lib/reels-semantic-rejected-attempt-recovery.mjs';
 
 const project=correctiveOwnerScope.project,region='projects/'+project+'/locations/us-central1',prefix='projects/'+project+'/databases/(default)/documents/',root='https://firestore.googleapis.com/v1/'+prefix.slice(0,-1);
@@ -19,7 +24,7 @@ function fixture(){
  const jobPath='reels_index/semantic_job_'+S.jobId,capPath='reels_index/semantic_corrective_capability_'+semanticHash('synthetic-capability'),receiptPath=rejectedSemanticRecoveryPath();
  const oldJob={kind:'semantic_job',id:S.jobId,status:'uncertain',callsUsed:2,cursor:8,maxCalls:127,originalRawHash:'source-must-remain-unchanged'};
  docs.set(jobPath,{data:oldJob,updateTime:S.jobUpdateTime});docs.set('videos/Synth_saved',{data:{analysis:{summary:'Synthetic immutable saved source'}},updateTime:epoch});
- const receipt={kind:S.version,executionAuthorized:false,validUntil:'2026-10-18T10:05:00.000Z',receiptHash:semanticHash('synthetic receipt')},capability={kind:'semantic_corrective_capability',capabilityHash:semanticHash('synthetic capability'),callsBefore:2,newCalls:3};
+ const receipt={kind:S.version,executionAuthorized:false,validUntil:'2026-10-18T10:05:00.000Z',receiptHash:semanticHash('synthetic receipt')},capability={kind:'semantic_corrective_capability',authorization:{approval:{expiresAt:'2026-10-18T10:05:00.000Z'}},capabilityHash:semanticHash('synthetic capability'),callsBefore:2,newCalls:3};
  const preparedJob={...oldJob,status:'prepared',batch:null,dispatch:{sequence:2,outboxId:semanticHash({jobId:S.jobId,sequence:2})},reason:'SYNTHETIC_CORRECTIVE_CAPABILITY_READY'};
  const writes=[{path:receiptPath,data:receipt,createOnly:true},{path:capPath,data:capability,createOnly:true},{path:jobPath,data:preparedJob,updateTime:S.jobUpdateTime}];
  const checks=[{path:jobPath,updateTime:S.jobUpdateTime},{path:receiptPath,updateTime:null},{path:capPath,updateTime:null},{path:'videos/Synth_saved',updateTime:epoch},...Array.from({length:12},(_,i)=>({path:'reels_index/semantic_raw_'+S.oldBatchId+'_'+i,updateTime:null})),{path:'reels_index/semantic_result_'+S.oldBatchId,updateTime:null}];
@@ -114,8 +119,9 @@ test('ambiguous acknowledgement triggers exactly one readback and never repeats 
  }
 });
 test('source/result/raw/capability races, final deadline, illegal write and receipt expiry stop before commit',async()=>{
- for(const kind of ['source','raw','result','capability','deadline','expiry','illegalWrite','counterReset']){
+ for(const kind of ['source','raw','result','capability','deadline','expiry','illegalWrite','counterReset','approvalExpired']){
   const f=fixture(),options={};if(kind==='expiry')f.packet.receipt.validUntil='2026-10-18T09:59:59Z';
+  if(kind==='approvalExpired'){f.prepared.capability.authorization.approval.expiresAt='2026-10-18T10:00:00.001Z';options.clockAdvance=1;}
   if(kind==='illegalWrite')f.prepared.writes[0].path='videos/Synth_saved';
   if(kind==='counterReset')f.prepared.preparedJob.callsUsed=0;
   if(kind==='deadline')options.clockAdvance=19000;
@@ -124,4 +130,47 @@ test('source/result/raw/capability races, final deadline, illegal write and rece
   await assert.rejects(()=>commitCorrectiveMetadata({client:io.client,prepared:f.prepared,checks:fences.checks,packet:f.packet,deployment:f.deployment,clock:io.clock}));
   assert.equal(io.state.commits,0,kind+' must not send any commit');assert.equal(io.state.readbacks,0);
  }
+});
+
+test('CLI reserves output and validates all required arguments before credentials or HTTP; a local post-ACK failure retains the outcome',async()=>{
+ let sessions=0,prepares=0,applies=0,opens=0,closed=0;
+ const f=fixture(),files=new Map(),add=(name,value)=>{const text=JSON.stringify(value);files.set(name,text);return createHash('sha256').update(text).digest('hex');};
+ const deploymentSHA=add('deployment',f.deployment),evidenceSHA=add('evidence',{}),packetSHA=add('packet',{}),approvalSHA=add('approval',{}),reviewSHA=add('review',{});
+ const prepareArgs=['prepare','--deployment','deployment','--deployment-sha',deploymentSHA,'--evidence','evidence','--evidence-sha',evidenceSHA,'--output','result'];
+ const io={async open(){opens++;return {async writeFile(){},async close(){closed++;}};},async readFile(path){return files.get(path)??'synthetic operator source';}};
+ const deps={io,stdout:()=>{},sessionLoader:async()=>{sessions++;return {token};},clientFactory:()=>({}),preparePacket:async()=>{prepares++;return {packet:{reviewRequired:true,writes:0}};},applyPacket:async()=>{applies++;return {applied:true,commitSent:true,commitAcknowledged:true,readbackAttempted:false,writes:3};}};
+ await assert.rejects(()=>correctiveOwnerMain(['prepare'],deps),{code:'REQUIRED_ARGUMENT_MISSING'});assert.equal(sessions,0);assert.equal(opens,0);
+ await assert.rejects(()=>correctiveOwnerMain(prepareArgs,{...deps,io:{...io,async open(){throw Object.assign(Error('exists'),{code:'EEXIST'});}}}),{code:'EEXIST'});assert.equal(sessions,0);assert.equal(prepares,0);
+ const applyArgs=['apply',...prepareArgs.slice(1),'--packet','packet','--packet-sha',packetSHA,'--approval','approval','--approval-sha',approvalSHA,'--review','review','--review-sha',reviewSHA],outputs=[];
+ await assert.rejects(()=>correctiveOwnerMain(applyArgs,{...deps,stdout:text=>outputs.push(JSON.parse(text)),io:{...io,async open(){return {async writeFile(){throw Error('synthetic disk failure');},async close(){closed++;}};}}}),error=>error.code==='LOCAL_RESULT_PERSISTENCE_FAILED_AFTER_OPERATION'&&error.metadata.applied===true&&error.metadata.commitSent===true&&error.metadata.commitAcknowledged===true&&error.metadata.retryAllowed===false);
+ assert.equal(applies,1);assert.equal(outputs.length,1);assert.equal(outputs[0].applied,true);assert.equal(outputs[0].writes,3);assert.equal(outputs[0].localResultPersisted,false);assert.equal(outputs[0].sourceBodiesIncluded,false);assert.ok(closed>0);
+});
+const sourceInput=process.env.SEMANTIC_CORRECTIVE_SOURCE_INPUT,paidInput=process.env.SEMANTIC_CORRECTIVE_PAID_INPUT,historyInput=process.env.SEMANTIC_CORRECTIVE_HISTORICAL_RECEIPT;
+test('sealed sources over fake HTTP: exact sixteen-source collector preserves partial next-eight and normalizes the raw policy', {skip:!(sourceInput&&paidInput&&historyInput)?'private immutable inputs are supplied only by central GitHub Actions':false},async()=>{
+ assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.GITHUB_REPOSITORY,'mide-lim/MEGA-BRAIN');
+ const [sourceText,paidText,historyText]=await Promise.all([readFile(sourceInput,'utf8'),readFile(paidInput,'utf8'),readFile(historyInput,'utf8')]);
+ assert.equal(createHash('sha256').update(paidText).digest('hex'),'0b32ed9bf7d4759d80b1e723aa775356eafb6c017a6f59a3890398c92a9440cc');
+ assert.equal(createHash('sha256').update(historyText).digest('hex'),'6309285396cf4951336089605dd94e6fe88f2439641c9ba4984fd5ef88d6f770');
+ const input=JSON.parse(sourceText),paid=JSON.parse(paidText),history=JSON.parse(historyText),observation=input.observation;
+ assert.equal(input.sourceObservationSHA256,'41c61b96dc59ac85929adad158d29712235083ec64a83c337a9394a2118398cd');assert.equal(observation.records.length,738);assert.equal(observation.readOnly,true);
+ const f=fixture(),store=memoryReelsStore();
+ for(const row of observation.records)store.docs.set(row.path,{data:structuredClone(row.data),updateTime:row.updateTime});
+ const tax=observation.taxonomy;store.docs.set('settings/reels_v2_taxonomy',{data:structuredClone(tax.data??tax),updateTime:tax.updateTime??epoch});
+ const originals=paid.records.map(row=>({path:row.path,data:decodeFields(row.document.fields),updateTime:row.document.updateTime}));
+ const originalJob=originals.find(row=>row.data.kind==='semantic_job'),first=originals.find(row=>row.data.kind==='semantic_result'),ledger=originals.find(row=>row.data.kind==='semantic_authorization'),raw=originals.find(row=>row.data.kind==='semantic_raw'),job=structuredClone(originalJob.data);
+ const runtime=new ReelsCatalogueRuntime({repository:new ReelsRepository({store,cacheTtlMs:0})}),next=[];
+ for(const pin of job.pins.slice(8,16))next.push(semanticSourceFromSaved(await runtime.loadSource(pin.id)));
+ const binding={jobId:S.jobId,phase:'extract',cursor:8,pins:next.map(s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),catalogueHash:S.catalogueHash,policyHash:S.policyHash,promptHash:S.oldPromptHash,promptTransitionHash:S.promptTransitionHash};
+ assert.equal(semanticHash(binding),S.oldBindingHash);
+ Object.assign(job,{status:'uncertain',reason:'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN',phase:'extract',cursor:8,callsUsed:2,dispatch:{sequence:1,status:'pending',outboxId:S.oldOutboxId},batch:{id:S.oldBatchId,status:'submitting',phase:'extract',offset:8,sourceIds:S.sourceIds,bindingHash:S.oldBindingHash,binding,leaseUntil:'2026-10-18T05:58:24Z'}});
+ for(const[path,row]of store.docs)f.docs.set(path,structuredClone(row));
+ f.docs.set(originalJob.path,{data:job,updateTime:S.jobUpdateTime});f.docs.set(first.path,{data:{...first.data,processed:true},updateTime:first.updateTime});f.docs.set(ledger.path,{data:ledger.data,updateTime:ledger.updateTime});f.docs.set(raw.path,{data:raw.data,updateTime:raw.updateTime});
+ const rawPolicy=structuredClone(job.policy);delete rawPolicy.calibrationReceipt;assert.notEqual(semanticHash(rawPolicy),S.policyHash);
+ f.docs.set('settings/reels_v2_semantic_policy',{data:rawPolicy,updateTime:epoch});f.docs.set('reels_index/semantic_source_recovery_'+S.firstBatchId,{data:history,updateTime:epoch});f.docs.set('reels_index/semantic_coordinator',{data:{kind:'semantic_coordinator',jobId:S.jobId,authorizationId:job.policy.authorizationId,cohortHash:job.cohortHash},updateTime:epoch});
+ const io=transport(f),before=semanticHash([...f.docs]),captured=await collectCorrectivePreparation({client:io.client,deployment:f.deployment,evidence:{references:S.evidence,correlation:S.correlation},clock:io.clock});
+ assert.equal(captured.input.sources.length,8);assert.equal(captured.input.sources.filter(s=>s.truncated).length,3);
+ assert.equal(semanticHash(captured.input.policy.data),S.policyHash);assert.equal(captured.input.policy.data.calibrationReceipt,null);assert.equal(captured.input.policy.rawDataHash,semanticHash(rawPolicy));
+ assert.equal(captured.input.job.data.batch.bindingHash,S.oldBindingHash);assert.deepEqual(captured.input.sources.map(s=>s.id),S.sourceIds);
+ assert.equal(semanticHash([...f.docs]),before);assert.equal(io.state.commits,0);assert.ok(io.requests.every(r=>!r.url.includes('aiplatform')&&!r.url.includes('generateContent')));
+ console.log(JSON.stringify({fixtureKind:'assembled_simulation_from_historical_metadata',savedSourcesLoaded:16,partialNextSources:3,rawPolicyNormalized:true,freshGoogleObservations:false,providerCalls:0,writes:0}));
 });

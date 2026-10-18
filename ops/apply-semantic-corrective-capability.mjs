@@ -1,12 +1,12 @@
 import {execFile as execFileCallback} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile,open} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {decodeFields,encodeFields} from '../google-v0/lib/firestore.mjs';
 import {ReelsRepository} from '../google-v0/lib/reels-repository.mjs';
 import {ReelsCatalogueRuntime} from '../google-v0/lib/reels-contextual-catalogue-runtime.mjs';
-import {semanticSourceFromSaved,semanticHash} from '../google-v0/lib/reels-semantic-source.mjs';
+import {semanticSourceFromSaved,semanticHash,semanticPolicy} from '../google-v0/lib/reels-semantic-source.mjs';
 import {frozenSemanticSourceFromSaved} from '../google-v0/lib/reels-semantic-source-v1.mjs';
 import {semanticPromptHash,semanticWireSchemaVersion,semanticSchemaForPhase} from '../google-v0/lib/reels-semantic-provider.mjs';
 import {semanticSourceRecoveryPath,semanticSourceRecoveryReceiptValid,validateSemanticSourceRecoveryRow} from '../google-v0/lib/reels-semantic-source-recovery.mjs';
@@ -140,25 +140,25 @@ export async function collectCorrectivePreparation({client,deployment,evidence,r
  const currentSources=[];
  for(let offset=0;offset<16;offset++){
   const pin=j.pins[offset],loaded=await runtime.loadSource(pin.id);need(loaded&&same(loaded.sourceVersions,pin.sourceVersions),'SAVED_SOURCE_EPOCH_CHANGED');
-  const source=semanticSourceFromSaved(loaded);need(!source.truncated,'COMPLETE_SOURCE_REQUIRED_FOR_CORRECTION');
+  const source=semanticSourceFromSaved(loaded);
   if(offset<8){
    const originalPin=first.data.binding.pins.find(p=>p.id===source.id),row=historical.data.rows.find(r=>r.id===source.id);
    need(originalPin&&validateSemanticSourceRecoveryRow(row,source,originalPin,{legacySource:frozenSemanticSourceFromSaved(loaded)}),'HISTORICAL_FIRST_SOURCE_CHANGED');
   }else{
-   currentSources.push({id:source.id,sourceProjectionVersion:source.sourceProjectionVersion,semanticProofHash:source.semanticProofHash,sourceVersions:source.sourceVersions,editorialHash:source.editorialHash,readTime:store.row('videos/'+pin.id).readTime});
+   currentSources.push({id:source.id,sourceProjectionVersion:source.sourceProjectionVersion,semanticProofHash:source.semanticProofHash,sourceVersions:source.sourceVersions,editorialHash:source.editorialHash,truncated:source.truncated,truncationReasons:source.truncationReasons,readTime:store.row('videos/'+pin.id).readTime});
   }
  }
  await store.get('settings/reels_v2_taxonomy');await store.get('reels_index/semantic_coordinator');
  const schema=semanticSchemaForPhase('extract',{sources:currentSources,catalogue:{groups:[]}});
  const paths=[fixedResult,...rawPaths(),rejectedSemanticRecoveryPath()];
  for(const path of paths)await store.get(path);
- const input={now:new Date(clock()).toISOString(),job:metadataSnapshot(store.row(fixedJob)),policy:metadataSnapshot(store.row('settings/reels_v2_semantic_policy')),authorization:metadataSnapshot(store.row('reels_index/semantic_authorization_'+semanticHash(j.policy.authorizationId))),firstResult:metadataSnapshot(first),editorial:metadataSnapshot(store.row('settings/reels_v2_taxonomy')),sources:currentSources,resultAbsence:absent(store.row(fixedResult)),rawAbsence:{query:await queryAbsentRaw(client),documents:rawPaths().map(p=>absent(store.row(p)))},recoveryAbsence:absent(store.row(rejectedSemanticRecoveryPath())),queue:{...fences.queues.curation,readTime:new Date(clock()).toISOString()},newContract:{wireVersion:semanticWireSchemaVersion,promptHash:semanticPromptHash,schemaHash:semanticHash(schema),schema,sourceCommit:deployment.sourceCommit},evidence:structuredClone(evidence),...(review?{review}:{} )};
+ const input={now:new Date(clock()).toISOString(),job:metadataSnapshot(store.row(fixedJob)),policy:{...metadataSnapshot(store.row('settings/reels_v2_semantic_policy')),data:semanticPolicy(store.row('settings/reels_v2_semantic_policy').data),rawDataHash:semanticHash(store.row('settings/reels_v2_semantic_policy').data)},authorization:metadataSnapshot(store.row('reels_index/semantic_authorization_'+semanticHash(j.policy.authorizationId))),firstResult:metadataSnapshot(first),editorial:metadataSnapshot(store.row('settings/reels_v2_taxonomy')),sources:currentSources,resultAbsence:absent(store.row(fixedResult)),rawAbsence:{query:await queryAbsentRaw(client),documents:rawPaths().map(p=>absent(store.row(p)))},recoveryAbsence:absent(store.row(rejectedSemanticRecoveryPath())),queue:{...fences.queues.curation,readTime:new Date(clock()).toISOString()},newContract:{wireVersion:semanticWireSchemaVersion,promptHash:semanticPromptHash,schemaHash:semanticHash(schema),schema,sourceCommit:deployment.sourceCommit},evidence:structuredClone(evidence),...(review?{review}:{} )};
  need(clock()-started<correctiveOwnerScope.maximumCaptureMs,'CAPTURE_TIME_BUDGET_EXCEEDED');
  return {input,fences,checks:uniqueChecks([...store.checks(),...fences.checks]),historicalRecovery:metadataSnapshot(historical),historicalRawChunks,coordinator:metadataSnapshot(store.row('reels_index/semantic_coordinator')),scopeHash:rejectedSemanticRecoveryReviewScope(input)};
 }
 function metadataPacket({collected,deployment,operatorSHA256,trustedReview}){
  const prepared=prepareRejectedSemanticAttemptRecovery(collected.input,{trustedReview});
- const body={schemaVersion:1,kind:'semantic_corrective_owner_packet',jobId:S.jobId,oldBatchId:S.oldBatchId,preparedAt:collected.input.now,expiresAt:new Date(Date.parse(collected.input.now)+300000).toISOString(),sourceCommit:deployment.sourceCommit,sourceTree:deployment.sourceTree,deploymentHash:semanticHash(deployment),operatorSHA256,scopeHash:collected.scopeHash,fenceFingerprint:collected.fences.fingerprint,checks:collected.checks,receipt:prepared.receipt,reviewRequired:!prepared.report.ready,preparationErrors:prepared.report.errors,executionAuthorized:false,providerCalls:0,writes:0,limitations:['Preparation is read-only; a separately pinned owner approval is required for one atomic metadata application.','Historical HTTP400 evidence is aggregate correlation, not request-level diagnosis, billing proof or schema-cause proof.']};
+ const body={schemaVersion:1,kind:'semantic_corrective_owner_packet',jobId:S.jobId,oldBatchId:S.oldBatchId,preparedAt:collected.input.now,expiresAt:new Date(Date.parse(collected.input.now)+300000).toISOString(),sourceCommit:deployment.sourceCommit,sourceTree:deployment.sourceTree,deploymentHash:semanticHash(deployment),operatorSHA256,scopeHash:collected.scopeHash,policyView:{normalization:'semanticPolicy',rawDataHash:collected.input.policy.rawDataHash,normalizedDataHash:semanticHash(collected.input.policy.data)},nextSourceCoverage:collected.input.sources.map(s=>({id:s.id,truncated:s.truncated,truncationReasons:s.truncationReasons})),fenceFingerprint:collected.fences.fingerprint,checks:collected.checks,receipt:prepared.receipt,reviewRequired:!prepared.report.ready,preparationErrors:prepared.report.errors,executionAuthorized:false,providerCalls:0,writes:0,limitations:['Preparation is read-only; a separately pinned owner approval is required for one atomic metadata application.','Historical HTTP400 evidence is aggregate correlation, not request-level diagnosis, billing proof or schema-cause proof.']};
  return {...body,metadataInputHash:semanticHash(body)};
 }
 export async function prepareCorrectiveOwnerPacket({client,deployment,evidence,review=null,trustedReview=null,operatorSHA256,clock=Date.now}){
@@ -194,13 +194,13 @@ export async function commitCorrectiveMetadata({client,prepared,checks:extraChec
  let transaction=null,commitSent=false,commitAcknowledged=false,readbackAttempted=false;
  const result={kind:'semantic_corrective_owner_result',jobId:S.jobId,oldBatchId:S.oldBatchId,metadataInputHash:packet.metadataInputHash,commitSent:false,commitAcknowledged:false,readbackAttempted:false,writes:0,providerCalls:0,queueWrites:0,executionStarted:false};
  try{
-  const begun=await client.request(firestore+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}});need(typeof begun?.transaction==='string','TRANSACTION_MISSING');transaction=begun.transaction;const started=clock();
+  const started=clock();const begun=await client.request(firestore+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}});need(typeof begun?.transaction==='string','TRANSACTION_MISSING');transaction=begun.transaction;
   const observed=await client.batchGet(checks.map(c=>c.path),{transaction,metadataOnly:true});
   need(checks.every(c=>observed.get(c.path)?.updateTime===c.updateTime),'ATOMIC_EPOCH_OR_ABSENCE_CHANGED');
   await queryAbsentRaw(client,transaction);
   const finalFences=await inspectCorrectiveFences(client,deployment);
   need(finalFences.fingerprint===packet.fenceFingerprint,'FINAL_FENCES_CHANGED');
-  need(clock()-started<correctiveOwnerScope.transactionBudgetMs&&Date.parse(packet.receipt.validUntil)>clock()&&Date.parse(packet.expiresAt)>clock(),'FINAL_TRANSACTION_OR_RECEIPT_EXPIRED');
+  need(clock()-started<correctiveOwnerScope.transactionBudgetMs&&Date.parse(packet.receipt.validUntil)>clock()&&Date.parse(packet.expiresAt)>clock()&&date(prepared.capability?.authorization?.approval?.expiresAt)&&Date.parse(prepared.capability.authorization.approval.expiresAt)>clock(),'FINAL_TRANSACTION_OR_RECEIPT_EXPIRED');
   const body={transaction,writes};client.armCommit(body);commitSent=true;result.commitSent=true;
   try{
    const committed=await client.request(firestore+':commit',{method:'POST',json:body});
@@ -232,22 +232,30 @@ export async function loadConventionalOwnerSession({ownerIdentity,exec=execute,e
  const token=(await exec('gcloud',['auth','print-access-token','--account='+ownerIdentity.email],options)).stdout.trim();need(token.length>10&&!/\s/.test(token),'OPAQUE_OWNER_TOKEN_REQUIRED');
  return {token,account,project};
 }
-async function pinnedJSON(path,expected){const text=await readFile(path,'utf8');need(hex(expected)&&sha(text)===expected,'PINNED_ARTIFACT_CHANGED');return {text,data:JSON.parse(text)};}
-function argsOf(argv){const mode=argv[0],out={mode},allowed=new Set(['--deployment','--deployment-sha','--evidence','--evidence-sha','--review','--review-sha','--packet','--packet-sha','--approval','--approval-sha','--output']);need(['prepare','apply'].includes(mode),'EXPLICIT_PREPARE_OR_APPLY_REQUIRED');for(let i=1;i<argv.length;i+=2){need(allowed.has(argv[i])&&argv[i+1]&&!Object.hasOwn(out,argv[i]),'EXPLICIT_UNIQUE_ARGUMENTS_REQUIRED');out[argv[i]]=argv[i+1];}return out;}
-export async function correctiveOwnerMain(argv,{stdout=console.log}={}){
- const args=argsOf(argv),deployment=await pinnedJSON(args['--deployment'],args['--deployment-sha']),evidence=await pinnedJSON(args['--evidence'],args['--evidence-sha']),reviewFile=args['--review']?await pinnedJSON(args['--review'],args['--review-sha']):null;
- const review=reviewFile?{path:args['--review'],sha256:args['--review-sha'],data:reviewFile.data}:null;
- const trustedReview=review?{path:review.path,sha256:review.sha256,dataHash:semanticHash(review.data),scopeHash:review.data.scopeHash,actorId:review.data.actorId}:null;
- const operatorSHA256=sha(await readFile(fileURLSelf(),'utf8')),session=await loadConventionalOwnerSession({ownerIdentity:deployment.data.ownerIdentity}),client=new CorrectiveOwnerMetadataClient({token:session.token});
- let output;
- if(args.mode==='prepare')output=(await prepareCorrectiveOwnerPacket({client,deployment:deployment.data,evidence:evidence.data,review,trustedReview,operatorSHA256})).packet;
- else{
-  const packet=await pinnedJSON(args['--packet'],args['--packet-sha']),approval=await pinnedJSON(args['--approval'],args['--approval-sha']);
-  output=await applyCorrectiveOwnerPacket({client,packet:packet.data,packetText:packet.text,expectedPacketSHA256:args['--packet-sha'],deployment:deployment.data,evidence:evidence.data,review,trustedReview,approval:approval.data,operatorSHA256});
- }
- need(typeof args['--output']==='string','EXPLICIT_OUTPUT_REQUIRED');
- const text=JSON.stringify(output,null,2)+'\n';await writeFile(args['--output'],text,{flag:'wx',mode:0o600});
- stdout(JSON.stringify({mode:args.mode,outputSHA256:sha(text),ready:output.reviewRequired===false,applied:output.applied===true,providerCalls:0,queueWrites:0,sourceBodiesIncluded:false}));return output;
+async function pinnedJSON(path,expected,reader=readFile){const text=await reader(path,'utf8');need(hex(expected)&&sha(text)===expected,'PINNED_ARTIFACT_CHANGED');return {text,data:JSON.parse(text)};}
+function argsOf(argv){const mode=argv[0],out={mode},allowed=new Set(['--deployment','--deployment-sha','--evidence','--evidence-sha','--review','--review-sha','--packet','--packet-sha','--approval','--approval-sha','--output']);need(['prepare','apply'].includes(mode),'EXPLICIT_PREPARE_OR_APPLY_REQUIRED');for(let i=1;i<argv.length;i+=2){need(allowed.has(argv[i])&&argv[i+1]&&!Object.hasOwn(out,argv[i]),'EXPLICIT_UNIQUE_ARGUMENTS_REQUIRED');out[argv[i]]=argv[i+1];}const required=['--deployment','--deployment-sha','--evidence','--evidence-sha','--output',...(mode==='apply'?['--packet','--packet-sha','--approval','--approval-sha','--review','--review-sha']:[])];need(required.every(key=>typeof out[key]==='string'&&out[key].length>0),'REQUIRED_ARGUMENT_MISSING');for(const key of Object.keys(out).filter(k=>k.endsWith('-sha')))need(hex(out[key]),'ARTIFACT_SHA_REQUIRED');need(Boolean(out['--review'])===Boolean(out['--review-sha']),'REVIEW_PATH_AND_SHA_REQUIRED');return out;}
+export async function correctiveOwnerMain(argv,{stdout=console.log,io={readFile,open},sessionLoader=loadConventionalOwnerSession,clientFactory=options=>new CorrectiveOwnerMetadataClient(options),preparePacket=prepareCorrectiveOwnerPacket,applyPacket=applyCorrectiveOwnerPacket}={}){
+ const args=argsOf(argv);need(typeof args['--output']==='string'&&args['--output'].length>0,'EXPLICIT_OUTPUT_REQUIRED');
+ // Reserve a private result file before credentials or HTTP. EEXIST never
+ // happens after a Google commit, and the handle remains owned until closure.
+ const outputHandle=await io.open(args['--output'],'wx',0o600);
+ let output=null;
+ try{
+  const deployment=await pinnedJSON(args['--deployment'],args['--deployment-sha'],io.readFile),evidence=await pinnedJSON(args['--evidence'],args['--evidence-sha'],io.readFile),reviewFile=args['--review']?await pinnedJSON(args['--review'],args['--review-sha'],io.readFile):null;
+  const packetFile=args.mode==='apply'?await pinnedJSON(args['--packet'],args['--packet-sha'],io.readFile):null,approvalFile=args.mode==='apply'?await pinnedJSON(args['--approval'],args['--approval-sha'],io.readFile):null;
+  const review=reviewFile?{path:args['--review'],sha256:args['--review-sha'],data:reviewFile.data}:null;
+  const trustedReview=review?{path:review.path,sha256:review.sha256,dataHash:semanticHash(review.data),scopeHash:review.data.scopeHash,actorId:review.data.actorId}:null;
+  const operatorSHA256=sha(await io.readFile(fileURLSelf(),'utf8')),session=await sessionLoader({ownerIdentity:deployment.data.ownerIdentity}),client=clientFactory({token:session.token});
+  if(args.mode==='prepare')output=(await preparePacket({client,deployment:deployment.data,evidence:evidence.data,review,trustedReview,operatorSHA256})).packet;
+  else{
+   output=await applyPacket({client,packet:packetFile.data,packetText:packetFile.text,expectedPacketSHA256:args['--packet-sha'],deployment:deployment.data,evidence:evidence.data,review,trustedReview,approval:approvalFile.data,operatorSHA256});
+  }
+  const text=JSON.stringify(output,null,2)+'\n';
+  const summary={mode:args.mode,outputSHA256:sha(text),ready:output.reviewRequired===false,applied:output.applied===true,commitSent:output.commitSent===true,commitAcknowledged:output.commitAcknowledged===true,readbackAttempted:output.readbackAttempted===true,writes:output.writes??0,providerCalls:0,queueWrites:0,sourceBodiesIncluded:false};
+  try{await outputHandle.writeFile(text,'utf8');}catch{stdout(JSON.stringify({...summary,localResultPersisted:false,retryAllowed:false}));throw Object.assign(Error('LOCAL_RESULT_PERSISTENCE_FAILED_AFTER_OPERATION'),{code:'LOCAL_RESULT_PERSISTENCE_FAILED_AFTER_OPERATION',metadata:{...summary,localResultPersisted:false,retryAllowed:false}});}
+  stdout(JSON.stringify({...summary,localResultPersisted:true}));return output;
+ }finally{try{await outputHandle.close();}catch{stdout(JSON.stringify({code:'LOCAL_RESULT_HANDLE_CLOSE_FAILED',applied:output?.applied===true,commitSent:output?.commitSent===true,commitAcknowledged:output?.commitAcknowledged===true,readbackAttempted:output?.readbackAttempted===true,localResultPersisted:false,retryAllowed:false,providerCalls:0,sourceBodiesIncluded:false}));}}
 }
+
 const fileURLSelf=()=>new URL(import.meta.url);
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)try{await correctiveOwnerMain(process.argv.slice(2));}catch(error){console.error(JSON.stringify({code:/^[A-Z0-9_]{1,96}$/.test(error.code??'')?error.code:'CORRECTIVE_OWNER_FAILED',...(error.metadata??{}),providerCalls:0,sourceBodiesIncluded:false}));process.exitCode=1;}

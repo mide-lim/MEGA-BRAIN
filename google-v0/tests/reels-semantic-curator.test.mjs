@@ -17,7 +17,7 @@ test('autonomous durable phases preserve sources and publish exactly approved un
  assert.deepEqual((await s.repository.list({workspace:'library',category:'semantic_'+g.id})).items.map(i=>i.id).sort(),s.fixture.expected.memberIds);
  const count=s.fixture.calls.length;await s.curator.overview();await s.curator.detail(g.id);await s.curator.create({selection:{all:true},previewHash:(await s.curator.preview({all:true})).previewHash,idempotencyKey:'unit-job-unique-001'});await pump(s);assert.equal(s.fixture.calls.length,count);
  assert.deepEqual([...s.store.docs].filter(([p])=>p.startsWith('videos/')||p.startsWith('reels_legacy_content/')),before);
- const newPreview=await s.curator.preview({all:true});await assert.rejects(()=>s.curator.create({selection:{all:true},previewHash:newPreview.previewHash,idempotencyKey:'new-key-same-authorization'}),{code:'SEMANTIC_JOB_ALREADY_EXISTS'});
+ const newPreview=await s.curator.preview({all:true});await assert.rejects(()=>s.curator.create({selection:{all:true},previewHash:newPreview.previewHash,idempotencyKey:'new-key-same-authorization'}),{code:'SEMANTIC_AUTHORIZATION_CONSUMED'});
  assert.equal(created.created,true);
 });
 test('paid ambiguous outcome becomes uncertain and never resubmits even after lease expiry',async()=>{

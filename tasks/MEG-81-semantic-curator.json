@@ -12,13 +12,16 @@
     "Finalworker prompt evaluates video, caption and STT together; irrelevant musical STT does not override explicit visual/caption theme. Fixed category IDs remain valid and contextual editorial nodes use current catalogue IDs.",
     "Existing publication, Food tree, saved analyses, provider response reconciliation and closed processing gates remain unchanged.",
     "GitHub Actions is the sole test and build environment. Synthetic category-selection, catalogue freshness and integration/browser checks pass on exact final head; CI has no provider/cloud mutation access for these tests.",
-    "Independent fresh reviewer accepts final head. Root organizes actual110 using saved evidence and existing web taxonomy commands, verifies production categories and preserved499; no provider calls, new Reel processing, deletions, IAM or queue activation."
+    "Independent fresh reviewer accepts final head. Root organizes actual110 using saved evidence and existing web taxonomy commands, verifies production categories and preserved499; no provider calls, new Reel processing, deletions, IAM or queue activation.",
+    "Only manual editorial nodes from a valid complete current catalogue may extend report.categories; saved-response restoration uses only its original hash-matching snapshot. Missing/stale/unbound catalogues keep fixed IDs. No contextual proof or publication requirement is promoted by editorial classification."
   ],
   "allowed_paths": [
     "tasks/MEG-81-semantic-curator.json",
     "google-v0/lib/analysis.mjs",
     "google-v0/lib/category-taxonomy.mjs",
+    "google-v0/lib/google-operations.mjs",
     "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/lib/reels-quality-gate.mjs",
     "google-v0/lib/reels-semantic-curator.mjs",
     "google-v0/tests/category-selection.test.mjs",
     "google-v0/tests/category-taxonomy.test.mjs",
@@ -27,39 +30,63 @@
   "context": [
     {
       "path": "google-v0/lib/analysis.mjs",
-      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
       "sections": [
-        "classification",
-        "catalogue"
+        "category selection",
+        "catalogue snapshot",
+        "restore"
       ],
-      "max_chars": 3000
+      "max_chars": 2000
     },
     {
       "path": "google-v0/lib/category-taxonomy.mjs",
-      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
       "sections": [
-        "classification",
-        "catalogue"
+        "category selection",
+        "catalogue snapshot",
+        "restore"
       ],
-      "max_chars": 3000
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
+      "sections": [
+        "category selection",
+        "catalogue snapshot",
+        "restore"
+      ],
+      "max_chars": 2000
     },
     {
       "path": "google-v0/lib/reels-analysis-contract.mjs",
-      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
       "sections": [
-        "classification",
-        "catalogue"
+        "category selection",
+        "catalogue snapshot",
+        "restore"
       ],
-      "max_chars": 3000
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/reels-quality-gate.mjs",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
+      "sections": [
+        "category selection",
+        "catalogue snapshot",
+        "restore"
+      ],
+      "max_chars": 2000
     },
     {
       "path": "google-v0/lib/reels-semantic-curator.mjs",
-      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
+      "reason": "Existing exact-snapshot category selection and preserved response reconciliation dependency",
       "sections": [
-        "classification",
-        "catalogue"
+        "category selection",
+        "catalogue snapshot",
+        "restore"
       ],
-      "max_chars": 3000
+      "max_chars": 2000
     }
   ],
   "validation_commands": [
@@ -90,7 +117,7 @@
     "ci_authorization": "All tests/builds in GitHub Actions only. No raw corpus committed.",
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
-    "canonical_revision": 397,
+    "canonical_revision": 399,
     "paid_scope": "Zero provider calls; old uncertain paid job untouched."
   }
 }

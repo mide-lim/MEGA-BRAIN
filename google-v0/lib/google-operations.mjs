@@ -41,10 +41,10 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
   }
 
   const qualityContext=video=>({mediaInspection:qualityEvidence?.mediaInspection??video.media_inspection_receipt??null,transcriptionReceipt:qualityEvidence?.transcriptionReceipt??video.transcription_receipt??null,trustedReviews:[]});
-  async function qualityChanges(response,video,rawIdentity){
-   const outcome=analysisOutcome(response,video,{requireKnowledge:true,qualityGateV2:qualityContext(video)}),report=outcome.report??{};
+  async function qualityChanges(response,video,rawIdentity,contextCatalogSnapshot=null){
+   const outcome=analysisOutcome(response,video,{requireKnowledge:true,qualityGateV2:qualityContext(video),contextCatalogSnapshot}),report=outcome.report??{};
    const candidateKey=rawIdentity.key.replace(/analysis\.json$/,'quality-candidate.json');
-   const prepared=await prepareQualityCandidateV2({record:video,report,rawResponse:response,expectedPublicationRevision:qualityPublicationRevision(video),...qualityContext(video),ports:{
+   const prepared=await prepareQualityCandidateV2({record:video,report,rawResponse:response,expectedPublicationRevision:qualityPublicationRevision(video),...qualityContext(video),contextCatalogSnapshot,ports:{
     saveCandidate:async value=>{const object=await persist(candidateKey,{report:value.report,candidateContentHash:value.candidateContentHash,rawResponseIdentity:rawIdentity,parseReasons:outcome.reasons??[]});return {key:candidateKey,generation:object.generation,candidateContentHash:value.candidateContentHash};},
     saveReceipt:saveQualityReceipt
    }});
@@ -123,7 +123,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       if(saved.preset_version!==preset.version||saved.model!==config.gemini_model||!saved.response)throw Error('Resposta salva diverge da revisão atual.');
       let caption=video.source_caption?.text?{source_caption:video.source_caption,caption_status:'captured'}:{caption_status:'unavailable'};
       if(!video.source_caption?.text&&!qualityMode){const captionKey=`results/instagram/${video.id}/${executionId}/caption.json`,metadata=await storage.metadata(captionKey);if(metadata){const capture=JSON.parse(await storage.read(captionKey,{generation:metadata.generation}));caption={source_caption:capture,caption_status:'captured'};}}
-      if(qualityMode){const prepared=await qualityChanges(saved.response,{...video,...caption},{key,generation:object.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},budget('analysis'),saved.usage_cost),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication,artifact:{key,generation:object.generation}};}
+      if(qualityMode){const savedCatalogue=saved.context_catalogue_receipt?.snapshotHash===saved.context_catalogue_snapshot?.snapshotHash?saved.context_catalogue_snapshot:null;const prepared=await qualityChanges(saved.response,{...video,...caption},{key,generation:object.generation},savedCatalogue);return {...result(video.id,'analysis',{...caption,...prepared.changes},budget('analysis'),saved.usage_cost),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication,artifact:{key,generation:object.generation}};}
       const outcome=analysisOutcome(saved.response,{...video,...caption},{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:object.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:object.generation};
       return {...result(video.id,'analysis',{...caption,...changes},budget('analysis'),saved.usage_cost),artifact:{key,generation:object.generation}};
@@ -207,7 +207,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
       // Invalid model output is also preserved for diagnosis, never re-generated.
       const usage=measureGeminiUsage(response,{model:config.gemini_model,location:'global'});
       const raw=await at('persist_analysis',()=>persist(key,{preset_version:preset.version,model:config.gemini_model,response,call_diagnostics:callDiagnostics,usage_cost:usage,...(qualityMode?{context_catalogue_receipt:{snapshotHash:contextCatalogSnapshot.snapshotHash,state:contextCatalogSnapshot.state,version:contextCatalogSnapshot.version,policyVersion:contextCatalogSnapshot.policyVersion??null,dataAsOf:contextCatalogSnapshot.dataAsOf??null},context_catalogue_snapshot:contextCatalogSnapshot}:{})}));
-      if(qualityMode){const prepared=await qualityChanges(response,analysisRecord,{key,generation:raw.generation});return {...result(video.id,'analysis',{...caption,...prepared.changes},cost,usage),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication};}
+      if(qualityMode){const prepared=await qualityChanges(response,analysisRecord,{key,generation:raw.generation},contextCatalogSnapshot);return {...result(video.id,'analysis',{...caption,...prepared.changes},cost,usage),qualityGate:prepared.qualityGate,qualityPublication:prepared.qualityPublication};}
       const outcome=analysisOutcome(response,analysisRecord,{requireKnowledge:['megabrain-video-text-v3','megabrain-video-text-v4'].includes(preset.version),sourceGroundedPublication:!!executionAuthorization});
       const changes=outcome.accepted?{analysis:outcome.report,analysis_key:key,analysis_generation:raw.generation,analysis_quality_status:'accepted',analysis_review_reasons:[],analysis_candidate:null,candidate_analysis_key:null,candidate_analysis_generation:null}:{analysis:video.analysis??null,analysis_key:video.analysis_key??null,analysis_generation:video.analysis_generation??null,analysis_quality_status:'review_required',analysis_review_reasons:outcome.reasons,analysis_candidate:outcome.report??null,candidate_analysis_key:key,candidate_analysis_generation:raw.generation};
       return result(video.id,'analysis',{...caption,...changes},cost,usage);
@@ -238,3 +238,4 @@ export async function readAnalysisContextCatalogue(loader,context){
   return JSON.parse(encoded);
  }catch{return missing('LIVE_CATALOGUE_READ_UNAVAILABLE');}
 }
+

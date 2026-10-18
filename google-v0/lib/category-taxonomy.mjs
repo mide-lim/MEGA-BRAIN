@@ -25,8 +25,8 @@ export const categoryDefinitions=Object.freeze([
 export const categoryIds=Object.freeze(categoryDefinitions.map(c=>c.id));
 // This contract is shared by provider generation and local validation.
 export const genericCategoryIds=Object.freeze(['tecnologia-geral','a-organizar']);
-export function categorySelectionSchema(){
- const specific=categoryIds.filter(id=>!genericCategoryIds.includes(id));
+export function categorySelectionSchema(additionalIds=[]){
+ const specific=[...new Set([...categoryIds,...additionalIds])].filter(id=>!genericCategoryIds.includes(id));
  return {anyOf:[
   {type:'ARRAY',minItems:1,maxItems:1,items:{type:'STRING',enum:[...genericCategoryIds]}},
   {type:'ARRAY',minItems:1,maxItems:2,items:{type:'STRING',enum:specific}}
@@ -69,8 +69,9 @@ export function resolveCategories(values=[]){
  const primaryId=specific[0]??ordered.find(id=>found.has(id))??(found.has('a-organizar')?'a-organizar':null);
  return {ids:categoryIds.filter(id=>found.has(id)),primaryId,topics,unresolved};
 }
-export function validateCategoryIds(values){
- if(!Array.isArray(values)||!values.length||values.length>2||values.some(id=>!byId.has(id))||new Set(values).size!==values.length)throw Error('Categorias devem usar identificadores oficiais únicos; no máximo dois.');
+export function validateCategoryIds(values,{additionalIds=[]}={}){
+ const allowed=new Set([...categoryIds,...additionalIds]);
+ if(!Array.isArray(values)||!values.length||values.length>2||values.some(id=>!allowed.has(id))||new Set(values).size!==values.length)throw Error('Categorias devem usar identificadores oficiais únicos ou destinos editoriais autorizados; no máximo dois.');
  if(values.length>1&&(values.some(id=>genericCategoryIds.includes(id))))throw Error('Categorias gerais devem ser usadas sozinhas.');
 }
 export function categoryOptions(){return categoryDefinitions.map(({id,group,name,scope})=>({id,group,name,scope}));}

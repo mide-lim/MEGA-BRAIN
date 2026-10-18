@@ -86,7 +86,10 @@ jobs:
           SEMANTIC_HISTORICAL_RECOVERY_RECEIPT: ${{ runner.temp }}/semantic-historical-receipt.json
           SEMANTIC_HISTORICAL_RECOVERY_SOURCE: ${{ runner.temp }}/semantic-saved-source.json
           SEMANTIC_REJECTED_RECOVERY_INPUT: ${{ runner.temp }}/semantic-paid-input.json
-        run: node --test google-v0/tests/reels-semantic-historical-source-proof.test.mjs google-v0/tests/reels-semantic-rejected-attempt-recovery.test.mjs
+          SEMANTIC_CORRECTIVE_SOURCE_INPUT: ${{ runner.temp }}/semantic-saved-source.json
+          SEMANTIC_CORRECTIVE_PAID_INPUT: ${{ runner.temp }}/semantic-paid-input.json
+          SEMANTIC_CORRECTIVE_HISTORICAL_RECEIPT: ${{ runner.temp }}/semantic-historical-receipt.json
+        run: node --test google-v0/tests/reels-semantic-historical-source-proof.test.mjs google-v0/tests/reels-semantic-rejected-attempt-recovery.test.mjs google-v0/tests/reels-semantic-corrective-operator.test.mjs google-v0/tests/reels-semantic-corrective-capability.test.mjs
       - name: Rehearse source projection and exact saved-response recovery
         if: steps.finite.outputs.recovery == 'true'
         run: node google-v0/scripts/prepare-semantic-source-recovery.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
@@ -95,6 +98,13 @@ jobs:
         env:
           SEMANTIC_SCHEMA_BASES_DIR: ${{ github.workspace }}/google-v0/lib
         run: node google-v0/scripts/diagnose-semantic-next-input.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
+      - name: Package tracked owner code without Reel data or temporary providers
+        if: steps.finite.outputs.recovery == 'true'
+        run: |
+          git archive --format=tar "$GITHUB_SHA" google-v0/lib ops/apply-semantic-corrective-capability.mjs | gzip -n > "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code.tar.gz"
+          CODE_SHA="$(sha256sum "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code.tar.gz" | cut -d ' ' -f1)"
+          SOURCE_TREE="$(git rev-parse "$GITHUB_SHA^{tree}")"
+          printf '{"kind":"tracked_corrective_owner_source","sourceCommit":"%s","sourceTree":"%s","archiveSHA256":"%s","reelInputsIncluded":false,"runtimeCredentialsIncluded":false,"temporaryProvidersIncluded":false}\n' "$GITHUB_SHA" "$SOURCE_TREE" "$CODE_SHA" > "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code-manifest.json"
       - uses: actions/upload-artifact@v4
         if: always() && steps.finite.outputs.enabled == 'true'
         with:

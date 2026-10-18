@@ -52,3 +52,18 @@ O pacote de recursos revisado deve criar a fila vazia, pausá-la e conferir seu 
 Criação, concessões e ativação dependem da autorização do pacote exato. Não criar contas/chaves, conceder papéis no projeto, retomar filas de Reels, modificar os49 resultados incertos ou apagar fontes. Publicar código fechado e passar no CI não equivale a executar a curadoria real.
 
 Modelos e limites são configurados na política finita. O modelo planejado para a primeira operação de texto é `gemini-3.5-flash`, com saídas estruturadas e sem ferramentas externas; a disponibilidade e o contrato são documentados pela [Google](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash). O uso não herda autorização para reanalisar vídeo/áudio.
+
+
+## Structured transport and verification coverage
+
+The provider transport uses the versioned flat schema. Types, finite IDs and enums constrain generation; the server contract remains responsible for exact cardinalities, literal quotations, recipe formats, facet dimensions and all cross-field rules. Reducing schema complexity is not proof that a remote provider accepts it or that its semantic conclusions are accurate.
+
+Verification eligibility is computed from the same current memberships and negative examples used by normal verification. An empty eligible range receives a `semantic_no_targets` receipt with `semanticVerified: false`, source and group epochs, and zero calls. Job, policy, ledger, source, existing group and exclusive-coordinator checks are committed together. The coordinator enforces the existing single-writer protocol; this is not a collection transaction against arbitrary external database writers. `verificationProcessed` records ranges traversed for compatibility; `verificationSkippedSources` and `verificationTargetDecisions` distinguish skipped sources from actual decisions.
+
+## Finite corrective owner operation
+
+A rejected-attempt preparation receipt cannot execute work. The separate owner capability is restricted to the recorded incident, original cohort, policy, source epochs and approved prompt. It preserves the old intent and consumed counter; a corrective submission receives a new attempt identity and consumes the third attempt. It then stops at the exact 16-source/3-attempt checkpoint. The original normal 16/2 checkpoint remains separate. No browser request may manufacture this capability or supply its own approval actor.
+
+The owner client has `prepare` and `apply` modes. Preparation reads current metadata and emits a bounded review request. Application requires pinned packet, deployment, approval and independent-review files, verifies the private owner account, refreshes the same protected conditions and attempts one three-write transaction. An ambiguous acknowledgement permits one readback and no commit retry. It cannot call inference, storage media, worker endpoints or mutate queues. Queue delivery remains a separate explicitly authorized operation.
+
+Builds, contract checks, rehearsal and HTTP/browser fixtures run in GitHub Actions. The owner source archive contains tracked application libraries and the operator only, without Reel inputs, runtime credentials or temporary historical provider copies. Live release and any corrective inference still require their explicit authorization and the real quality checkpoint; synthetic completion does not certify the published collection.

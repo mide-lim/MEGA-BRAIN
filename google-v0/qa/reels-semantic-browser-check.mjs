@@ -284,6 +284,14 @@ try{
     await setStatus(status,reason);const overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canContinueAlignmentCheckpoint,false);assert.equal(await continuation.count(),0,'No continuation for '+status+'/'+reason);assert.equal(checkpointFixture.calls.length,checkpointCalls);
    }
    await setStatus('paused');const overview=await refresh();assert.equal(overview.policy.autoPromotionEnabled,false);assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canContinueAlignmentCheckpoint,true);
+   await record('corrective_checkpoint_presentation_only_never_starts_inference',async()=>{
+    // Frontend contract only: the runtime corrective capability is exercised by
+    // the private real-engine suite, not by this response presentation fixture.
+    const pattern=checkpointServer.origin+semanticPath;
+    await checkpointPage.route(pattern,async route=>{assert.equal(route.request().method(),'GET');const response=await route.fetch(),data=await response.json(),job=data.jobs.find(value=>value.id===seed.jobId);assert.equal(job.canContinueAlignmentCheckpoint,true);Object.assign(job,{reason:'SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT',callsUsed:3});await route.fulfill({response,json:data});});
+    try{await refresh();await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();assert.equal(await continuation.isEnabled(),true);assert.equal(checkpointFixture.calls.length,checkpointCalls);assert.equal(checkpointServer.semanticDeliveries.length,0);}finally{await checkpointPage.unroute(pattern);}
+    await refresh();assert.equal(checkpointFixture.calls.length,checkpointCalls);
+   });
    await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();await continuation.click();
    const dialog=checkpointPage.getByRole('dialog',{name:'Continuar curadoria'});await dialog.getByText('O próximo lote está salvo e a curadoria parou neste ponto para conferência.',{exact:true}).waitFor();await dialog.getByText(/pode fazer novas chamadas de organização das análises salvas/).waitFor();
    const hold=checkpointServer.holdNext(url=>url.pathname===semanticPath),posted=checkpointPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='POST'&&result.request().postDataJSON()?.action==='advance');
@@ -299,7 +307,7 @@ try{
   }catch(error){await checkpointPage?.screenshot({path:join(output,'semantic-alignment-checkpoint-failure.png'),fullPage:true}).catch(()=>{});throw error;}
   finally{await writeFile(join(output,'checkpoint-http-calls.json'),JSON.stringify(checkpointServer.calls,null,2));await checkpointContext?.close();await checkpointServer.close();}
  });
- const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,explicitCheckpointAdvancePosts:1,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
+ const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,correctiveCheckpointPresentationOnly:true,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,explicitCheckpointAdvancePosts:1,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally{await browser?.close();await server.close();}

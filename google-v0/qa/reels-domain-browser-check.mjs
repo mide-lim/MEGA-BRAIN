@@ -134,6 +134,21 @@ try{
    assert.equal(state.server.calls.some(call=>call.path==='/api/reels/categories'&&call.method==='POST'),false);assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
   }finally{await state.close();}
  });
+ await record('content_picker_retries_the_same_first_page_without_losing_selection',async()=>{
+  const state=await start();
+  try{
+   await navigate(state.page,'Categorias');await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();
+   const contentResponse=()=>state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('workspace')==='library'&&response.request().method()==='GET';});
+   state.server.failNext('/api/reels/items','Seleção inicial indisponível.');const initialFailure=contentResponse();await state.page.getByRole('button',{name:'Organizar conteúdos',exact:true}).click();const initial=await initialFailure;assert.equal(initial.status(),503);
+   const dialog=state.page.getByRole('dialog',{name:'Organizar conteúdos'});await dialog.getByRole('alert').filter({hasText:'Seleção inicial indisponível.'}).waitFor();
+   const recovered=contentResponse();await dialog.getByRole('button',{name:'Tentar novamente',exact:true}).click();const first=await recovered;assert.equal(first.status(),200);assert.equal(first.url(),initial.url(),'Retry must repeat the current URL, including the empty initial cursor');
+   const selection=dialog.getByRole('checkbox',{name:'Organizar QaFull_single',exact:true});await selection.check();await dialog.getByText('1 selecionados',{exact:true}).waitFor();
+   state.server.failNext('/api/reels/items','Busca de seleção indisponível.');const searchFailure=contentResponse();await dialog.getByLabel('Buscar conteúdos publicados',{exact:true}).fill('QaFull_single');const failed=await searchFailure;assert.equal(failed.status(),503);await dialog.getByRole('alert').filter({hasText:'Busca de seleção indisponível.'}).waitFor();await dialog.getByText('1 selecionados',{exact:true}).waitFor();
+   const repeated=contentResponse();await dialog.getByRole('button',{name:'Tentar novamente',exact:true}).click();const success=await repeated;assert.equal(success.status(),200);assert.equal(success.url(),failed.url(),'Retry must retain query, scope and cursor instead of navigating elsewhere');
+   await selection.waitFor();assert.equal(await selection.isChecked(),true,'A failed read and retry must preserve the selected Reel');await dialog.getByText('1 selecionados',{exact:true}).waitFor();
+   assert.equal(state.server.calls.some(call=>call.path==='/api/reels/categories'&&call.method==='POST'),false);assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
+  }finally{await state.close();}
+ });
  await record('domain_navigation_filters_before_pagination_and_preserves_search_and_area_on_return',async()=>{
   const fixture=makeSemanticFixture(),template=fixture.documents.find(row=>row.path==='videos/QaFull_single'),taxonomy=fixture.documents.find(row=>row.path==='settings/reels_v2_taxonomy');
   fixture.documents=fixture.documents.filter(row=>!row.path.startsWith('videos/')&&!row.path.startsWith('reels_legacy_content/'));

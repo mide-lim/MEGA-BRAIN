@@ -1,4 +1,4 @@
-import {projectReel,categoryNavigation,reelIdPattern} from './reels-model.mjs';
+import {projectReel,publicationAvailable,categoryNavigation,reelIdPattern} from './reels-model.mjs';
 import {withPreservedSummary} from './reels-preserved-content.mjs';
 import {projectContextualPublication,contextualHash} from './reels-contextual-projection.mjs';
 import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
@@ -22,10 +22,10 @@ export class ReelsCatalogueRuntime{
  async loadSource(id){
   if(!reelIdPattern.test(id??''))throw Error('Reel de catálogo inválido.');
   const videoSnapshot=await this.store.get('videos/'+id);if(!videoSnapshot)return null;
-  const legacySnapshot=await this.store.get('reels_legacy_content/'+id),taxonomySnapshot=await this.store.get('settings/reels_v2_taxonomy'),reviewPath='reels_index/contextual_review_'+id,reviewSnapshot=await this.store.get(reviewPath);
+  const primaryNative=publicationAvailable(videoSnapshot.data),legacySnapshot=primaryNative?null:await this.store.get('reels_legacy_content/'+id),taxonomySnapshot=await this.store.get('settings/reels_v2_taxonomy'),reviewPath='reels_index/contextual_review_'+id,reviewSnapshot=await this.store.get(reviewPath);
   if(taxonomySnapshot?.data.pendingOperationId)throw Object.assign(Error('Categorias em edição; evento contextual preservado.'),{code:'CATALOGUE_EDITORIAL_PENDING'});
   const video={...videoSnapshot.data,id},legacy=legacySnapshot?.data??null,taxonomy=taxonomySnapshot?.data??{};
-  const item=categoryNavigation([withPreservedSummary(projectReel(video),legacy)],taxonomy).items[0],checks=[{path:'videos/'+id,updateTime:videoSnapshot.updateTime},{path:'reels_legacy_content/'+id,updateTime:legacySnapshot?.updateTime??null},{path:'settings/reels_v2_taxonomy',updateTime:taxonomySnapshot?.updateTime??null},{path:reviewPath,updateTime:reviewSnapshot?.updateTime??null}];
+  const item=categoryNavigation([withPreservedSummary(projectReel(video),legacy)],taxonomy).items[0],checks=[{path:'videos/'+id,updateTime:videoSnapshot.updateTime},...(!primaryNative?[{path:'reels_legacy_content/'+id,updateTime:legacySnapshot?.updateTime??null}]:[]),{path:'settings/reels_v2_taxonomy',updateTime:taxonomySnapshot?.updateTime??null},{path:reviewPath,updateTime:reviewSnapshot?.updateTime??null}];
   let qualityVerification=null;
   if(video.analysis?.contextualSignals?.version===2&&qualityReceiptIdPattern.test(video.publication?.qualityReceipt?.receiptId??'')){
    const path='reels_quality_receipts/'+video.publication.qualityReceipt.receiptId,receipt=await this.store.get(path);

@@ -1,5 +1,5 @@
 """Central-CI tests only. Synthetic Firestore transactions; no credentials/network."""
-import copy, importlib.util, json, pathlib, unittest
+import copy, importlib.util, json, pathlib, threading, unittest
 from unittest import mock
 path=pathlib.Path(__file__).with_name('apply-reels-catalogue.py')
 spec=importlib.util.spec_from_file_location('catalogue_owner',path)
@@ -217,7 +217,7 @@ class CatalogueOwnerGuards(unittest.TestCase):
    if request.full_url.endswith(':beginTransaction'):return Response({'transaction':'secret-tx'})
    if request.full_url.endswith(':batchGet'):return Response([{'missing':body['documents'][0]}])
    return Response({})
-  with mock.patch.object(m.urlrequest,'urlopen',side_effect=respond):
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={}),mock.patch.object(m.urlrequest,'build_opener',return_value=mock.Mock(open=respond)):
    client=m.GoogleClient('private-token');tx=client.begin();self.assertEqual(client.read(['videos/reel00000'],tx,['id']),{'videos/reel00000':None});client.commit(tx,[{**plan['contributionWrites'][0],'exists':False}]);client.rollback(tx)
   self.assertEqual(calls[0][1],{'options':{'readWrite':{}}});self.assertEqual(calls[1][1]['transaction'],'secret-tx');self.assertEqual(calls[1][1]['mask'],{'fieldPaths':['id']});self.assertEqual(calls[2][1]['transaction'],'secret-tx');self.assertNotIn('verify',calls[2][1]['writes'][0]);self.assertEqual(calls[2][1]['writes'][0]['currentDocument'],{'exists':False})
  def test_final_verification_rejects_missing_or_modified_staged_metadata(self):
@@ -292,6 +292,90 @@ class CatalogueOwnerGuards(unittest.TestCase):
   clock=FakeClock();client=LatencyClient({},clock)
   with mock.patch.object(m,'ThreadPoolExecutor',side_effect=lambda max_workers:ScheduledProbePool(clock,max_workers))as pools:client.probe_closed()
   self.assertEqual(len(client.http),12);self.assertTrue(all(row['method']=='GET'for row in client.http));self.assertEqual(len({row['url']for row in client.http}),12);self.assertEqual(pools.call_args.kwargs,{'max_workers':4});self.assertAlmostEqual(clock.now,3.3)
+ def test_dns_cache_resolves_only_ipv4_once_per_allowed_host_under_concurrency(self):
+  resolver=m.GoogleIPv4Resolver();calls=[];entered=threading.Event();release=threading.Event()
+  def resolve(host,port,**kwargs):
+   calls.append((host,port,kwargs));entered.set();release.wait(2)
+   return [(m.socket.AF_INET,m.socket.SOCK_STREAM,m.socket.IPPROTO_TCP,'',('192.0.2.10',443)),(m.socket.AF_INET,m.socket.SOCK_STREAM,m.socket.IPPROTO_TCP,'',('192.0.2.10',443))]
+  with mock.patch.object(m.socket,'getaddrinfo',side_effect=resolve):
+   with m.ThreadPoolExecutor(max_workers=4)as pool:
+    futures=[pool.submit(resolver.address,'cloudtasks.googleapis.com')for _ in range(4)];self.assertTrue(entered.wait(2));release.set();self.assertEqual([f.result()for f in futures],['192.0.2.10']*4)
+   for host in ['firestore.googleapis.com','run.googleapis.com']:self.assertEqual(resolver.address(host),'192.0.2.10')
+  self.assertEqual(len(calls),3);self.assertTrue(all(port==443 and kwargs=={'family':m.socket.AF_INET,'type':m.socket.SOCK_STREAM,'proto':m.socket.IPPROTO_TCP}for _,port,kwargs in calls));self.assertEqual(set(resolver.answers),m.GOOGLE_HOSTS)
+  with mock.patch.object(m.socket,'getaddrinfo')as forbidden:
+   with self.assertRaisesRegex(m.GuardError,'GOOGLE_ENDPOINT_NOT_ALLOWED'):resolver.address('outside.example')
+   forbidden.assert_not_called()
+ def test_dns_failure_is_cached_sanitized_and_never_retried_in_the_execution(self):
+  resolver=m.GoogleIPv4Resolver()
+  with mock.patch.object(m.socket,'getaddrinfo',side_effect=m.socket.gaierror(-3,'Temporary failure in name resolution'))as lookup:
+   for _ in range(2):
+    with self.assertRaises(m.GuardError)as failure:resolver.address('cloudtasks.googleapis.com')
+    self.assertEqual(str(failure.exception),'GOOGLE_DNS_UNAVAILABLE')
+  self.assertEqual(lookup.call_count,1);self.assertNotIn('cloudtasks.googleapis.com',resolver.answers)
+  for rows in [[],[(m.socket.AF_INET6,m.socket.SOCK_STREAM,m.socket.IPPROTO_TCP,'',('2001:db8::1',443))],[(m.socket.AF_INET,m.socket.SOCK_STREAM,m.socket.IPPROTO_TCP,'',('not-an-ip',443))]]:
+   with mock.patch.object(m.socket,'getaddrinfo',return_value=rows):
+    with self.assertRaises(m.GuardError):m.GoogleIPv4Resolver().address('run.googleapis.com')
+ def test_ipv4_socket_keeps_original_tls_server_name_and_certificate_verification(self):
+  context=mock.Mock(verify_mode=m.ssl.CERT_REQUIRED,check_hostname=True);resolver=mock.Mock();resolver.address.return_value='192.0.2.20';raw=mock.Mock();tls=mock.Mock();context.wrap_socket.return_value=tls
+  with mock.patch.object(m.socket,'socket',return_value=raw)as sockets:
+   connection=m.GoogleIPv4HTTPSConnection('firestore.googleapis.com',timeout=15,resolver=resolver,context=context);connection.connect()
+  sockets.assert_called_once_with(m.socket.AF_INET,m.socket.SOCK_STREAM,m.socket.IPPROTO_TCP);resolver.address.assert_called_once_with('firestore.googleapis.com');raw.connect.assert_called_once_with(('192.0.2.20',443));raw.settimeout.assert_called_once_with(15);context.wrap_socket.assert_called_once_with(raw,server_hostname='firestore.googleapis.com');self.assertIs(connection.sock,tls);self.assertEqual(connection.host,'firestore.googleapis.com');raw.close.assert_not_called()
+ def test_certificate_or_connect_failure_closes_socket_without_retry_or_tls_downgrade(self):
+  for failure in [m.ssl.SSLCertVerificationError('certificate mismatch'),OSError(99,'address unavailable')]:
+   context=mock.Mock(verify_mode=m.ssl.CERT_REQUIRED,check_hostname=True);resolver=mock.Mock();resolver.address.return_value='192.0.2.30';raw=mock.Mock()
+   if isinstance(failure,m.ssl.SSLCertVerificationError):context.wrap_socket.side_effect=failure
+   else:raw.connect.side_effect=failure
+   with mock.patch.object(m.socket,'socket',return_value=raw)as sockets:
+    connection=m.GoogleIPv4HTTPSConnection('run.googleapis.com',resolver=resolver,context=context)
+    with self.assertRaises(type(failure)):connection.connect()
+   self.assertEqual(sockets.call_count,1);self.assertEqual(raw.connect.call_count,1);raw.close.assert_called_once()
+  for context in [mock.Mock(verify_mode=m.ssl.CERT_NONE,check_hostname=False),mock.Mock(verify_mode=m.ssl.CERT_REQUIRED,check_hostname=False)]:
+   with self.assertRaisesRegex(m.GuardError,'GOOGLE_TLS_VERIFICATION_REQUIRED'):m.GoogleIPv4HTTPSConnection('run.googleapis.com',resolver=mock.Mock(),context=context)
+ def test_transport_rejects_proxy_policy_invalid_urls_host_override_and_redirects(self):
+  for proxies in [{'http':'http://private.invalid'},{'https':'http://private.invalid'},{'all':'http://private.invalid'}]:
+   with mock.patch.object(m.urlrequest,'getproxies',return_value=proxies):
+    with self.assertRaises(m.GuardError)as failure:m.GoogleClient('private-token')
+    self.assertEqual(str(failure.exception),'GOOGLE_PROXY_CONFIGURED_UNSUPPORTED')
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={'no':'googleapis.com'}):client=m.GoogleClient('private-token')
+  with mock.patch.object(m.urlrequest,'build_opener')as opener:
+   for url in ['http://run.googleapis.com/x','https://outside.example/x','https://run.googleapis.com:444/x','https://user:private@run.googleapis.com/x','https://run.googleapis.com/x#fragment','https://192.0.2.1/x']:
+    with self.assertRaisesRegex(m.GuardError,'GOOGLE_ENDPOINT_NOT_ALLOWED'):client._request('GET',url)
+   with self.assertRaisesRegex(m.GuardError,'GOOGLE_METHOD_NOT_ALLOWED'):client._request('DELETE','https://run.googleapis.com/x')
+   opener.assert_not_called()
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={'https':'http://private.invalid'}),mock.patch.object(m.urlrequest,'build_opener')as opened:
+   with self.assertRaises(m.GuardError)as failure:client._request('GET','https://run.googleapis.com/x')
+   self.assertEqual(str(failure.exception),'GOOGLE_PROXY_CONFIGURED_UNSUPPORTED');opened.assert_not_called()
+  handler=m.GoogleHTTPSHandler(client.resolver,client.context);request=m.urlrequest.Request('https://run.googleapis.com/x',headers={'Host':'outside.example'})
+  with mock.patch.object(handler,'do_open')as opened:
+   with self.assertRaisesRegex(m.GuardError,'GOOGLE_HOST_OVERRIDE_NOT_ALLOWED'):handler.https_open(request)
+   opened.assert_not_called()
+  valid=m.urlrequest.Request('https://run.googleapis.com/x',headers={'Host':'run.googleapis.com'})
+  with mock.patch.object(handler,'do_open',return_value='synthetic-response')as opened:
+   self.assertEqual(handler.https_open(valid),'synthetic-response');factory=opened.call_args.args[0]
+  with mock.patch.object(m,'GoogleIPv4HTTPSConnection')as connection:
+   factory('run.googleapis.com',timeout=15);connection.assert_called_once_with('run.googleapis.com',timeout=15,resolver=client.resolver,context=client.context)
+  for target in ['https://outside.example/x','https://run.googleapis.com/other']:
+   with self.assertRaisesRegex(m.GuardError,'GOOGLE_REDIRECT_NOT_ALLOWED'):m.GoogleNoRedirect().redirect_request(request,None,302,'redirect',{},target)
+ def test_request_uses_fresh_isolated_opener_original_host_and_never_global_urlopen(self):
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):pass
+   def read(self,*args):return b'{"state":"PAUSED"}'
+  captured=[]
+  def opened(request,timeout):captured.append((request,timeout));return Response()
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={}),mock.patch.object(m.urlrequest,'build_opener',side_effect=lambda *handlers:mock.Mock(open=opened))as builders,mock.patch.object(m.urlrequest,'urlopen',side_effect=AssertionError('Global opener forbidden')):
+   client=m.GoogleClient('private-token');self.assertEqual(client._request('GET','https://cloudtasks.googleapis.com/v2/test'),{'state':'PAUSED'});client._request('GET','https://cloudtasks.googleapis.com/v2/test')
+  self.assertEqual(builders.call_count,2);self.assertIsNot(builders.call_args_list[0].args[1],builders.call_args_list[1].args[1]);self.assertIsInstance(builders.call_args.args[1],m.GoogleHTTPSHandler);self.assertIsInstance(builders.call_args.args[2],m.GoogleNoRedirect);self.assertTrue(all(req.get_header('Host')=='cloudtasks.googleapis.com'and req.full_url.startswith('https://cloudtasks.googleapis.com/')and timeout==15 for req,timeout in captured))
+ def test_new_transport_commit_failure_is_one_send_and_remains_uncertain(self):
+  _,plan,values=package()
+  for write in plan['contributionWrites']+plan['reviewWrites']:values[write['path']]=copy.deepcopy(write['data'])
+  client=FakeClient(values);runner=m.CatalogueBootstrap(plan,client,True)
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={}):transport=m.GoogleClient('private-token')
+  sends=mock.Mock(open=mock.Mock(side_effect=OSError(104,'connection reset')))
+  client.commit=lambda tx,writes:transport.commit(tx,writes)
+  with mock.patch.object(m.urlrequest,'getproxies',return_value={}),mock.patch.object(m.urlrequest,'build_opener',return_value=sends):
+   with self.assertRaises(m.AmbiguousCommit):runner.run()
+  self.assertEqual(sends.open.call_count,1);self.assertTrue(runner.activationCommitSent);self.assertFalse(runner.activationVerified);self.assertEqual(m.failure_status(m.AmbiguousCommit('COMMIT_NOT_PROVEN_DO_NOT_RETRY'),runner),'commit_uncertain_stop');self.assertNotIn(m.SETTINGS[1],client.docs)
  def test_firestore_roundtrip_preserves_unknowns_not_fake_zeroes(self):
   value={'unknown':None,'count':499,'supported':False,'metrics':[1.0,0.2],'source':{'key':'source@generation'}}
   self.assertEqual(m.decode(m.encode(value)),value)

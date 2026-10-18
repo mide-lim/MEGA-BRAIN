@@ -28,10 +28,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           enabled=false
-          if [ "$GITHUB_HEAD_REF" = codex/catalogue-owner-latency ] || [ "$GITHUB_REF_NAME" = codex/catalogue-owner-latency ]; then
+          if [ "$GITHUB_HEAD_REF" = codex/catalogue-owner-ipv4-transport ] || [ "$GITHUB_REF_NAME" = codex/catalogue-owner-ipv4-transport ]; then
             enabled=true
           elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
-            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 72 and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .number == 73 and .head.ref == "codex/catalogue-owner-ipv4-transport" and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
       - name: Receive the immutable original plan and exact saved source

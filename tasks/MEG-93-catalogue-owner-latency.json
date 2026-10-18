@@ -3,14 +3,15 @@
   "id": "MEG-93",
   "paperclip_issue_id": "08f4e66a-aa56-48e5-841f-23a8388b816f",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "73fab36349982fbfeb474eed79aaf52e5f270ae1",
-  "objective": "Corrigir latência do operador de bootstrap sem relaxar18s/8MiB ou controles; retomar exatamente507metadadosstagedcomomesmoplano73fab/op4cca, ativandoapenas2settings apóscontrolefresh. Não processar/reanalisar/excluir/alterarwebworkersfilasIAM.",
+  "base_commit": "da2e39ca033e6f89a0351773ee0fdedb6c2908e9",
+  "objective": "Corrigir somente transporte do operador Google: DNS IPv4 cacheado por host, HTTPS com Host/SNI/certificados preservados, allowlist e proxy guard explícitos. Retomar plano imutável73fab/5982/op4cca com507 metadados já staged e ativar só2settings após revisão e preflight. Sem retry de commit, sem produto/reprocessamento/novosReels/IAM/filas/exclusão.",
   "risk": "high",
   "acceptance_criteria": [
-    "Mesmo plano5982/op4cca/507staged preservados, recuperação grava só2settings semprovedor/fontes/filas/IAM",
-    "Probesreadonlyparaleloslimitados e READbatchbound semrelaxar18s/8MiB; testeCIlatência/ackambíguo/presendstop",
-    "GitHubCIrepeteplanoactualsalvoemstoreisolado507staged e API499/0missing, semGoogleauth ou execuçãoforaCI",
-    "Independentereviewexactcode/CI/script+oldplan epreflightfresh antesativação; nenhuma nova publicação deweb/worker necessária"
+    "Mesmo plano5982/op4cca/507staged preservado; recuperação grava somente2settings com fontes/providers/queues intocados",
+    "DNS AF_INET limitado aos3hostsGoogle, cache concorrente finito e TLS Host/SNI/cert validados; proxy configurado recusado sem expor valores; redirects recusados",
+    "Sem retryHTTP/commit e sem relaxar18s/8MiB; testes cobremcache/família/concorrência/certificados/falhas/commitambíguo",
+    "GitHubActions executa ensaio actual499sources sobre507staged com exact originalplan eAPI499/0missing, semGoogleauth",
+    "Revisão independente do exato código/CI/operatorhash+oldplan antes da execução owner; nenhum redeploy web/worker necessário"
   ],
   "allowed_paths": [
     "tasks/MEG-93-catalogue-owner-latency.json",
@@ -31,7 +32,7 @@
     }
   ],
   "validation_commands": [
-    "python3 scripts/check_task_packets.py --packet tasks/MEG-93-catalogue-owner-latency.json --diff-base 73fab36349982fbfeb474eed79aaf52e5f270ae1 --diff-head HEAD",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-93-catalogue-owner-latency.json --diff-base da2e39ca033e6f89a0351773ee0fdedb6c2908e9 --diff-head HEAD",
     "python3 -m unittest discover -s ops -p test_apply_reels_catalogue.py",
     "GitHub Actions Catalogue owner recovery with exact immutable original plan and saved-source API rehearsal"
   ],
@@ -58,13 +59,13 @@
     "merge_deploy": "Necessary ops-only integration; no product redeploy. Root alone applies exact same old plan with newly reviewed committed helper.",
     "ci_authorization": "All product tests/build/preparation/calibration only GitHubActions; raw existing data read via approved metadata helper; no new analysis.",
     "ownership": {
-      "developer": "alignment_frontend owneroperator/test",
-      "root": "recoveryCI/packet/rehearsal/integration/exactreviewedapply",
+      "developer": "alignment_frontend transport/test",
+      "root": "recoveryCI/packet/integration/exact reviewed finite apply",
       "review": "review_full_catalogue independent"
     },
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
     "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies.",
-    "canonical_revision": 303
+    "canonical_revision": 310
   }
 }

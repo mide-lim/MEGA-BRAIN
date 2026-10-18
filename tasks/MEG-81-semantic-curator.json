@@ -32,7 +32,7 @@
         "classification",
         "catalogue"
       ],
-      "max_chars": 6000
+      "max_chars": 3000
     },
     {
       "path": "google-v0/lib/category-taxonomy.mjs",
@@ -41,7 +41,7 @@
         "classification",
         "catalogue"
       ],
-      "max_chars": 6000
+      "max_chars": 3000
     },
     {
       "path": "google-v0/lib/reels-analysis-contract.mjs",
@@ -50,7 +50,7 @@
         "classification",
         "catalogue"
       ],
-      "max_chars": 6000
+      "max_chars": 3000
     },
     {
       "path": "google-v0/lib/reels-semantic-curator.mjs",
@@ -59,7 +59,7 @@
         "classification",
         "catalogue"
       ],
-      "max_chars": 6000
+      "max_chars": 3000
     }
   ],
   "validation_commands": [
@@ -67,12 +67,12 @@
     "GitHub Actions Google v0 integration, Semantic curator, Frontend browser QA and documentation CI; no local application/test/build execution"
   ],
   "execution_budget": {
-    "worker_runs": 3,
+    "worker_runs": 1,
     "reviewer_runs": 1,
-    "fix_runs": 1,
-    "timeout_minutes": 30,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Native demand-driven slots explicitly authorized; no scheduler. Editorial audit over saved sources, no paid calls."
+    "note": "Compatibility fields of legacy launcher remain within its unchanged pilot policy; actual authorized demand-driven native slots tracked in canonical state."
   },
   "review": {
     "mode": "independent_agent_and_human",

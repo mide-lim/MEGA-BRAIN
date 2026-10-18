@@ -1,3 +1,7 @@
+import assert from 'node:assert/strict';
+import {ReelsSemanticCurator} from '../lib/reels-semantic-curator.mjs';
+import {frozenSemanticSourceFromSaved} from '../lib/reels-semantic-source-v1.mjs';
+import {semanticUnknownProvider} from '../tests/reels-semantic-fixture.mjs';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {decodeFields} from '../lib/firestore.mjs';
@@ -17,9 +21,30 @@ async function main(){
  const jobs=[...records].filter(([,r])=>r.data.kind==='semantic_job'),results=[...records].filter(([,r])=>r.data.kind==='semantic_result');if(jobs.length!==1||results.length!==1)throw Error('EXACT_JOB_RESULT_REQUIRED');
  const job=jobs[0][1].data,saved=results[0][1].data,parts=[];for(const path of saved.rawChunks){const part=records.get(path)?.data;if(!part||part.kind!=='semantic_raw'||part.sha256!==semanticHash(part.text))throw Error('PAID_RAW_CHUNK_INVALID');parts.push(part.text);}
  const envelope={...saved,rawResponse:JSON.parse(parts.join(''))};if(semanticHash(envelope.rawResponse)!==saved.rawHash)throw Error('PAID_RAW_HASH_INVALID');
- const repository=new ReelsRepository({store,cacheTtlMs:0}),runtime=new ReelsCatalogueRuntime({repository}),sources=[];for(const pin of job.batch.binding.pins){const source=await runtime.loadSource(pin.id);sources.push(semanticSourceFromSaved(source));}
- const result=prepareSemanticSourceRecovery({job,saved,envelope,sources,sourceObservationSHA256:input.sourceObservationSHA256,sourceCommit:process.env.GITHUB_SHA,observedAt:new Date().toISOString()});
- await mkdir(args[5],{recursive:true});await writeFile(join(args[5],'source-recovery-report.json'),JSON.stringify(result.report,null,2)+'\n',{flag:'wx'});if(result.receipt)await writeFile(join(args[5],'source-recovery-receipt.json'),JSON.stringify(result.receipt,null,2)+'\n',{flag:'wx'});
+ const repository=new ReelsRepository({store,cacheTtlMs:0}),runtime=new ReelsCatalogueRuntime({repository}),sources=[],legacySources=[],sourceChecks=[];for(const pin of job.batch.binding.pins){const source=await runtime.loadSource(pin.id);sourceChecks.push(...source.checks);sources.push(semanticSourceFromSaved(source));legacySources.push(frozenSemanticSourceFromSaved(source));}
+ const result=prepareSemanticSourceRecovery({job,saved,envelope,sources,legacySources,allowCompleteEpochEquivalence:true,sourceObservationSHA256:input.sourceObservationSHA256,sourceCommit:process.env.GITHUB_SHA,observedAt:new Date().toISOString()});
+ if(result.receipt){
+  const sourceBefore=new Map(observation.records.map(r=>[r.path,semanticHash(store.docs.get(r.path))])),rawBefore=new Map([...records].filter(([,r])=>r.data.kind==='semantic_raw').map(([path,r])=>[path,semanticHash(r)])),bindingBefore=semanticHash(saved.binding),firstIds=new Set(job.batch.binding.pins.map(p=>p.id)),deliveries=[],provider=semanticUnknownProvider(),originalInfer=provider.infer.bind(provider);
+  provider.infer=async input=>{if(input.sources.some(s=>firstIds.has(s.id)))throw Object.assign(Error('FIRST_PAID_BATCH_REEXTRACT_FORBIDDEN'),{code:'FIRST_PAID_BATCH_REEXTRACT_FORBIDDEN'});return originalInfer(input);};
+  store.docs.set('settings/reels_v2_semantic_policy',{data:structuredClone(job.policy),updateTime:job.policyVersion});
+  await store.create('reels_index/semantic_source_recovery_'+job.batch.id,result.receipt);
+  const originalGet=store.get;let reverse=false;const reorder=v=>Array.isArray(v)?v.map(reorder):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).reverse().map(k=>[k,reorder(v[k])])):v;
+  store.get=async path=>{const r=await originalGet(path);reverse=!reverse;return r&&reverse?{...r,data:reorder(r.data)}:r;};
+  const curator=new ReelsSemanticCurator({repository,provider,enqueue:async j=>{deliveries.push({jobId:j.id,sequence:j.dispatch.sequence,outboxId:j.dispatch.outboxId,maxBatches:3});return {status:'sent'};}});
+  try{
+   await curator.command({action:'reconcile_saved',jobId:job.id});const recovered=await curator.job(job.id);
+   assert.equal(recovered.job.processed,firstIds.size);assert.equal(recovered.job.callsUsed,1);assert.equal(provider.calls.length,0);assert.equal(deliveries.length,0);
+   for(const pin of job.batch.binding.pins){const p=await store.get('reels_index/semantic_profile_'+pin.id);assert.equal(p.data.sourceReconciliation.receiptHash,result.receipt.receiptHash);assert.equal(p.data.sourceReconciliation.originalSemanticProofHash,pin.semanticProofHash);}
+   const continuation=(await store.get(jobs[0][0])).data;await curator.runDelivery({jobId:job.id,sequence:continuation.dispatch.sequence,outboxId:continuation.dispatch.outboxId,maxBatches:3});
+   let pages=0;while(deliveries.length){assert.ok(++pages<200);await curator.runDelivery(deliveries.shift());}
+   const final=(await curator.job(job.id)).job;assert.equal(final.status,'completed');assert.equal(final.processed,job.total);assert.equal(final.verificationProcessed,job.total);assert.equal(final.callsUsed,job.maxCalls);assert.equal(provider.calls.length,job.maxCalls-1);
+   for(const [path,value] of sourceBefore)assert.equal(semanticHash(store.docs.get(path)),value);
+   for(const [path,value] of rawBefore)assert.equal(semanticHash(store.docs.get(path)),value);
+   assert.equal(semanticHash((await store.get(results[0][0])).data.binding),bindingBefore);
+   result.report.rehearsal={savedRecoveryProviderCalls:0,savedRecoveryDispatches:0,firstBatchNeverReextracted:true,cursorAfterRecovery:firstIds.size,callsAfterRecovery:1,finalStatus:final.status,finalProcessed:final.processed,finalVerified:final.verificationProcessed,finalCallsUsed:final.callsUsed,subsequentSyntheticCalls:provider.calls.length,originalSourcesUnchanged:true,originalRawAndBindingUnchanged:true,alternatingFirestoreMapOrder:true,actualProviderCalls:0,googleWrites:0,semanticAccuracyMeasured:false};
+  }catch(e){result.report.ready=false;result.report.rehearsal={passed:false,errorCode:/^[A-Z0-9_]{1,96}$/.test(e.code??'')?e.code:'SAVED_RECOVERY_REHEARSAL_FAILED',actualProviderCalls:0,googleWrites:0};result.receipt=null;process.exitCode=2;}
+ }
+ await mkdir(args[5],{recursive:true});await writeFile(join(args[5],'source-recovery-report.json'),JSON.stringify(result.report,null,2)+'\n',{flag:'wx'});if(result.receipt){await writeFile(join(args[5],'source-recovery-receipt.json'),JSON.stringify(result.receipt,null,2)+'\n',{flag:'wx'});const path='reels_index/semantic_source_recovery_'+job.batch.id,checks=new Map([...sourceChecks,{path:jobs[0][0],updateTime:jobs[0][1].updateTime},{path:results[0][0],updateTime:results[0][1].updateTime},{path:'settings/reels_v2_semantic_policy',updateTime:job.policyVersion},{path,updateTime:null}].map(c=>[c.path,c.updateTime]));const packet={schemaVersion:1,kind:'semantic_source_recovery_create_only',sourceCommit:process.env.GITHUB_SHA,sourceObservationSHA256:input.sourceObservationSHA256,jobId:job.id,batchId:job.batch.id,receiptHash:result.receipt.receiptHash,checks:[...checks].map(([path,updateTime])=>({path,updateTime})),writes:[{path,data:result.receipt,createOnly:true}],providerCalls:0,sourceWrites:0,rawWrites:0};packet.packetHash=semanticHash(packet);await writeFile(join(args[5],'source-recovery-create-only.json'),JSON.stringify(packet,null,2)+'\n',{flag:'wx'});}
  console.log(JSON.stringify({ready:result.report.ready,sourceCount:result.report.sources.length,truncated:result.report.sources.filter(s=>!s.complete).length,ordersReconstructed:result.report.sources.filter(s=>s.legacyOrderVerified).length,contractError:result.report.contractError??null,receiptHash:result.report.receiptHash??null,providerCalls:0,writes:0,rawIncluded:false}));
  if(!result.report.ready)process.exitCode=2;
 }

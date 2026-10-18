@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {encodeFields} from '../lib/firestore.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
@@ -7,7 +8,7 @@ import {semanticHash,semanticPolicyVersion,semanticSourceFromSaved} from '../lib
 import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
 import {makeSemanticCheckpointFixture,seedSemanticAlignmentRecovery} from './reels-semantic-checkpoint-fixture.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
-import {diagnoseSemanticNextInput,measureSemanticSchema,payloadAuditScope} from '../scripts/diagnose-semantic-next-input.mjs';
+import {diagnoseSemanticNextInput,prepareSemanticNextInputAudit,measureSemanticSchema,payloadAuditScope} from '../scripts/diagnose-semantic-next-input.mjs';
 
 async function inputs(){
  const fixture=makeSemanticCheckpointFixture(),store=memoryReelsStore();
@@ -63,4 +64,20 @@ test('schema metrics count serialized repeated branches, optional fields and unt
  const union=measureSemanticSchema({anyOf:[{type:'OBJECT',properties:{},required:[]},{type:'STRING'}]});assert.equal(union.missingType.length,1);assert.deepEqual(union.missingType[0].branchTypes,['OBJECT','STRING']);
  assert.deepEqual(measureSemanticSchema({type:'STRING',pattern:'.*'}).unsupportedKeywords,['responseSchema.pattern']);
  const cycle={type:'ARRAY'};cycle.items=cycle;assert.throws(()=>measureSemanticSchema(cycle),{code:'SCHEMA_CYCLE_INVALID'});
+});
+
+test('optional CountTokens packet preserves exact generationConfig and contains only a constant prompt, never source content or generation authorization',async t=>{
+ const data=await inputs();t.mock.method(globalThis,'fetch',()=>{throw Error('NETWORK_FORBIDDEN');});
+ const {report,probe}=await prepareSemanticNextInputAudit(data.input,data.paid,{expected:data.expected});
+ assert.equal(probe.operation,'countTokens');assert.deepEqual(probe.target,{project:'megabrain-v0-1017370021431',location:'global',publisher:'google',model:data.expected.model,method:'countTokens'});assert.equal(probe.maximumManualRequests,1);assert.equal(probe.automaticRetries,0);assert.equal(probe.executor,'root_reviewed_owner_only');assert.deepEqual(JSON.parse(probe.requestBodyJSON),probe.request);assert.equal(createHash('sha256').update(probe.requestBodyJSON).digest('hex'),probe.requestBodySHA256);assert.equal(probe.model,data.expected.model);assert.equal(probe.sourceBindingHash,report.bindingHash);assert.equal(probe.originalAdapterRequestHash,report.requestHash);
+ assert.equal(semanticHash(probe.request.generationConfig),report.generationConfigHash);assert.equal(semanticHash(probe.request.generationConfig.responseSchema),report.schemaHash);assert.equal(probe.generationConfigHash,report.generationConfigHash);assert.equal(probe.schemaHash,report.schemaHash);
+ assert.deepEqual(Object.keys(probe.request).sort(),['contents','generationConfig']);
+ assert.deepEqual(probe.request.contents,[{role:'user',parts:[{text:'Technical schema probe. No Reel content.'}]}]);
+ assert.equal(probe.request.generationConfig.maxOutputTokens,16384);assert.equal(probe.request.generationConfig.responseMimeType,'application/json');assert.equal(probe.request.generationConfig.temperature,0.1);
+ const content=JSON.stringify(probe.request.contents),serialized=JSON.stringify(probe);
+ for(const id of data.expected.sourceIds)assert.equal(content.includes(id),false,'Only schema enums may retain finite metadata IDs');
+ for(const text of data.sourceText)assert.equal(serialized.includes(text),false,'Original saved text must never enter the schema-only packet');
+ for(const forbidden of ['rawResponse','systemInstruction','sourceIdentity','Authorization','Bearer ','https://'])assert.equal(serialized.includes(forbidden),false,forbidden+' must not be included');
+ assert.equal(probe.sourceTextIncluded,false);assert.equal(probe.sourceIdsInContents,false);assert.equal(probe.inferenceRequested,false);assert.equal(probe.generatedContent,0);assert.equal(probe.providerCallsExecuted,0);assert.equal(probe.googleRequestsExecuted,0);assert.equal(probe.approvedForExecution,false);assert.equal(probe.remoteGenerateContentAcceptanceProven,false);assert.equal(data.fixture.calls.length,0);
+ const payload=structuredClone(probe);delete payload.packetHash;assert.equal(semanticHash(payload),probe.packetHash);
 });

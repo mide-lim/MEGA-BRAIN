@@ -2,7 +2,7 @@ import {projectReel,categoryNavigation,reelIdPattern} from './reels-model.mjs';
 import {withPreservedSummary} from './reels-preserved-content.mjs';
 import {projectContextualPublication,contextualHash} from './reels-contextual-projection.mjs';
 import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
-import {contextualCataloguePolicy,catalogueEditorialMetadata,ReelsContextualCatalogueProjector,buildContextualCatalogue,catalogueMatchingIds} from './reels-contextual-catalogue.mjs';
+import {contextualCataloguePolicy,catalogueEditorialMetadata,ReelsContextualCatalogueProjector,buildContextualCatalogue,catalogueMatchingIds,normalizeCatalogueQuery} from './reels-contextual-catalogue.mjs';
 const list=v=>Array.isArray(v)?v:[];
 export const catalogueManifestPath='settings/reels_v2_contextual_catalogue';
 export const catalogueManifestActive=manifest=>manifest?.status==='active'&&manifest.policyVersion===contextualCataloguePolicy.version;
@@ -75,8 +75,9 @@ export class ReelsCatalogueRuntime{
   const snapshot=await this.snapshot(),taxonomy=(await this.store.get('settings/reels_v2_taxonomy'))?.data??{};
   let ids=catalogueMatchingIds(snapshot.contributions,query,taxonomy.nodes??[]);
   if(/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
-   const manual=list(snapshot.items).filter(i=>i.categoryResolution?.mode==='manual'&&i.categoryIds.includes(query.category)).map(i=>i.id);
-   ids=[...new Set([...ids,...manual])];
+   const {category,...extra}=query,parsed=normalizeCatalogueQuery(extra).query,hasExtra=!!parsed.context||!!parsed.q||parsed.facets.length>0,eligible=hasExtra?new Set(catalogueMatchingIds(snapshot.contributions,extra,taxonomy.nodes??[])):null;
+   const manual=list(snapshot.items).filter(i=>i.categoryResolution?.mode==='manual'&&i.categoryIds.includes(query.category)&&(!eligible||eligible.has(i.id))).map(i=>i.id);
+   if(!normalizeCatalogueQuery(query).impossible)ids=[...new Set([...ids,...manual])];
   }
   return {ids,observedAt:this.now(),dataAsOf:snapshot.dataAsOf,sourceStale:snapshot.sourceStale,versionHash:snapshot.versionHash};
  }

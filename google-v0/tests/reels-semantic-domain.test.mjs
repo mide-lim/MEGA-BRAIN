@@ -140,7 +140,7 @@ test('destination proof detail hydrates only its current saved source and GET ne
  const s=setup();await seedSyntheticDomainOwner({curator:s.curator});const captured=[];s.curator.provider=realDomainProvider(captured,{destinations:true});const created=await startOwnerDomain(s);assert.equal((await finishDomain(s,created)).status,'completed');
  const view=await s.domains.overview(),suggestion=view.destinationPending.suggestions.find(d=>d.state==='suggested');assert.ok(suggestion.title);assert.equal(suggestion.suggestedDomainLabel,'Tecnologia');assert.ok(suggestion.reason);
  const before=captured.length,reads=[],load=s.curator.catalogue.loadSource.bind(s.curator.catalogue);s.curator.catalogue.loadSource=async id=>{reads.push(id);return load(id);};
- const api=reelsAPI({repository:s.repository,semantic:s.curator,authorize:async()=>true,sameOrigin:async()=>true,clock:()=>Date.parse(s.now)}),response=await api(new Request('https://qa.example/api/reels/'+suggestion.detailPath));assert.equal(response.status,200);const detail=await response.json();assert.equal(detail.sourceStale,false);assert.equal(detail.evidence.length,1);assert.equal(detail.inferenceOnGet,false);assert.deepEqual(reads,[suggestion.reelId]);assert.equal(captured.length,before);
+ const api=reelsAPI({repository:s.repository,semantic:s.curator,authorize:async()=>true,sameOrigin:async()=>true,clock:()=>Date.parse(s.now)}),response=await api(new Request('https://qa.example/api/reels/'+suggestion.detailPath));assert.equal(response.status,200);const detail=await response.json();assert.equal(detail.sourceStale,false);assert.equal(detail.accepted,false);assert.equal(detail.semanticCertified,false);assert.equal(typeof detail.sourceCoverage.truncated,'boolean');assert.equal(detail.sourceCoverage.scope,'saved_text_projection_not_complete_video');assert.equal(detail.evidence.length,1);assert.equal(detail.inferenceOnGet,false);assert.deepEqual(reads,[suggestion.reelId]);assert.equal(captured.length,before);
  const raw=s.store.docs.get('videos/'+suggestion.reelId);raw.updateTime='2026-10-18T00:03:00.000Z';const stale=await s.domains.destination(suggestion.reelId);assert.equal(stale.sourceStale,true);assert.deepEqual(stale.evidence,[]);assert.equal(captured.length,before);
 });
 
@@ -176,4 +176,13 @@ test('a requested specialist outside the sealed allowedDomains cannot start or s
  for(const path of [seed.plan.budgetPath,seed.plan.quarantinePath]){const d=s.store.docs.get(path);d.data.authorityHash=authority.authorityHash;}
  const p=await s.curator.preview({domainId:'technology'});assert.equal(p.preview.providerEnabled,false);assert.ok(p.preview.blockingReasons.includes('DOMAIN_GLOBAL_AUTHORITY_INVALID'));
  await assert.rejects(()=>s.domains.command({action:'create',domainId:'technology',previewHash:p.previewHash,idempotencyKey:'synthetic-denied-tech'}),{code:'DOMAIN_START_NOT_AUTHORIZED'});assert.equal(s.fixture.calls.length,0);
+});
+
+test('the root policy cannot be replaced by its exact child or rewritten at a new epoch to bypass its seal',async()=>{
+ for(const replacement of ['exact_child','same_root_new_epoch']){
+  const s=setup();await seedSyntheticDomainOwner({curator:s.curator});const p=await s.domains.command({action:'preview',domainId:'food'}),created=await s.domains.command({action:'create',domainId:'food',previewHash:p.previewHash,idempotencyKey:'synthetic-root-seal-'+replacement}),path='reels_index/semantic_job_'+created.job.id,job=(await s.store.get(path)).data,root=await s.store.get('settings/reels_v2_semantic_policy');
+  await s.store.patch('settings/reels_v2_semantic_policy',replacement==='exact_child'?clone(job.policy):clone(root.data),{updateTime:root.updateTime});
+  assert.notEqual((await s.store.get('settings/reels_v2_semantic_policy')).updateTime,job.policyVersion);await assert.rejects(()=>s.curator.executionPolicy(job),{code:'SEMANTIC_AUTHORIZATION_CHANGED'});
+  const outcome=await s.curator.runDelivery({jobId:job.id,sequence:job.dispatch.sequence,outboxId:job.dispatch.outboxId,maxBatches:3});assert.equal(outcome.job.status,'paused');assert.equal(outcome.job.reason,'SEMANTIC_AUTHORIZATION_CHANGED');assert.equal(outcome.job.callsUsed,0);assert.equal(s.fixture.calls.length,0);assert.equal((await s.store.get(path)).data.batch,null);
+ }
 });

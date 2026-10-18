@@ -47,7 +47,7 @@ export class ReelsSemanticCurator{
  }
  async executionPolicy(job){
   const root=await this.policy();if(!job.domainCuration)return root;
-  if(semanticHash(root.data)!==job.rootPolicyHash||root.snapshot?.updateTime!==job.policyVersion)return root;
+  if(semanticHash(root.data)!==job.rootPolicyHash||root.snapshot?.updateTime!==job.policyVersion)throw problem('SEMANTIC_AUTHORIZATION_CHANGED','A configuração raiz ou sua versão mudou; não executar.');
   const manifest=await this.store.get(semanticDomainPlanPath);
   return {...root,data:this.domainPolicy(root.data,job.domainCuration.domainId,manifest?.data),rootPolicyHash:semanticHash(root.data)};
  }
@@ -167,7 +167,7 @@ export class ReelsSemanticCurator{
   for(let i=0;i<maxBatches;i++){
    snapshot=await this.store.get(jobPath(jobId));const job=snapshot.data;
    if(!['prepared','running'].includes(job.status))return {job:publicJob(job)};
-   const p=await this.executionPolicy(job);if(semanticHash(p.data)!==job.policyHash||!p.data.enabled||Date.parse(p.data.expiresAt)<=this.clock()){await this.stop(snapshot,'paused','SEMANTIC_AUTHORIZATION_CHANGED');break;}
+   let p;try{p=await this.executionPolicy(job);}catch(e){await this.stop(snapshot,'paused',e.code??'SEMANTIC_AUTHORIZATION_CHANGED');break;}if(semanticHash(p.data)!==job.policyHash||!p.data.enabled||Date.parse(p.data.expiresAt)<=this.clock()){await this.stop(snapshot,'paused','SEMANTIC_AUTHORIZATION_CHANGED');break;}
    if(job.batch?.status==='submitting'){
     const saved=await this.store.get(resultPath(job.batch.id));
     if(saved){try{await this.applySaved(snapshot,saved);}catch(e){const fresh=await this.store.get(jobPath(job.id));await this.stop(fresh,e.requiresReconciliation?'uncertain':'paused',e.code??'SAVED_RESPONSE_REQUIRES_REVIEW');break;}continue;}

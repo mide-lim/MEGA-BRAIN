@@ -6,6 +6,8 @@ import {chromium} from 'playwright';
 import {startReelsFixtureServer} from './reels-server.mjs';
 import {makeSemanticFixture,semanticEnvelope} from '../tests/reels-semantic-fixture.mjs';
 import {semanticHash,semanticPolicyPath} from '../lib/reels-semantic-source.mjs';
+import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
+import {prepareSemanticSourceRecovery,semanticSourceRecoveryPath} from '../lib/reels-semantic-source-recovery.mjs';
 
 
 function makeProofNavigationFixture(){
@@ -23,6 +25,20 @@ function makeProofNavigationFixture(){
   async verify(input){calls.push('verify');const byId=new Map(input.sources.map(source=>[source.id,source]));return semanticEnvelope({version:1,members:input.members.map(member=>({groupId:member.groupId,reelId:member.reelId,verdict:'supported',reason:'Synthetic saved-proof contract fixture.',evidence:[proof(byId.get(member.reelId))]})),negativeExamples:[]},input.model);}
  };
  return {documents,provider,calls,policy};
+}
+
+
+async function seedSavedRecovery(server){
+ const preview=await server.semantic.preview({all:true}),created=await server.semantic.create({selection:{all:true},previewHash:preview.previewHash,idempotencyKey:'fixture-reconcile-saved-metadata-only'}),path='reels_index/semantic_job_'+created.job.id,snapshot=await server.store.get(path),job=snapshot.data,loaded=await server.semantic.loadSources(job.pins.slice(0,job.policy.batchSize));
+ const roots=['title','summary','knowledge','useful_information','useful_value','claims','topics','candidate_relations','limitations'].map(key=>'analysis.'+key).concat(['caption','transcript']);
+ const legacyFields=source=>roots.flatMap(prefix=>source.fields.filter(field=>field.fieldPath===prefix||field.fieldPath.startsWith(prefix+'.')));
+ const batchId=semanticHash({jobId:job.id,phase:'extract',cursor:0}),binding={jobId:job.id,phase:'extract',cursor:0,pins:loaded.sources.map(source=>({id:source.id,semanticProofHash:semanticHash({identity:source.sourceIdentity,fields:legacyFields(source)}),sourceVersions:source.sourceVersions,editorialHash:source.editorialHash})),catalogueHash:semanticHash({version:job.policy.version,promptHash:semanticPromptHash,groups:[]}),policyHash:job.policyHash,promptHash:semanticPromptHash},bindingHash=semanticHash(binding);
+ const output={version:1,profiles:loaded.sources.map(source=>({reelId:source.id,context:'general',state:'unknown',reason:'Synthetic saved-response reconciliation fixture; no inference is executed.',units:[]})),groups:[]},envelope={...semanticEnvelope(output,job.policy.model),phase:'extract'},saved=await server.semantic.envelopeSave(batchId,envelope,binding),at=new Date().toISOString();
+ const staged={...job,status:'paused',phase:'extract',reason:'SEMANTIC_SOURCE_CHANGED',callsUsed:1,cursor:0,batch:{id:batchId,status:'submitting',phase:'extract',offset:0,sourceIds:loaded.sources.map(source=>source.id),binding,bindingHash,leaseOwner:'synthetic-historical-owner',leaseUntil:'2000-01-01T00:00:00.000Z',startedAt:at,groupVersions:[]},updatedAt:at};
+ await server.store.patch(path,staged,{updateTime:snapshot.updateTime});server.semanticDeliveries.length=0;
+ const recovery=prepareSemanticSourceRecovery({job:staged,saved:saved.data,envelope:{...saved.data,rawResponse:envelope.rawResponse},sources:loaded.sources,sourceObservationSHA256:'d'.repeat(64),sourceCommit:'e'.repeat(40),observedAt:at});
+ assert.equal(recovery.report.ready,true,JSON.stringify(recovery.report.gates));assert.ok(recovery.receipt);
+ return {jobId:job.id,path,batchId,receipt:recovery.receipt,receiptPath:semanticSourceRecoveryPath(batchId),sourceCount:loaded.sources.length,rawHash:saved.data.rawHash,bindingHash:saved.data.bindingHash};
 }
 
 const output=process.env.MEGABRAIN_REELS_SEMANTIC_QA_OUTPUT??join(tmpdir(),'megabrain-reels-semantic-qa');
@@ -56,8 +72,20 @@ try{
   const overview=await read('/curation/semantic');assert.equal(overview.inferenceOnGet,false);assert.equal(overview.coverage.published,fixture.expected.publishedCount);assert.equal(overview.coverage.evaluated,0);assert.equal(overview.coverage.pending,5);
   await page.getByRole('region',{name:'Curadoria semântica do acervo'}).getByRole('heading',{name:'Contextos que fazem sentido juntos',exact:true}).waitFor();
   assert.equal(await page.locator('details.contextual-source-explorer').evaluate(element=>element.open),false,'Documentary support is secondary, not a competing curator');
+  assert.equal(server.calls.some(call=>['/api/reels/contextual','/api/reels/curation/catalogue','/api/reels/curation/calibration'].includes(call.path)),false,'Closed auxiliary panels must not request their data');
+  assert.equal(await page.getByRole('button',{name:'Aplicar resposta salva',exact:true}).count(),0,'Missing server capability must not expose recovery');
   await read('/curation/semantic');await read('/categories');await read('/items?workspace=library');
   assert.equal(fixture.calls.length,0);assert.equal(semanticPosts().length,0);assert.equal(sourceSnapshot(),originalSources);
+ });
+ await record('auxiliary_sources_mount_only_when_open_and_remember_controlled_search',async()=>{
+  const auxiliary=call=>['/api/reels/contextual','/api/reels/curation/catalogue','/api/reels/curation/calibration'].includes(call.path),summary=page.locator('details.contextual-source-explorer summary');
+  const opened=responseFor('/api/reels/contextual');await summary.click();await opened;
+  const filtered=responseFor('/api/reels/contextual',response=>new URL(response.url()).searchParams.get('q')==='QaFull');await page.getByLabel('Buscar publicações neste recorte',{exact:true}).fill('QaFull');await filtered;
+  await summary.click();await page.getByLabel('Buscar publicações neste recorte',{exact:true}).waitFor({state:'hidden'});const count=server.calls.filter(auxiliary).length;
+  const refreshed=responseFor(semanticPath,response=>response.request().method()==='GET');await page.getByRole('button',{name:'Atualizar curadoria',exact:true}).click();await refreshed;assert.equal(server.calls.filter(auxiliary).length,count,'Quiet refresh must not reload a closed auxiliary panel');
+  await navigate('Financeiro');await navigate('Categorias');assert.equal(await page.locator('details.contextual-source-explorer').evaluate(element=>element.open),false);assert.equal(server.calls.filter(auxiliary).length,count);
+  const restored=responseFor('/api/reels/contextual',response=>new URL(response.url()).searchParams.get('q')==='QaFull');await summary.click();await restored;assert.equal(await page.getByLabel('Buscar publicações neste recorte',{exact:true}).inputValue(),'QaFull');
+  await summary.click();await page.getByLabel('Buscar publicações neste recorte',{exact:true}).waitFor({state:'hidden'});assert.equal(fixture.calls.length,0);
  });
  await record('explicit_metadata_preview_then_single_create_pins_finite_saved_scope',async()=>{
   await page.getByRole('button',{name:'Organizar acervo salvo',exact:true}).click();const previewResponse=postFor('preview');
@@ -196,6 +224,37 @@ try{
    assert.deepEqual(proofServer.externalAttempts,[]);proofJourneyCalls=proofFixture.calls.length;await proofPage.screenshot({path:join(output,'semantic-member25-saved-proof.png'),fullPage:true});
   }catch(error){await proofPage?.screenshot({path:join(output,'semantic-member-proof-failure.png'),fullPage:true}).catch(()=>{});throw error;}
   finally{await writeFile(join(output,'proof-http-calls.json'),JSON.stringify(proofServer.calls,null,2));await proofContext?.close();await proofServer.close();}
+ });
+ await record('saved_response_apply_is_server_gated_explicit_idempotent_and_never_infers_or_enqueues',async()=>{
+  const recoveryFixture=makeSemanticFixture(),recoveryServer=await startReelsFixtureServer({semanticFixture:recoveryFixture});let recoveryContext,recoveryPage;
+  try{
+   const sourceBefore=semanticHash([...recoveryServer.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/'))),seed=await seedSavedRecovery(recoveryServer);
+   assert.equal(recoveryFixture.calls.length,0,'Fixture stages an existing envelope without invoking infer');
+   recoveryContext=await browser.newContext({viewport:{width:1440,height:1000}});await recoveryContext.addCookies([{name:'qa_session',value:'local',url:recoveryServer.origin}]);
+   await recoveryContext.route('**/*',route=>{if(new URL(route.request().url()).origin===recoveryServer.origin)return route.continue();failures.push('Unexpected recovery browser external request');return route.abort();});
+   recoveryPage=await recoveryContext.newPage();recoveryPage.setDefaultTimeout(20000);recoveryPage.on('pageerror',error=>failures.push(error.message));await recoveryPage.goto(recoveryServer.origin);
+   let response=recoveryPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='GET');
+   await recoveryPage.getByRole('navigation').getByRole('button',{name:/Categorias/}).click();let overview=await (await response).json();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canReconcileSaved,false);assert.equal(await recoveryPage.getByRole('button',{name:'Aplicar resposta salva',exact:true}).count(),0,'No receipt means no apply action');
+   await recoveryServer.store.create(seed.receiptPath,seed.receipt);
+   async function setJob(patch){const snapshot=await recoveryServer.store.get(seed.path);await recoveryServer.store.patch(seed.path,patch,{updateTime:snapshot.updateTime});}
+   async function refresh(){const pending=recoveryPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='GET');await recoveryPage.getByRole('button',{name:'Atualizar curadoria',exact:true}).click();return (await pending).json();}
+   await setJob({status:'uncertain'});overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canReconcileSaved,false);assert.equal(await recoveryPage.getByRole('button',{name:'Aplicar resposta salva',exact:true}).count(),0,'An uncertain call must never expose an apply/retry shortcut');
+   const paused=await recoveryServer.store.get(seed.path);await setJob({status:'running',batch:{...paused.data.batch,leaseUntil:'2099-01-01T00:00:00.000Z'}});overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canReconcileSaved,false);assert.equal(await recoveryPage.getByRole('button',{name:'Aplicar resposta salva',exact:true}).count(),0,'Busy execution must not expose recovery');
+   const busy=await recoveryServer.store.get(seed.path);await setJob({status:'paused',batch:{...busy.data.batch,leaseUntil:'2000-01-01T00:00:00.000Z'}});overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canReconcileSaved,true);
+   const action=recoveryPage.getByRole('region',{name:'Resposta salva pronta para aplicar'}).getByRole('button',{name:'Aplicar resposta salva',exact:true});await action.waitFor();await action.click();
+   const dialog=recoveryPage.getByRole('dialog',{name:'Aplicar resposta salva'});await dialog.getByText('Confirmar apenas incorpora essa resposta. Não solicita outra análise à IA, não repete a chamada anterior e não encaminha novos trabalhos.',{exact:true}).waitFor();
+   assert.equal(await action.isDisabled(),true);const hold=recoveryServer.holdNext(url=>url.pathname===semanticPath),posted=recoveryPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='POST');
+   await dialog.getByRole('button',{name:'Aplicar resposta salva',exact:true}).click();await hold.started;assert.equal(await dialog.getByRole('button',{name:'Aplicando resposta salva…',exact:true}).isDisabled(),true);assert.equal(recoveryFixture.calls.length,0);hold.release();
+   const received=await posted;assert.equal(received.status(),200,JSON.stringify(await received.json()));const applied=await received.json();assert.equal(applied.job.canReconcileSaved,false);assert.equal(applied.job.status,'prepared');assert.equal(applied.job.reason,'SAVED_RESPONSE_APPLIED_AWAITING_DELIVERY');
+   await dialog.waitFor({state:'hidden'});await recoveryPage.getByText('Resposta salva aplicada. Nenhuma nova análise foi solicitada.',{exact:true}).waitFor();assert.equal(await recoveryPage.getByRole('button',{name:'Aplicar resposta salva',exact:true}).count(),0);
+   const posts=recoveryServer.calls.filter(call=>call.path===semanticPath&&call.method==='POST');assert.equal(posts.length,1);assert.equal(posts[0].body.action,'reconcile_saved');assert.equal(posts[0].body.jobId,seed.jobId);assert.ok(posts[0].body.idempotencyKey.length>=8);
+   assert.equal(recoveryFixture.calls.length,0);assert.equal(recoveryServer.semanticDeliveries.length,0,'Applying saved output must not enqueue a continuation');assert.equal(recoveryServer.calls.some(call=>call.path==='/api/reels/commands'),false);
+   const result=await recoveryServer.store.get('reels_index/semantic_result_'+seed.batchId);assert.equal(result.data.processed,true);assert.equal(result.data.rawHash,seed.rawHash);assert.equal(result.data.bindingHash,seed.bindingHash);assert.equal((await recoveryServer.store.get(seed.path)).data.cursor,seed.sourceCount);
+   assert.equal(semanticHash([...recoveryServer.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/'))),sourceBefore);assert.deepEqual(recoveryServer.externalAttempts,[]);
+   const duplicated=await recoveryContext.request.post(recoveryServer.origin+semanticPath,{headers:{Origin:recoveryServer.origin},data:posts[0].body});assert.equal(duplicated.status(),200,'Same explicit idempotency key must acknowledge the saved application');assert.equal(recoveryFixture.calls.length,0);assert.equal(recoveryServer.semanticDeliveries.length,0);
+   await recoveryPage.screenshot({path:join(output,'semantic-saved-response-applied.png'),fullPage:true});
+  }catch(error){await recoveryPage?.screenshot({path:join(output,'semantic-saved-response-failure.png'),fullPage:true}).catch(()=>{});throw error;}
+  finally{await writeFile(join(output,'recovery-http-calls.json'),JSON.stringify(recoveryServer.calls,null,2));await recoveryContext?.close();await recoveryServer.close();}
  });
  const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));

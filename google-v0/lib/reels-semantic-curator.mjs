@@ -53,11 +53,9 @@ export class ReelsSemanticCurator{
  }
  async currentGroups(){return (await this.scan('semantic_group',['kind','id','key','name','context','parentId','dimension','groupKind','definition','aliases','positiveCriteria','negativeCriteria','members','negativeExamples','possibleDuplicates','status','reason','revision','protected','manual','verification','updatedAt','policyHash','jobIds','originJobId'])).map(r=>({...r,data:{...r.data,kind:r.data.groupKind}}));}
  async loadSources(pins){
-  const sources=[],checks=[];
-  for(const pin of pins){const s=await this.catalogue.loadSource(pin.id);if(!s?.item.publication.available||!sourceCurrent(pin.sourceVersions,s.sourceVersions))throw problem('SEMANTIC_SOURCE_CHANGED','Uma publicação ou edição mudou; não reanalisar automaticamente.');
-   sources.push(semanticSourceFromSaved(s));checks.push(...s.checks);
-  }
-  return {sources,checks};
+  const results=new Array(pins.length);let cursor=0;
+  await Promise.all(Array.from({length:Math.min(8,pins.length)},async()=>{while(cursor<pins.length){const index=cursor++,pin=pins[index],source=await this.catalogue.loadSource(pin.id);if(!source?.item.publication.available||!sourceCurrent(pin.sourceVersions,source.sourceVersions))throw problem('SEMANTIC_SOURCE_CHANGED','Uma publicação ou edição mudou; não reanalisar automaticamente.');results[index]={source:semanticSourceFromSaved(source),checks:source.checks};}}));
+  return {sources:results.map(r=>r.source),checks:this.uniqueChecks(results.flatMap(r=>r.checks))};
  }
  uniqueChecks(checks){const m=new Map();for(const c of checks){if(m.has(c.path)&&m.get(c.path)!==c.updateTime)throw problem('SEMANTIC_SOURCE_CHANGED','Revisões divergentes no mesmo lote.');m.set(c.path,c.updateTime);}return [...m].map(([path,updateTime])=>({path,updateTime}));}
  async envelopeSave(batchId,envelope,binding){

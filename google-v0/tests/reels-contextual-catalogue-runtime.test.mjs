@@ -29,7 +29,7 @@ async function setup({active=true,overlap=false}={}){
  if(active)store.put(catalogueManifestPath,{status:'active',policyVersion:contextualCataloguePolicy.version,dataAsOf:input.dataAsOf});
  for(const review of input.formatReviews)store.put('reels_index/contextual_review_'+review.reelId,{kind:'contextual_review',reelId:review.reelId,reviewHash:contextualHash(review),review});
  const repository=new ReelsRepository({store,clock:()=>Date.parse(input.observedAt),cacheTtlMs:60000}),runtime=new ReelsCatalogueRuntime({repository,clock:()=>Date.parse(input.observedAt)}),api=reelsAPI({repository,authorize:()=>true,sameOrigin:()=>true,clock:()=>Date.parse(input.observedAt)});
- return {input,store,repository,runtime,api,async seed(){for(const row of input.catalog){const result=await runtime.project(row.id,{type:'baselinePublicationRegistered'});assert.equal(result.pending,true,JSON.stringify(result));assert.equal(result.committed,true,JSON.stringify(result));}}};
+ return {input,store,repository,runtime,api};
 }
 async function seed(x){for(const row of x.input.catalog){const result=await x.runtime.project(row.id,{type:'baselinePublicationRegistered'});assert.equal(result.committed,true,JSON.stringify(result));}}
 async function json(x,path,body){const r=await x.api(request(path,body));assert.equal(r.status,200,await r.clone().text());return r.json();}
@@ -93,4 +93,35 @@ test('source CAS drift defers the secondary event and never mutates the accepted
  const x=await setup(),original=x.store.compareAndReplaceDerived;let attempted=0;
  x.store.compareAndReplaceDerived=async args=>{attempted++;const source=x.store.docs.get('videos/QaFull_single');x.store.put('videos/QaFull_single',{...source.data,title:'New source version'});return original(args);};
  const result=await x.runtime.project('QaFull_single');assert.equal(result.pending,true);assert.equal(result.committed,false);assert.equal(attempted,1);assert.equal(x.store.docs.has('reels_index/contextual_QaFull_single'),false);assert.ok([...x.store.docs.values()].some(v=>v.data.kind==='contextual_event'&&v.data.status==='pending'));
+});
+
+test('manual reclassification resumes only completed durable assignment receipts after an index failure',async()=>{
+ const x=await setup();await seed(x);const oldCompare=x.store.compareAndReplaceDerived;let failOnce=true;
+ x.store.compareAndReplaceDerived=async args=>{if(failOnce&&args.path==='reels_index/contextual_QaFull_single'){failOnce=false;return {applied:false};}return oldCompare(args);};
+ const command={action:'reclassify',revision:13,reelIds:['QaFull_single'],categoryIds:['receitas'],idempotencyKey:'catalogue-editorial-reclassify'};
+ const result=await json(x,'categories',command);assert.equal(result.catalogueIndex.pending,true);assert.equal(result.catalogueIndex.evaluatedCount,1);
+ const sourceAfter=clone(x.store.docs.get('videos/QaFull_single'));
+ const stale=await json(x,'curation/catalogue');assert.equal(stale.projectionCoverage.missingCount,1);
+ const replay=await json(x,'categories',command);assert.equal(replay.duplicate,true);assert.equal(replay.catalogueIndex.pending,false);assert.equal(replay.catalogueIndex.evaluatedCount,1);assert.deepEqual(x.store.docs.get('videos/QaFull_single'),sourceAfter);
+ const after=await json(x,'curation/catalogue');assert.equal(after.projectionCoverage.evaluatedCount,5);assert.equal(x.store.docs.get('reels_index/contextual_QaFull_single').data.editorial.manual,true);
+ const queries=x.store.calls.filter(c=>c.method==='query'&&c.collection==='reels_command_items');
+ assert.ok(queries.some(c=>c.select.includes('assignment.reelId')),'index recovery projects receipt IDs, not complete report bodies');
+});
+test('merging a manual category updates the same source-bound contribution through the actual API',async()=>{
+ const x=await setup(),state=x.store.docs.get('settings/reels_v2_taxonomy').data;
+ x.store.put('settings/reels_v2_taxonomy',{...state,nodes:[...state.nodes,{id:'manual_source',name:'Antigo grupo',parentId:'receitas',manual:true},{id:'manual_target',name:'Grupo unido',parentId:'receitas',manual:true}]});
+ const before=x.store.docs.get('videos/QaFull_unknown');x.store.put('videos/QaFull_unknown',{...before.data,categoryIds:['manual_source'],taxonomy_override:{manual:true,revision:13}});
+ await seed(x);const unrelated=clone(x.store.docs.get('reels_index/contextual_QaFull_many'));
+ const result=await json(x,'categories',{action:'merge',revision:13,id:'manual_source',targetId:'manual_target',idempotencyKey:'catalogue-editorial-merge'});
+ assert.equal(result.affected,1);assert.equal(result.catalogueIndex.pending,false);assert.equal(result.catalogueIndex.evaluatedCount,1);
+ const row=x.store.docs.get('reels_index/contextual_QaFull_unknown').data;assert.equal(row.editorial.manual,true);assert.ok(row.entry.categoryIds.includes('manual_target'));assert.equal(row.sourceVersions.video,x.store.docs.get('videos/QaFull_unknown').updateTime);
+ assert.deepEqual(x.store.docs.get('reels_index/contextual_QaFull_many'),unrelated);assert.equal((await json(x,'curation/catalogue')).projectionCoverage.evaluatedCount,5);
+});
+test('an uncompleted or foreign editorial receipt cannot authorize index work',async()=>{
+ const x=await setup(),op='a'.repeat(64);x.store.put('reels_command_items/taxonomy_'+op,{kind:'taxonomy_manual',status:'applying'});
+ const writes=x.store.writes;const pending=await x.runtime.reconcileEditorialOperation(op);assert.equal(pending.reason,'EDITORIAL_OPERATION_NOT_COMPLETED');assert.equal(x.store.writes,writes);
+ x.store.put('reels_command_items/taxonomy_'+op,{kind:'taxonomy_manual',status:'completed'});
+ x.store.put('reels_command_items/foreign',{kind:'taxonomy_manual_assignment',operationId:'b'.repeat(64),status:'completed',assignment:{reelId:'QaFull_single'}});
+ x.store.put('reels_command_items/pending',{kind:'taxonomy_manual_assignment',operationId:op,status:'pending',assignment:{reelId:'QaFull_single'}});
+ const empty=await x.runtime.reconcileEditorialOperation(op);assert.equal(empty.evaluatedCount,0);assert.equal(x.store.writes,writes);
 });

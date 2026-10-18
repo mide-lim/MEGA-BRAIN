@@ -58,8 +58,9 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='reconciliations')return response(await reconciliation.command(input));
     if(path==='categories'){
      const changed=await taxonomy.mutate(input);
-     if(input.preview!==true&&input.action==='reclassify'&&Array.isArray(input.reelIds))for(const id of [...new Set(input.reelIds)]){try{await getCatalogue().project(id,{type:'editorialChanged',eventId:'taxonomy-'+(changed.operationId??input.idempotencyKey)+'-'+id});}catch{}}
-     return response(changed);
+     let catalogueIndex=null;
+     if(input.preview!==true&&/^[a-f0-9]{64}$/.test(changed.operationId??'')){try{catalogueIndex=await getCatalogue().reconcileEditorialOperation(changed.operationId);}catch{catalogueIndex={pending:true,reason:'EDITORIAL_INDEX_PENDING',providerCalls:0};}}
+     return response({...changed,...(catalogueIndex?{catalogueIndex}:{})});
     }
     if(path==='finance')return response(await finance.update(input));
    }

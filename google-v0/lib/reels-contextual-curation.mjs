@@ -77,9 +77,18 @@ export class ReelsContextualCurator{
   if(snapshot.durableContributions){
    let raw=await this.repository.raw(id)??{},legacy=null;
    if(!publicationAvailable(raw))legacy=(await this.repository.store.get('reels_legacy_content/'+id))?.data??null;
-   const full=projectContextualPublication({video:raw,legacy,item:{id,title:entry.title,categoryIds:entry.categoryIds,publication:{available:true}}});
+   let qualityVerification=null;
+   if(raw.analysis?.contextualSignals?.version===2&&qualityReceiptIdPattern.test(raw.publication?.qualityReceipt?.receiptId??'')){
+    const receipt=(await this.repository.store.get('reels_quality_receipts/'+raw.publication.qualityReceipt.receiptId))?.data;
+    qualityVerification=verifyPublicationQualityReceipt({video:raw,receipt});
+   }
+   const full=projectContextualPublication({video:raw,legacy,item:{id,title:entry.title,categoryIds:entry.categoryIds,publication:{available:true}},qualityVerification});
    if(full&&full.sourceProofHash===entry.sourceProofHash){
     const proofs=new Map(full.attributes.flatMap(a=>a.evidence).concat(full.units.flatMap(u=>u.evidence)).map(p=>[p.id,p]));
+    if(entry.formatReview){
+     const saved=(await this.repository.store.get('reels_index/contextual_review_'+id))?.data,review=saved?.review??saved;
+     if(review&&contextualHash(review)===entry.formatReview.reviewHash&&review.sourceProofHash===entry.sourceProofHash)for(const p of review.evidence??[])proofs.set(p.id,{id:p.id,source:p.sourceKind,sourceKind:p.sourceKind,sourceIdentity:p.sourceIdentity,excerpt:p.excerpt,state:'supported',reason:'INDEPENDENT_SAVED_SOURCE_FORMAT_REVIEW',startSeconds:p.timeRange?.startSeconds??null,endSeconds:p.timeRange?.endSeconds??null});
+    }
     hydrated={...entry,attributes:entry.attributes.map(a=>({...a,evidence:a.evidence.map(p=>proofs.get(p.id)??p)})),units:entry.units.map(u=>({...u,evidence:u.evidence.map(p=>proofs.get(p.id)??p)}))};
    }
   }

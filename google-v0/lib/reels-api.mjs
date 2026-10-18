@@ -33,7 +33,7 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     const q=query(url);
     if(path==='curation/semantic')return response(await getSemantic().overview());
     if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='jobs'&&parts.length===4)return response(await getSemantic().job(parts[3]));
-    if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='groups'&&parts.length===4)return response(await getSemantic().detail(parts[3]));
+    if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='groups'&&parts.length===4)return response(await getSemantic().detail(parts[3],{memberId:url.searchParams.get('memberId')}));
     if(path==='summary')return response({...await repository.summary(),...controls});
     if(path==='items')return response(await repository.list(q));
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}

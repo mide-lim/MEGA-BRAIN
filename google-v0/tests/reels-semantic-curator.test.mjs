@@ -76,3 +76,20 @@ test('immutable authorization ledger prevents reuse after a later authorization 
  const s=setup();await start(s);await pump(s);const policy=await s.store.get('settings/reels_v2_semantic_policy');await s.store.patch('settings/reels_v2_semantic_policy',{authorizationId:'fixture-semantic-002'},{updateTime:policy.updateTime});let p=await s.curator.preview({all:true});await s.curator.create({selection:{all:true},previewHash:p.previewHash,idempotencyKey:'second-authorization'});await pump(s);
  const next=await s.store.get('settings/reels_v2_semantic_policy');await s.store.patch('settings/reels_v2_semantic_policy',{authorizationId:'fixture-semantic-001'},{updateTime:next.updateTime});p=await s.curator.preview({all:true});await assert.rejects(()=>s.curator.create({selection:{all:true},previewHash:p.previewHash,idempotencyKey:'restored-old-authorization'}),{code:'SEMANTIC_AUTHORIZATION_CONSUMED'});assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_authorization').length,2);
 });
+
+test('negative source changing between approval read and commit blocks promotion atomically',async()=>{
+ const s=setup();await start(s);await pump(s);const g=(await s.curator.overview()).groups[0],raw=await s.store.get('reels_index/semantic_group_'+g.id);assert.ok(raw.data.negativeExamples.length);const id=raw.data.negativeExamples[0].id,original=s.store.commitSemantic;let changed=false;
+ s.store.commitSemantic=async plan=>{if(!changed&&plan.writes.some(w=>w.data.kind==='semantic_group'&&w.data.status==='active')){changed=true;const v=await s.store.get('videos/'+id);await s.store.patch('videos/'+id,{editorial_test_revision:1},{updateTime:v.updateTime});}return original(plan);};
+ await assert.rejects(()=>s.curator.command({action:'group_approve',groupId:g.id,revision:g.revision,idempotencyKey:'approve-negative-race'}),{code:'SEMANTIC_VERSION_CHANGED'});assert.equal((await s.store.get('reels_index/semantic_group_'+g.id)).data.status,'candidate');
+});
+test('automatic active membership becomes candidate when a bound source changes or support falls below policy',async()=>{
+ const s=setup();await start(s);await pump(s);const g=(await s.curator.overview()).groups[0],path='reels_index/semantic_group_'+g.id,r=await s.store.get(path);await s.store.patch(path,{status:'active',manual:false,protected:false,activationMinimum:2},{updateTime:r.updateTime});
+ assert.equal((await s.curator.overview()).groups[0].status,'active');
+ const v=await s.store.get('videos/'+s.fixture.expected.memberIds[0]);await s.store.patch('videos/'+s.fixture.expected.memberIds[0],{editorial_test_revision:2},{updateTime:v.updateTime});
+ assert.equal((await s.curator.overview()).groups[0].status,'candidate');assert.deepEqual(await s.curator.matchingIds(g.id),[]);
+});
+
+test('mentioned or unknown association never enters library membership or parent counts',async()=>{
+ const s=setup(),infer=s.fixture.provider.infer;s.curator.provider={...s.fixture.provider,infer:async input=>{const e=await infer(input),o=JSON.parse(e.rawResponse.candidates[0].content.parts[0].text);for(const g of o.groups)for(const m of g.members)m.role=m.reelId==='QaFull_many'?'mentioned':'unknown';e.rawResponse.candidates[0].content.parts[0].text=JSON.stringify(o);return e;}};
+ await start(s);await pump(s);const g=(await s.curator.overview()).groups[0],path='reels_index/semantic_group_'+g.id,r=await s.store.get(path);await s.store.patch(path,{status:'active',manual:true},{updateTime:r.updateTime});assert.deepEqual(await s.curator.matchingIds(g.id),[]);assert.deepEqual(await s.curator.categoryIds('receitas'),[]);assert.equal((await s.repository.list({workspace:'library',category:'semantic_'+g.id})).total,0);
+});

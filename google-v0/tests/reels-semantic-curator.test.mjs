@@ -50,3 +50,5 @@ test('closed Reel processing permits only separately authorized semantic deliver
  assert.equal((await runtime(request({jobId:id,sequence:0,outboxId,videoId:'bad'}))).status,400);assert.equal(calls.length,0);
  assert.equal((await runtime(request({jobId:id,sequence:0,outboxId}))).status,200);assert.equal(calls.length,1);assert.equal(calls[0].maxBatches,3);
 });
+
+test('concurrent distinct command keys can consume one authorization only once',async()=>{const s=setup(),p=await s.curator.preview({all:true}),results=await Promise.allSettled(['concurrent-A','concurrent-B'].map(idempotencyKey=>s.curator.create({selection:{all:true},previewHash:p.previewHash,idempotencyKey})));assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_job').length,1);assert.equal(s.fixture.calls.length,0);assert.equal([...s.store.docs.values()].filter(r=>r.data.kind==='semantic_coordinator').length,1);});

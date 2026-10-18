@@ -12,7 +12,7 @@ const formatDefinitions=[{value:'single_recipe',label:'Receita única'},{value:'
 const metadataProof=p=>({id:p.id,state:p.state,source:p.source??p.sourceKind??null});
 const states=()=>Object.fromEntries(coverageStates.map(s=>[s,0]));
 const sameIdentity=(a,b)=>a?.kind===b?.kind&&(a?.kind==='native'?a.analysisKey===b.analysisKey&&String(a.analysisGeneration)===String(b.analysisGeneration):a?.kind==='legacy_preserved'&&a.recordHash===b.recordHash&&a.sourceSnapshotHash===b.sourceSnapshotHash);
-const sourceVersionsValid=v=>obj(v)&&time(v.video)&&(v.legacy===undefined||v.legacy===null||time(v.legacy));
+const sourceVersionsValid=v=>obj(v)&&Object.keys(v).every(k=>['video','legacy'].includes(k))&&time(v.video)&&(v.legacy===undefined||v.legacy===null||time(v.legacy));
 export const contextualContributionPath=id=>{if(!reelIdPattern.test(id??''))failure('CATALOGUE_REEL_ID_INVALID');return 'reels_index/contextual_'+id;};
 export function catalogueEditorialMetadata(item,editorial={}){
  const manual=item?.categoryOverride?.manual===true||item?.categoryResolution?.mode==='manual'||editorial.manual===true;
@@ -68,12 +68,22 @@ export function projectContextualContribution({item,video={},legacy=null,quality
  contribution.idempotencyKey=contextualHash({kind:contribution.kind,policyVersion:contribution.policyVersion,contentHash:contribution.contentHash});
  return contribution;
 }
+export function validateContextualContribution(c){
+ if(!c||c.schemaVersion!==1||c.kind!=='contextual_contribution'||c.policyVersion!==contextualCataloguePolicy.version||c.ruleHash!==contextualRuleHash||!reelIdPattern.test(c.reelId??'')||!sourceVersionsValid(c.sourceVersions)||!['active','removed'].includes(c.status))failure('CATALOGUE_CONTRIBUTION_INVALID');
+ if(c.status==='active'){
+  const identity={reelId:c.reelId,sourceIdentity:c.sourceIdentity,sourceProofHash:c.sourceProofHash,ruleHash:c.ruleHash,editorialHash:c.editorialHash,sourceVersions:c.sourceVersions};
+  if(!c.entry||c.entry.id!==c.reelId||c.sourceProofHash!==c.entry.sourceProofHash||!sameIdentity(c.sourceIdentity,c.entry.sourceIdentity)||c.contentHash!==contextualHash({identity,entry:c.entry})||c.idempotencyKey!==contextualHash({kind:c.kind,policyVersion:c.policyVersion,contentHash:c.contentHash}))failure('CATALOGUE_CONTRIBUTION_CORRUPT');
+ }else{
+  if(c.entry!==undefined||c.contentHash!==contextualHash({status:c.status,reelId:c.reelId,sourceVersions:c.sourceVersions,ruleHash:c.ruleHash})||c.idempotencyKey!==contextualHash({kind:c.kind,contentHash:c.contentHash}))failure('CATALOGUE_CONTRIBUTION_CORRUPT');
+ }
+ return c;
+}
+
 export function catalogueEntries(contributions,{inventoryIds=null}={}){
  const inventory=inventoryIds?new Set(inventoryIds):null,seen=new Set(),entries=[];
  for(const c of list(contributions)){
   if(!c||c.kind!=='contextual_contribution'||c.status!=='active'||c.schemaVersion!==1||c.policyVersion!==contextualCataloguePolicy.version||c.ruleHash!==contextualRuleHash||!c.entry||c.entry.id!==c.reelId||inventory&&!inventory.has(c.reelId))continue;
-  const identity={reelId:c.reelId,sourceIdentity:c.sourceIdentity,sourceProofHash:c.sourceProofHash,ruleHash:c.ruleHash,editorialHash:c.editorialHash,sourceVersions:c.sourceVersions};
-  if(!sourceVersionsValid(c.sourceVersions)||c.sourceProofHash!==c.entry.sourceProofHash||!sameIdentity(c.sourceIdentity,c.entry.sourceIdentity)||c.contentHash!==contextualHash({identity,entry:c.entry})||c.idempotencyKey!==contextualHash({kind:c.kind,policyVersion:c.policyVersion,contentHash:c.contentHash}))failure('CATALOGUE_CONTRIBUTION_CORRUPT');
+  validateContextualContribution(c);
   if(seen.has(c.reelId))failure('CATALOGUE_DUPLICATE_CONTRIBUTION');seen.add(c.reelId);entries.push(c.entry);
  }
  return entries;
@@ -110,6 +120,7 @@ export function reconcileContextualContribution({event,currentSource,previousCon
  if(!eventTypes.has(event?.type)||!reelIdPattern.test(event?.reelId??'')||typeof event.id!=='string'||!event.id||event.id.length>128||!time(observedAt))failure('CATALOGUE_EVENT_INVALID');
  const id=event.reelId,path=contextualContributionPath(id),previous=previousContribution?.data??previousContribution;
  if(previous&&previous.reelId!==id)failure('CATALOGUE_PREVIOUS_ID_MISMATCH');
+ if(previous)validateContextualContribution(previous);
  if(!currentSource||currentSource.item?.id!==id||!sourceVersionsValid(currentSource.sourceVersions))failure('CATALOGUE_FRESH_SOURCE_REQUIRED');
  const next=projectContextualContribution({...currentSource,previousContribution:previous,observedAt});
  if(event.sourceIdentity&&next&&!sameIdentity(event.sourceIdentity,next.sourceIdentity)||event.sourceProofHash&&next&&event.sourceProofHash!==next.sourceProofHash)return {action:'noop',reason:'STALE_PUBLICATION_EVENT',path};

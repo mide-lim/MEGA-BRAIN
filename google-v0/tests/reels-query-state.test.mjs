@@ -29,3 +29,36 @@ test('unmount cancels an unobserved request and two paths stay isolated',async()
  const requests=[];const client=createResourceClient((path,options)=>{const r=deferred();requests.push({...r,path,signal:options.signal});return r.promise;});const off=client.subscribe('/old',()=>{});const old=client.load('/old',1);await Promise.resolve();off();assert.equal(requests[0].signal.aborted,true);requests[0].resolve({value:'ignored'});await old;assert.equal(client.peek('/old').data,null);
  const offNew=client.subscribe('/new',()=>{}),fresh=client.load('/new',1);await Promise.resolve();requests[1].resolve({value:'new'});await fresh;assert.equal(client.peek('/new').data.value,'new');offNew();
 });
+
+test('completed same-URL same-revision reads reuse the default 15 second freshness window across remounts',async()=>{
+ let calls=0,clock=100;const client=createResourceClient(async()=>({request:++calls}),{now:()=>clock});
+ const offFirst=client.subscribe('/categories',()=>{});await client.load('/categories',7);offFirst();
+ clock=15099;const states=[],offSecond=client.subscribe('/categories',state=>states.push(state));
+ await client.load('/categories',7);assert.equal(calls,1);assert.equal(client.peek('/categories').data.request,1);assert.ok(states.every(state=>state.loading===false));
+ clock=15100;await client.load('/categories',7);assert.equal(calls,2);assert.equal(client.peek('/categories').data.request,2);offSecond();
+});
+test('explicit refresh and post-mutation revisions bypass a fresh completed snapshot',async()=>{
+ let calls=0,clock=10;const client=createResourceClient(async()=>({request:++calls}),{now:()=>clock}),off=client.subscribe('/items',()=>{});
+ await client.load('/items',0);clock=11;await client.load('/items',0);assert.equal(calls,1);
+ await client.load('/items',1);assert.equal(calls,2);assert.equal(client.peek('/items').data.request,2);
+ await client.load('/items',2);assert.equal(calls,3);await client.load('/items',2);assert.equal(calls,3);off();
+});
+test('failed refresh retries immediately and preserves the previous snapshot until recovery',async()=>{
+ let calls=0,clock=100;const client=createResourceClient(async()=>{calls++;if(calls===2)throw new Error('temporary read failure');return {request:calls};},{now:()=>clock}),off=client.subscribe('/items',()=>{});
+ await client.load('/items',4);clock=15100;await client.load('/items',4);
+ assert.equal(calls,2);assert.equal(client.peek('/items').error.message,'temporary read failure');assert.equal(client.peek('/items').data.request,1);
+ await client.load('/items',4);assert.equal(calls,3);assert.equal(client.peek('/items').error,null);assert.equal(client.peek('/items').data.request,3);
+ await client.load('/items',4);assert.equal(calls,3);off();
+});
+test('an aborted new revision cannot relabel the last good snapshot as fresh for that revision',async()=>{
+ const requests=[];let clock=100;const client=createResourceClient((path,{signal})=>{const pending=deferred();requests.push({...pending,signal});return pending.promise;},{now:()=>clock});
+ let off=client.subscribe('/categories',()=>{}),first=client.load('/categories',1);await Promise.resolve();requests[0].resolve({request:1});await first;
+ const aborted=client.load('/categories',2);await Promise.resolve();off();assert.equal(requests[1].signal.aborted,true);requests[1].resolve({request:'ignored'});await aborted;
+ off=client.subscribe('/categories',()=>{});const fresh=client.load('/categories',2);await Promise.resolve();assert.equal(requests.length,3);assert.equal(client.peek('/categories').data.request,1);
+ requests[2].resolve({request:3});await fresh;assert.equal(client.peek('/categories').data.request,3);off();
+});
+test('freshness stays URL-specific and does not treat a backwards clock as current data',async()=>{
+ let calls=0,clock=100;const client=createResourceClient(async path=>({path,request:++calls}),{now:()=>clock,cacheTtlMs:1000}),offA=client.subscribe('/items?q=a',()=>{}),offB=client.subscribe('/items?q=b',()=>{});
+ await client.load('/items?q=a',1);await client.load('/items?q=b',1);await client.load('/items?q=a',1);assert.equal(calls,2);
+ clock=99;await client.load('/items?q=a',1);assert.equal(calls,3);clock=1099;await client.load('/items?q=a',1);assert.equal(calls,4);offA();offB();
+});

@@ -1,6 +1,7 @@
 import {projectContextualPublication,contextualHash,contextualRuleHash,coverageStates} from './reels-contextual-projection.mjs';
-import {buildContextualIndex,filterContextualEntries} from './reels-contextual-index.mjs';
-import {reelIdPattern} from './reels-model.mjs';
+import {buildContextualIndex,filterContextualEntries,parseContextualQuery} from './reels-contextual-index.mjs';
+import {preservedContentAvailable} from './reels-preserved-content.mjs';
+import {publicationAvailable,reelIdPattern} from './reels-model.mjs';
 import {createHash} from 'node:crypto';
 const list=v=>Array.isArray(v)?v:[];
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v);
@@ -27,6 +28,8 @@ function compactEntry(entry,editorial){
 export function projectContextualContribution({item,video={},legacy=null,qualityVerification=null,editorial={},sourceVersions,observedAt}={}){
  if(!item||!reelIdPattern.test(item.id??'')||!time(observedAt)||!sourceVersionsValid(sourceVersions))failure('CATALOGUE_SOURCE_VERSION_INVALID');
  if(video.id&&video.id!==item.id||legacy?.reelId&&legacy.reelId!==item.id)failure('CATALOGUE_SOURCE_ID_MISMATCH');
+ const accepted=publicationAvailable(video)||preservedContentAvailable(legacy,item.id);
+ if(accepted&&item.publication?.available===false)failure('CATALOGUE_ITEM_PUBLICATION_MISMATCH');
  const projected=projectContextualPublication({item,video,legacy,qualityVerification});if(!projected)return null;
  const ed=editorialMetadata({...item,categoryOverride:{...item.categoryOverride,manual:item.categoryOverride?.manual===true||video.taxonomy_override?.manual===true}},editorial),editorialHash=contextualHash(ed),entry=compactEntry(projected,ed);
  const identity={reelId:item.id,sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash,ruleHash:contextualRuleHash,editorialHash,sourceVersions};
@@ -39,13 +42,17 @@ export function catalogueEntries(contributions,{inventoryIds=null}={}){
  const inventory=inventoryIds?new Set(inventoryIds):null,seen=new Set(),entries=[];
  for(const c of list(contributions)){
   if(!c||c.kind!=='contextual_contribution'||c.status!=='active'||c.schemaVersion!==1||c.policyVersion!==contextualCataloguePolicy.version||c.ruleHash!==contextualRuleHash||!c.entry||c.entry.id!==c.reelId||inventory&&!inventory.has(c.reelId))continue;
+  const identity={reelId:c.reelId,sourceIdentity:c.sourceIdentity,sourceProofHash:c.sourceProofHash,ruleHash:c.ruleHash,editorialHash:c.editorialHash,sourceVersions:c.sourceVersions};
+  if(!sourceVersionsValid(c.sourceVersions)||c.sourceProofHash!==c.entry.sourceProofHash||!sameIdentity(c.sourceIdentity,c.entry.sourceIdentity)||c.contentHash!==contextualHash({identity,entry:c.entry})||c.idempotencyKey!==contextualHash({kind:c.kind,policyVersion:c.policyVersion,contentHash:c.contentHash}))failure('CATALOGUE_CONTRIBUTION_CORRUPT');
   if(seen.has(c.reelId))failure('CATALOGUE_DUPLICATE_CONTRIBUTION');seen.add(c.reelId);entries.push(c.entry);
  }
  return entries;
 }
 export function catalogueMatchingIds(contributions,query={},nodes=[]){
- const virtual=formatDefinitions.find(f=>query.category==='ctx_format_'+f.value);
- const refined=virtual?{...query,category:'receitas',context:'recipe',facets:[...list(typeof query.facets==='string'?JSON.parse(query.facets):query.facets),{dimension:'format',value:virtual.value,quantifier:'ANY'}]}:query;
+ const parsed=parseContextualQuery(query),virtual=formatDefinitions.find(f=>parsed.category==='ctx_format_'+f.value);
+ const existingFormats=parsed.facets.filter(f=>f.dimension==='format');
+ if(virtual&&existingFormats.length&&!existingFormats.some(f=>f.value===virtual.value))return [];
+ const refined=virtual?{...parsed,category:'receitas',context:'recipe',facets:[...parsed.facets.filter(f=>f.dimension!=='format'),{dimension:'format',value:virtual.value,quantifier:'ANY'}]}:parsed;
  const entries=catalogueEntries(contributions).filter(e=>!virtual||!e.curation?.manual);
  return filterContextualEntries(entries,refined,nodes).map(e=>e.id).sort();
 }

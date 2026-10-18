@@ -51,7 +51,7 @@ export class ReelsSemanticCurator{
   if(current?.data.dispatch.outboxId===job.dispatch.outboxId&&current.data.status!== 'completed')try{await this.commit([{path:jobPath(job.id),updateTime:current.updateTime}],[{path:jobPath(job.id),data:{...current.data,dispatch:{...current.data.dispatch,status:outcome?.status==='sent'?'sent':'pending',reason:outcome?.reason??null},updatedAt:this.now()}}]);}catch{}
   return outcome;
  }
- async currentGroups(){return (await this.scan('semantic_group',['kind','id','key','name','context','parentId','dimension','groupKind','definition','aliases','positiveCriteria','negativeCriteria','members','negativeExamples','possibleDuplicates','status','reason','revision','protected','manual','verification','updatedAt','policyHash','jobIds','originJobId'])).map(r=>({...r,data:{...r.data,kind:r.data.groupKind}}));}
+ async currentGroups(){return (await this.scan('semantic_group',['kind','id','key','name','context','parentId','dimension','groupKind','definition','aliases','positiveCriteria','negativeCriteria','members','negativeExamples','possibleDuplicates','status','reason','revision','protected','manual','verification','updatedAt','policyHash','jobIds','originJobId','activationMinimum'])).map(r=>({...r,data:{...r.data,kind:r.data.groupKind}}));}
  async loadSources(pins){
   const results=new Array(pins.length);let cursor=0;
   await Promise.all(Array.from({length:Math.min(8,pins.length)},async()=>{while(cursor<pins.length){const index=cursor++,pin=pins[index],source=await this.catalogue.loadSource(pin.id);if(!source?.item.publication.available||!sourceCurrent(pin.sourceVersions,source.sourceVersions))throw problem('SEMANTIC_SOURCE_CHANGED','Uma publicação ou edição mudou; não reanalisar automaticamente.');results[index]={source:semanticSourceFromSaved(source),checks:source.checks};}}));
@@ -167,7 +167,7 @@ export class ReelsSemanticCurator{
     for(const d of memberDecisions.values())if(d.groupId===g.id)m.set(d.reelId,d);for(const d of negativeDecisions.values())if(d.groupId===g.id)n.set(d.reelId,d);
     const verified=g.members.every(x=>m.get(x.id)?.verdict==='supported'&&m.get(x.id).semanticProofHash===x.semanticProofHash)&&list(g.negativeExamples).every(x=>n.get(x.id)?.verdict==='supported'&&n.get(x.id).semanticProofHash===x.semanticProofHash),verification={status:verified?'supported':'pending',members:[...m.values()],negativeExamples:[...n.values()],authorModel:job.policy.model,verifierModel:job.policy.verifierModel,independentPhase:true,promptHash:semanticPromptHash};
     const promotion=automaticSemanticPromotion({...g,verification},job.policy,{promptHash:semanticPromptHash});
-    writes.push({path:row.path,data:{...g,kind:'semantic_group',groupKind:g.kind,verification,status:verified&&promotion.allowed?'active':'candidate',reason:verified?promotion.reason:'INDEPENDENT_VERIFICATION_PENDING_OR_INCONCLUSIVE',revision:g.revision+1,updatedAt:this.now(),categoryId:verified&&promotion.allowed&&g.kind!=='facet'?(g.kind==='format'?'ctx_format_'+g.key:'semantic_'+g.id):null}});
+    writes.push({path:row.path,data:{...g,kind:'semantic_group',groupKind:g.kind,verification,status:verified&&promotion.allowed?'active':'candidate',reason:verified?promotion.reason:'INDEPENDENT_VERIFICATION_PENDING_OR_INCONCLUSIVE',revision:g.revision+1,activationMinimum:job.policy.minUniqueMembers,updatedAt:this.now(),categoryId:verified&&promotion.allowed&&g.kind!=='facet'?(g.kind==='format'?'ctx_format_'+g.key:'semantic_'+g.id):null}});
    }
    next.verifyCursor=Math.min(job.pins.length,job.verifyCursor+loaded.sources.length);if(next.verifyCursor===job.pins.length){next.status='completed';next.phase='complete';next.dispatch={...next.dispatch,status:'not_needed'};next.completedAt=this.now();}
   }
@@ -175,13 +175,13 @@ export class ReelsSemanticCurator{
   await this.commit(this.uniqueChecks(checks),writes);
  }
  async freshGroups(){
-  const [rows,inv,taxonomySnapshot]=await Promise.all([this.currentGroups(),this.inventory(),this.store.get('settings/reels_v2_taxonomy')]),versions=inv.sourceVersions,taxonomy=taxonomySnapshot?.data??{};let stale=!!taxonomy.pendingOperationId;
+  const [rows,inv,taxonomySnapshot,policy]=await Promise.all([this.currentGroups(),this.inventory(),this.store.get('settings/reels_v2_taxonomy'),this.policy()]),versions=inv.sourceVersions,taxonomy=taxonomySnapshot?.data??{};let stale=!!taxonomy.pendingOperationId;
   const current=m=>{const item=inv.items.find(i=>i.id===m.id);if(!item||!sourceCurrent(m.sourceVersions,versions.get(m.id)))return false;const ed=semanticEditorial(item,catalogueEditorialForItem(item,taxonomy));return m.editorialHash===semanticHash(ed)&&(!ed.manual&&!m.manualProtected||m.manualMembership===true);};
   const groups=rows.map(r=>{
    const negatives=list(r.data.negativeExamples).filter(current),negativeStale=negatives.length!==list(r.data.negativeExamples).length;
-   const members=list(r.data.members).filter(m=>{const yes=current(m)&&(m.manualMembership===true||['central','supporting'].includes(m.role));if(!yes)stale=true;return yes;});
+   const bound=list(r.data.members).filter(current),memberBindingStale=bound.length!==list(r.data.members).length,members=bound.filter(m=>m.manualMembership===true||['central','supporting'].includes(m.role));if(memberBindingStale)stale=true;
    if(negativeStale)stale=true;
-   const eligibleStatus=negativeStale&&!r.data.manual?'candidate':r.data.status,categoryId=eligibleStatus==='active'&&r.data.kind!=='facet'?(r.data.kind==='format'?'ctx_format_'+r.data.key:'semantic_'+r.data.id):null;
+   const automaticInvalid=!r.data.manual&&(negativeStale||memberBindingStale||r.data.status==='active'&&members.length<(r.data.activationMinimum??policy.data.minUniqueMembers)),eligibleStatus=automaticInvalid?'candidate':r.data.status,categoryId=eligibleStatus==='active'&&r.data.kind!=='facet'?(r.data.kind==='format'?'ctx_format_'+r.data.key:'semantic_'+r.data.id):null;
    return {...r.data,status:eligibleStatus,members,negativeExamples:negatives,memberCount:members.length,categoryId,inclusionCriteria:r.data.positiveCriteria,exclusionCriteria:r.data.negativeCriteria,filter:r.data.kind==='facet'?{semanticFacet:r.data.id}:r.data.kind==='format'?{category:'ctx_format_'+r.data.key}:{category:'semantic_'+r.data.id}};
   });
   return {groups,sourceStale:stale,inventory:inv,taxonomySnapshot,observedAt:this.now(),dataAsOf:groups.map(g=>g.updatedAt).filter(Boolean).sort()[0]??this.now()};
@@ -236,7 +236,7 @@ export class ReelsSemanticCurator{
   else if(input.action==='group_approve'){
    const fresh=state.groups.find(x=>x.id===id);if(!fresh||fresh.members.length!==list(g.members).length||fresh.negativeExamples.length!==list(g.negativeExamples).length||!fresh.members.length)throw problem('SEMANTIC_MEMBERS_CHANGED','Membros mudaram ou estão vazios; confira as fontes.');
    g.status='active';g.manual=true;g.protected=true;g.reason='OWNER_EDITORIAL_APPROVAL_NOT_UNIVERSAL_ACCURACY';g.categoryId=g.groupKind==='facet'?null:g.groupKind==='format'?'ctx_format_'+g.key:'semantic_'+g.id;
-   for(const m of fresh.members){checks.push({path:'videos/'+m.id,updateTime:m.sourceVersions.video});if(m.sourceVersions.legacy)checks.push({path:'reels_legacy_content/'+m.id,updateTime:m.sourceVersions.legacy});}
+   for(const m of [...fresh.members,...fresh.negativeExamples]){checks.push({path:'videos/'+m.id,updateTime:m.sourceVersions.video});if(m.sourceVersions.legacy)checks.push({path:'reels_legacy_content/'+m.id,updateTime:m.sourceVersions.legacy});}
   }else if(input.action==='group_merge'){
    const targetPath=groupPath(input.targetId),target=await this.store.get(targetPath);if(!target||target.data.revision!==input.targetRevision||target.data.id===id||target.data.context!==g.context||target.data.groupKind!==g.groupKind||target.data.dimension!==g.dimension)throw problem('INVALID_MERGE','Grupos incompatíveis ou versão alterada.');
    const targetFresh=state.groups.find(x=>x.id===target.data.id),sourceFresh=state.groups.find(x=>x.id===g.id);if(!targetFresh||!sourceFresh||targetFresh.members.length!==list(target.data.members).length||sourceFresh.members.length!==list(g.members).length)throw problem('SEMANTIC_MEMBERS_CHANGED','Fontes mudaram antes da união.');for(const m of [...sourceFresh.members,...targetFresh.members]){checks.push({path:'videos/'+m.id,updateTime:m.sourceVersions.video});if(m.sourceVersions.legacy)checks.push({path:'reels_legacy_content/'+m.id,updateTime:m.sourceVersions.legacy});}

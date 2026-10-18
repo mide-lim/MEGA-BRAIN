@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {ReelsContextualCurator} from '../lib/reels-contextual-curation.mjs';
 import {makeFullCatalogueFixture} from './reels-contextual-catalogue-fixture.mjs';
 import {projectContextualContribution,prepareContextualCatalogue,buildContextualCatalogue,catalogueMatchingIds,reconcileContextualContribution,ReelsContextualCatalogueProjector} from '../lib/reels-contextual-catalogue.mjs';
 const fixture=()=>makeFullCatalogueFixture();
@@ -97,4 +98,28 @@ test('wrong source review binding, duplicated unit proof and self-reviewed forma
  const wrong=fixture();wrong.formatReviews[0].sourceProofHash='0'.repeat(64);assert.throws(()=>prepareContextualCatalogue(wrong),e=>e.code==='CATALOGUE_FORMAT_REVIEW_BINDING_MISMATCH');
  const self=fixture();self.formatReviews[0].reviewer.identity='/root/alignment_backend';assert.throws(()=>prepareContextualCatalogue(self),e=>e.code==='CATALOGUE_FORMAT_REVIEW_BINDING_MISMATCH');
  const shared=fixture();shared.formatReviews[1].units[1].evidenceRefs=shared.formatReviews[1].units[0].evidenceRefs;assert.throws(()=>prepareContextualCatalogue(shared),e=>e.code==='CATALOGUE_FORMAT_REVIEW_UNIT_INVALID');
+});
+
+test('durable curator reads only contribution metadata, exposes missing sources and invalidates a changed contribution within TTL',async()=>{
+ const input=fixture(),prepared=prepareContextualCatalogue(input),items=input.records.map(r=>JSON.parse(r.sourceJson).item);
+ let contributions=prepared.contributions.map(c=>c.data),version='first',stale=false,reads=0;
+ const repository={items:async()=>items,raw:async()=>{throw Error('Durable GET must not load report bodies');},store:{get:async()=>{throw Error('Durable GET must not read legacy source bodies');}},categories:async()=>({nodes:input.taxonomy.nodes}),contextualContributions:async()=>{reads++;return {contributions,inventoryIds:items.map(i=>i.id),versionHash:version,dataAsOf:input.dataAsOf,sourceStale:stale};}};
+ const curator=new ReelsContextualCurator({repository,cacheTtlMs:60000,clock:()=>Date.parse(input.observedAt)});
+ const first=await curator.overview();assert.equal(first.total,5);assert.equal(first.missingAcceptedSource,0);assert.equal(first.dataAsOf,input.dataAsOf);
+ contributions=contributions.filter(c=>c.reelId!=='QaFull_single');version='second';stale=true;
+ const next=await curator.overview();assert.equal(next.total,4);assert.equal(next.missingAcceptedSource,1);assert.equal(next.sourceStale,true);assert.notEqual(next.versionHash,first.versionHash);assert.equal(reads,2);
+});
+test('revoked format review removes the derived format without changing saved publication or ingredient facts',()=>{
+ const input=fixture(),source=sourceOf(input),previous=contributionOf(input);source.formatReview=null;
+ const next=reconcileContextualContribution({event:event('editorialChanged'),currentSource:source,previousContribution:previous,observedAt:input.observedAt});
+ assert.equal(next.action,'upsert');assert.equal(next.replacement.entry.format.state,'present_unverified');assert.equal(next.replacement.entry.formatReview,null);
+ assert.equal(next.replacement.entry.attributes.find(a=>a.dimensionId==='ingredient').state,'supported');
+});
+test('review capture hash and automatic category IDs never impersonate a new independent editorial review',()=>{
+ const input=fixture();input.formatReviews[0].sourceSnapshotHash='c'.repeat(64);
+ assert.throws(()=>prepareContextualCatalogue(input),e=>e.code==='CATALOGUE_FORMAT_REVIEW_CAPTURE_MISMATCH');
+ const normal=fixture(),source=sourceOf(normal),one=projectContextualContribution({...source,observedAt:normal.observedAt});
+ source.item.categoryIds.push('ctx_automatic_ingredient');
+ const two=projectContextualContribution({...source,observedAt:normal.observedAt});
+ assert.equal(one.editorialHash,two.editorialHash);
 });

@@ -36,10 +36,10 @@ export async function rehearseSavedDomainPlanning(input,{sourceCommit='unknown'}
   assert.ok(raw?.item.publication.available);
   records[index]=semanticDomainRecordFromSaved(raw);
  }}));
- const manifest=prepareSemanticDomainManifest({records,taxonomy:documents['settings/reels_v2_taxonomy'],histories:[],historyCoverageConfirmed:false,catalogue:{groups:[]},prepareRequest:prepareSemanticProviderRequest,observedAt:observation.observedAt??null});
+ const manifest=prepareSemanticDomainManifest({records,taxonomy:documents['settings/reels_v2_taxonomy'],histories:[],historyCoverageConfirmed:false,catalogue:{groups:[]},prepareRequest:prepareSemanticProviderRequest,observedAt:observation.observedEnd??observation.observedStart??null});
  metadataOnly(manifest);
  for(const [path,hash] of before)assert.equal(semanticHash(store.docs.get(path)),hash,'Saved source changed: '+path);
- return {schemaVersion:1,kind:'saved499_domain_planning_rehearsal',sourceCommit,sourceObservationSHA256:sourceSHA,sourceDocuments:738,published:499,sourceObservationDate:observation.observedAt??null,actualGoogleObservations:false,historicalExecutionCoverageConfirmed:false,scope:'Existing saved analysis routing, presence and full-request size measurements only; historical inputs do not prove the current retained/protected sets.',manifest,actualProviderCalls:0,networkRequests:0,googleWrites:0,newReels:0,paidReplays:0,originalSourcesUnchanged:true,semanticAccuracyMeasured:false,sourceBodiesIncluded:false,executionAuthorized:false};
+ return {schemaVersion:1,kind:'saved499_domain_planning_rehearsal',sourceCommit,sourceObservationSHA256:sourceSHA,sourceDocuments:738,published:499,sourceObservationDate:observation.observedEnd??observation.observedStart??null,actualGoogleObservations:false,historicalExecutionCoverageConfirmed:false,scope:'Existing saved analysis routing, presence and full-request size measurements only; historical inputs do not prove the current retained/protected sets.',manifest,actualProviderCalls:0,networkRequests:0,googleWrites:0,newReels:0,paidReplays:0,originalSourcesUnchanged:true,semanticAccuracyMeasured:false,sourceBodiesIncluded:false,executionAuthorized:false};
 }
 async function main(){
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REPOSITORY!=='mide-lim/MEGA-BRAIN')throw Error('Central GitHub Actions required.');

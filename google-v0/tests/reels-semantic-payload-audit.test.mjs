@@ -5,10 +5,10 @@ import {encodeFields} from '../lib/firestore.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 import {ReelsSemanticCurator} from '../lib/reels-semantic-curator.mjs';
 import {semanticHash,semanticPolicyVersion,semanticSourceFromSaved} from '../lib/reels-semantic-source.mjs';
-import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
+import {semanticPromptHash,semanticSchemaForPhase} from '../lib/reels-semantic-provider.mjs';
 import {makeSemanticCheckpointFixture,seedSemanticAlignmentRecovery} from './reels-semantic-checkpoint-fixture.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
-import {diagnoseSemanticNextInput,prepareSemanticNextInputAudit,measureSemanticSchema,payloadAuditScope} from '../scripts/diagnose-semantic-next-input.mjs';
+import {diagnoseSemanticNextInput,prepareSemanticNextInputAudit,measureSemanticSchema,payloadAuditScope,loadPinnedHistoricalSemanticProvider} from '../scripts/diagnose-semantic-next-input.mjs';
 
 async function inputs(){
  const fixture=makeSemanticCheckpointFixture(),store=memoryReelsStore();
@@ -31,8 +31,9 @@ test('next-eight diagnostic captures the actual adapter offline, matches exact b
  assert.deepEqual(report.sourceIds,data.expected.sourceIds);assert.equal(report.sourceIds.length,8);assert.equal(report.bindingHash,data.expected.bindingHash);assert.equal(report.catalogueHash,data.expected.catalogueHash);assert.equal(report.promptHash,semanticPromptHash);
  assert.equal(report.adapterRequestsCaptured,1);assert.equal(report.actualProviderCalls,0);assert.equal(report.googleWrites,0);assert.equal(report.networkRequests,0);assert.equal(report.inferenceExecuted,false);assert.equal(report.paidResponseReplayed,false);assert.equal(report.remoteAcceptanceProven,false);assert.equal(report.incidentCauseEstablished,false);assert.equal(report.retryAuthorized,false);
  assert.equal(data.fixture.calls.length,0,'A fake transport capture must not execute even the synthetic semantic engine');
- assert.equal(report.schema.anyOfNodes,1);assert.equal(report.schema.anyOfBranches,3);assert.ok(report.schema.nodes>50);assert.ok(report.schema.optionalProperties>0);assert.ok(report.schema.maxArrayNesting>=3);assert.equal(report.schema.missingType.length,1);assert.equal(report.schema.missingType[0].anyOf,true);assert.deepEqual(report.schema.unsupportedKeywords,[]);
- assert.ok(report.bytes.request>report.bytes.schema+report.bytes.systemInstruction);assert.ok(report.bytes.schema>10000);assert.match(report.requestHash,/^[a-f0-9]{64}$/);assert.match(report.wireBodySHA256,/^[a-f0-9]{64}$/);
+ assert.equal(report.schema.anyOfNodes,0);assert.equal(report.schema.anyOfBranches,0);assert.equal(report.schema.bounds,0);assert.ok(report.schema.nodes>25);assert.ok(report.schema.optionalProperties>0);assert.ok(report.schema.maxArrayNesting>=3);assert.deepEqual(report.schema.missingType,[]);assert.deepEqual(report.schema.unsupportedKeywords,[]);
+ assert.deepEqual(report.schema,measureSemanticSchema(semanticSchemaForPhase('extract',{sources:data.expected.sourceIds.map(id=>({id})),catalogue:{groups:[]}})),'The report must describe the current flat provider, not re-label the old union schema');
+ assert.ok(report.bytes.request>report.bytes.schema+report.bytes.systemInstruction);assert.ok(report.bytes.schema>1000);assert.match(report.requestHash,/^[a-f0-9]{64}$/);assert.match(report.wireBodySHA256,/^[a-f0-9]{64}$/);
  for(const text of data.sourceText)assert.equal(serialized.includes(text),false,'Saved source text must never be exported');
  for(const forbidden of ['rawResponse','excerpt','Authorization','Bearer ','https://','sourceIdentity','requestBody'])assert.equal(serialized.includes(forbidden),false,forbidden+' must not appear in the metadata artifact');
  assert.equal(semanticHash({input:data.input,paid:data.paid,store:[...data.store.docs]}),before,'Diagnostic must not change sources, original paid response or authority');
@@ -80,4 +81,10 @@ test('optional CountTokens packet preserves exact generationConfig and contains 
  for(const forbidden of ['rawResponse','systemInstruction','sourceIdentity','Authorization','Bearer ','https://'])assert.equal(serialized.includes(forbidden),false,forbidden+' must not be included');
  assert.equal(probe.sourceTextIncluded,false);assert.equal(probe.sourceIdsInContents,false);assert.equal(probe.inferenceRequested,false);assert.equal(probe.generatedContent,0);assert.equal(probe.providerCallsExecuted,0);assert.equal(probe.googleRequestsExecuted,0);assert.equal(probe.approvedForExecution,false);assert.equal(probe.remoteGenerateContentAcceptanceProven,false);assert.equal(data.fixture.calls.length,0);
  const payload=structuredClone(probe);delete payload.packetHash;assert.equal(semanticHash(payload),probe.packetHash);
+});
+
+test('historical adapter selection fails closed without the exact pinned central-GitHub directory',async t=>{
+ t.mock.method(globalThis,'fetch',()=>{throw Error('NETWORK_FORBIDDEN');});
+ const inCentralCI=process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REPOSITORY==='mide-lim/MEGA-BRAIN';
+ await assert.rejects(()=>loadPinnedHistoricalSemanticProvider('/untrusted'),{code:inCentralCI?'PINNED_PROVIDER_DIRECTORY_INVALID':'CENTRAL_GITHUB_ACTIONS_REQUIRED'});
 });

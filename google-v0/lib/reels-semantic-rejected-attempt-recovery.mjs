@@ -127,12 +127,13 @@ function evaluate(input,{trustedReview=null}={}){
  need(equal(input.evidence?.references,S.evidence)&&equal(input.evidence?.correlation,S.correlation),'HISTORICAL_EVIDENCE_OR_LIMITS_MISMATCH');
  const review=input.review,rd=review?.data??{},scopeHash=rejectedSemanticRecoveryReviewScope(input);
  need(trustedReview&&review?.path===trustedReview.path&&review?.sha256===trustedReview.sha256&&hex(review.sha256)&&trustedReview.dataHash===rejectedRecoveryHash(rd)&&trustedReview.scopeHash===scopeHash&&trustedReview.actorId===rd.actorId&&rd.kind==='native_independent_review'&&rd.executor==='codex-native'&&rd.role==='Revisor'&&typeof rd.actorId==='string'&&rd.actorId.startsWith('/root/')&&rd.actorId!=='/root/alignment_frontend'&&rd.accepted===true&&rd.scopeHash===scopeHash&&date(rd.reviewedAt)&&Date.parse(rd.reviewedAt)<=now&&rd.assignment==='exact_http400_recovery_preparation_only'&&equal(rd.limits,{circumstantialAggregateOnly:true,noRequestId:true,noBody:true,billingNotEstablished:true,schemaCauseNotEstablished:true,noUniversalAbsenceClaim:true}),'TRUSTED_INDEPENDENT_REVIEW_REQUIRED');
+ fresh(rd.reviewedAt,'REVIEW');
  need(input.recoveryConsumed!==true,'RECOVERY_ALREADY_CONSUMED');
  return {errors:[...new Set(errors)],captures,checks,scopeHash};
 }
 export function rejectedSemanticAttemptIdentity(receipt){
  const attemptId=rejectedRecoveryHash({jobId:S.jobId,oldBatchId:S.oldBatchId,receiptHash:receipt.receiptHash,newPromptHash:receipt.binding.newContract.promptHash,callsUsed:3});
- return {attemptId,sequence:2,outboxId:rejectedRecoveryHash({jobId:S.jobId,sequence:2,attemptId}),callsBefore:2,callsAfterIntent:3,logicalCursor:8,checkpoint:structuredClone(S.checkpoint)};
+ return {attemptId,sequence:2,outboxId:rejectedRecoveryHash({jobId:S.jobId,sequence:2}),callsBefore:2,callsAfterIntent:3,logicalCursor:8,checkpoint:structuredClone(S.checkpoint)};
 }
 export function prepareRejectedSemanticAttemptRecovery(input,options={}){
  const result=evaluate(input,options);
@@ -149,6 +150,7 @@ export function prepareRejectedSemanticAttemptRecovery(input,options={}){
 export function validateRejectedSemanticAttemptRecovery(receipt,current,options={}){
  try{
   if(!receipt||receipt.executionAuthorized!==false||receipt.status!=='prepared_only'||!date(receipt.validUntil)||Date.parse(current.now)>=Date.parse(receipt.validUntil))return false;
+  if(!date(receipt.preparedAt)||Date.parse(receipt.validUntil)>Date.parse(receipt.preparedAt)+S.maximumObservationAgeMs||Date.parse(receipt.validUntil)>Date.parse(current.policy?.data?.expiresAt)||!date(current.review?.data?.reviewedAt)||Date.parse(receipt.validUntil)>Date.parse(current.review.data.reviewedAt)+S.maximumObservationAgeMs)return false;
   const {receiptHash,...body}=receipt;if(!hex(receiptHash)||rejectedRecoveryHash(body)!==receiptHash)return false;
   const prepared=prepareRejectedSemanticAttemptRecovery(current,options);
   return prepared.report.ready&&equal(receipt.binding,prepared.receipt.binding)&&receipt.scopeHash===prepared.receipt.scopeHash&&equal(receipt.review,prepared.receipt.review)&&equal(receipt.checkpoint,S.checkpoint)&&receipt.callsBefore===2&&receipt.callsAfterNewIntent===3&&receipt.maximumCalls===127&&receipt.jobId===S.jobId&&receipt.oldBatchId===S.oldBatchId&&receipt.kind===S.version&&receipt.schemaVersion===1&&date(receipt.preparedAt)&&Date.parse(receipt.preparedAt)<=Date.parse(current.now)&&Object.keys(receipt).sort().join(',')===Object.keys(prepared.receipt).sort().join(',');

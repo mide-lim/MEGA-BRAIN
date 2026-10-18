@@ -128,6 +128,11 @@ test('historical metadata simulation: finite receipt, every guard, no execution 
  await t.test('receipt validity is bounded and old receipt/old sequence cannot become a new attempt',()=>{
   const later=structuredClone(input);later.now='2026-10-18T06:05:00.000Z';
   assert.equal(validateRejectedSemanticAttemptRecovery(receipt,later,options),false);
+  const forgedTTL=structuredClone(receipt);forgedTTL.validUntil='2026-10-18T07:00:00.000Z';
+  const {receiptHash:oldHash,...ttlBody}=forgedTTL;forgedTTL.receiptHash=hash(ttlBody);
+  const refreshed=structuredClone(input);refreshed.now='2026-10-18T06:06:00.000Z';
+  for(const row of [refreshed.job,refreshed.policy,refreshed.authorization,refreshed.firstResult,refreshed.editorial,...refreshed.sources,refreshed.resultAbsence,refreshed.rawAbsence.query,...refreshed.rawAbsence.documents,refreshed.recoveryAbsence,refreshed.queue])row.readTime=refreshed.now;
+  assert.equal(validateRejectedSemanticAttemptRecovery(forgedTTL,refreshed,options),false,'re-hashing cannot extend the old five-minute receipt with renewed capture timestamps');
   const forged=structuredClone(receipt);forged.executionAuthorized=true;assert.equal(validateRejectedSemanticAttemptRecovery(forged,input,options),false);
   const forgedCheckpoint=structuredClone(receipt);forgedCheckpoint.checkpoint.callsUsed=2;const {receiptHash,...body}=forgedCheckpoint;forgedCheckpoint.receiptHash=hash(body);assert.equal(validateRejectedSemanticAttemptRecovery(forgedCheckpoint,input,options),false);
  });

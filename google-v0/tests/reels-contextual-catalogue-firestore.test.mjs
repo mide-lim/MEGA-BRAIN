@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {Firestore} from '../lib/firestore.mjs';
+import {Firestore,encodeFields} from '../lib/firestore.mjs';
 import {projectContextualContribution} from '../lib/reels-contextual-catalogue.mjs';
 import {makeFullCatalogueFixture} from './reels-contextual-catalogue-fixture.mjs';
 const ID='EmuCatalogue01',path='reels_index/contextual_'+ID;
@@ -59,7 +59,11 @@ test('Firestore emulator proves transactional source fencing and removal of obso
  const value=projectContextualContribution({...source,sourceVersions:{video:video.updateTime},observedAt:input.observedAt}),checks=[{path:'videos/'+ID,updateTime:video.updateTime},{path:'settings/reels_v2_taxonomy',updateTime:taxonomy.updateTime},{path:'settings/reels_v2_contextual_catalogue',updateTime:manifest.updateTime},{path:'reels_index/contextual_review_'+ID,updateTime:review?.updateTime??null},{path,updateTime:previous.updateTime}];
  assert.equal((await store.compareAndReplaceDerived({path,replacement:value,checks})).applied,true);
  const after=await store.get(path);assert.deepEqual(after.data,value);assert.equal(after.data.obsolete,undefined);
- await store.patch('videos/'+ID,{title:'New source metadata'},{updateTime:video.updateTime});
+ // Change the synthetic source using the documented Write precondition in a
+ // commit body: the emulator PATCH query adapter decoded that timestamp as 0.
+ const changed=await api.request(store.root+':commit',{method:'POST',json:{writes:[{update:{name:'projects/'+api.project+'/databases/(default)/documents/videos/'+ID,fields:encodeFields({...source.video,title:'New source metadata'})},currentDocument:{updateTime:video.updateTime}}]}});
+ assert.equal(changed.writeResults.length,1);assert.notEqual(changed.writeResults[0].updateTime,video.updateTime);
+ const revised=await store.get('videos/'+ID);assert.equal(revised.data.title,'New source metadata');assert.equal(revised.updateTime,changed.writeResults[0].updateTime);
  checks.find(c=>c.path===path).updateTime=after.updateTime;
  assert.equal((await store.compareAndReplaceDerived({path,replacement:value,checks})).applied,false);
  assert.equal((await store.get(path)).updateTime,after.updateTime);

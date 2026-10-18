@@ -412,7 +412,7 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
  });
  await record('library_reuses_navigation_without_idle_operational_scans_and_context_loads_on_demand',async()=>{
   const library=await context.newPage(),requests=[];
-  library.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/'))requests.push({path:url.pathname,query:url.search});});
+  library.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/'))requests.push({path:url.pathname,query:url.search,refresh:request.headers()['x-reels-refresh']});});
   await library.clock.install();await library.goto(server.origin);await library.getByLabel('Selecionar Entrada 000',{exact:true}).waitFor();
   const firstLibrary=requests.length;await navigate(library,'Biblioteca');await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();const tree=library.locator('.library-navigation');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).waitFor();
   assert.equal(requests.slice(firstLibrary).filter(x=>x.path==='/api/reels/summary').length,0,'Library must not request the operational summary');
@@ -421,7 +421,7 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
   const tech=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await tech;
   const food=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_food');await tree.locator('.tree-name').filter({hasText:'Receitas'}).click();await food;
   const beforeBack=requests.length;await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();assert.equal(requests.length,beforeBack,'A visited category should reuse the last fresh page without another GET');
-  const refreshed=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech');await library.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await refreshed;
+  const refreshed=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech'),refreshedTree=responseFor(library,'/api/reels/categories'),beforeRefresh=requests.length;await library.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await Promise.all([refreshed,refreshedTree]);const manual=requests.slice(beforeRefresh).filter(x=>['/api/reels/items','/api/reels/categories'].includes(x.path));assert.equal(manual.length,2);assert.ok(manual.every(x=>typeof x.refresh==='string'&&x.refresh.length>0));assert.equal(new Set(manual.map(x=>x.refresh)).size,1,'Current items and category tree share one explicit refresh token');
   const contextRead=responseFor(library,'/api/reels/contextual');await library.locator('.contextual-library-filters > summary').click();await contextRead;assert.ok(requests.some(x=>x.path==='/api/reels/contextual'));
   assert.deepEqual(server.externalAttempts,[]);await library.close();
  });
@@ -441,4 +441,5 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally {await browser?.close();await server.close();}
+
 

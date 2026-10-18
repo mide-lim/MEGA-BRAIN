@@ -79,12 +79,12 @@ try{
    await state.page.screenshot({path:join(output,'manual-tools-with-uncertain-operation.png'),fullPage:true});
   }finally{await state.close();}
  });
- await record('library_prioritizes_items_before_auxiliary_element_queries',async()=>{
+ await record('library_renders_items_without_auxiliary_queries_until_filters_open',async()=>{
   const state=await start(),hold=state.server.holdNext(url=>url.pathname==='/api/reels/items'&&url.searchParams.get('workspace')==='library');
   try{
    await navigate(state.page,'Biblioteca');await hold.started;
    assert.equal(state.server.calls.some(call=>call.path==='/api/reels/contextual'),false,'Initial auxiliary queries must wait for the first published items response');
-   const auxiliary=state.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/reels/contextual');hold.release();await auxiliary;
+   hold.release();await state.page.locator('.library-card').first().waitFor();assert.equal(state.server.calls.some(call=>call.path==='/api/reels/contextual'),false,'Published cards must render without auxiliary context reads');const auxiliary=state.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/reels/contextual');await state.page.locator('.contextual-library-filters > summary').click();await auxiliary;
    const search=state.page.getByLabel('Buscar no acervo',{exact:true}),updated=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('q')==='QaFull';});
    await search.fill('QaFull');await updated;assert.equal(await search.evaluate(element=>element===document.activeElement),true,'Reading the next result must preserve the search focus');assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
   }finally{hold.release();await state.close();}
@@ -263,3 +263,4 @@ try{
  const report={passed:true,checks,mode:'synthetic_saved_sources_real_API_and_workspace',realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,limitations:['Synthetic source categories prove routing and UI behavior, not real-corpus semantic accuracy.','Automatic domain execution stays subject to server policy and independent operational authorization.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));throw error;}
 finally{await browser.close();}
+

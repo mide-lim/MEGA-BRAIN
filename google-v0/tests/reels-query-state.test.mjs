@@ -80,3 +80,21 @@ test('Library browsing does not schedule the operational refresh loop',()=>{
  assert.equal(workspaceRefreshInterval('all'),60000);
 });
 
+
+test('explicit refresh marks only subscribed browse reads with one shared token',async()=>{
+ const requests=[],client=createResourceClient(async(path,options)=>{requests.push({path,...options});return {request:requests.length};});
+ const paths=['/categories','/items?workspace=library&category=food','/items?workspace=all'];
+ const off=paths.map(path=>client.subscribe(path,()=>{}));
+ for(const path of paths)await client.load(path,1);
+ client.markRefresh('qa-explicit-refresh');
+ for(const path of paths)await client.load(path,2);
+ assert.deepEqual(requests.slice(3).map(({path,refresh})=>({path,refresh})),[
+  {path:paths[0],refresh:'qa-explicit-refresh'},{path:paths[1],refresh:'qa-explicit-refresh'},{path:paths[2],refresh:undefined}
+ ]);
+ // New navigation and regular polling do not inherit a manual bypass.
+ const branch='/items?workspace=library&category=tech',offBranch=client.subscribe(branch,()=>{});
+ await client.load(branch,2);assert.equal(requests.at(-1).refresh,undefined);
+ await client.load(paths[0],3);assert.equal(requests.at(-1).refresh,undefined);
+ off.forEach(unsubscribe=>unsubscribe());offBranch();
+});
+

@@ -33,6 +33,13 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
    if(request.method==='POST'&&!await sameOrigin(request))throw fail('ORIGIN_REJECTED','Origem não autorizada.',403);
    if(request.method==='GET'){
     const q=query(url);
+    // Explicit owner refresh bypasses only the read catalogue cache. Ordinary
+    // category/page requests reuse it; commands retain their fresh boundaries.
+    const refreshToken=request.headers.get('X-Reels-Refresh');
+    if(refreshToken!==null&&(path==='categories'||path==='contextual'||(parts[0]==='contextual'&&parts.length===2)||(path==='items'&&q.workspace==='library'))){
+     if(!/^[A-Za-z0-9_-]{1,128}$/.test(refreshToken))throw fail('INVALID_READ_REFRESH','Atualização inválida.');
+     if(repository.refreshBrowse?.(refreshToken))contextualCurator?.invalidate?.();
+    }
     if(parts.length===5&&parts.slice(0,4).join('/')==='curation/semantic/domains/destinations')return response(await getDomains().destination(parts[4]));
     if(path==='curation/semantic/domains')return response(await getDomains().overview());
     if(path==='curation/semantic')return response(await getSemantic().overview());
@@ -82,3 +89,4 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
   }catch(error){const known=Number.isInteger(error?.status)&&error.status>=400&&error.status<500;return response({error:known?error.message:safeError(error).message,code:known?(error.code??'INVALID_REQUEST'):'SERVICE_UNAVAILABLE',...(/^[a-f0-9]{64}$/.test(error.operationId??'')?{operationId:error.operationId}:{})},known?error.status:503);}
  };
 }
+

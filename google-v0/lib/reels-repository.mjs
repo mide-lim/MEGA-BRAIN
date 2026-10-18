@@ -13,7 +13,7 @@ const hasContextualFilters=query=>{let facets=[];if(query.facets!==undefined&&qu
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const executionOrder=(a,b)=>{const left=a.queuedAt??a.createdAt,right=b.queuedAt??b.createdAt;if(left!==right)return left===null?1:right===null?-1:left<right?-1:1;const rank={acquisition:0,transcription:1,analysis:2};return (a.attempt??0)-(b.attempt??0)||(rank[a.stage]??3)-(rank[b.stage]??3)||String(a.id??'').localeCompare(String(b.id??''));};
 export class ReelsRepository{
- constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;this.browseSnapshot=null;this.browsePending=null;}
+ constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;this.browseSnapshot=null;this.browsePending=null;this.browseRefreshTokens=new Set();}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
  async navigation(items,saved){
@@ -80,10 +80,17 @@ export class ReelsRepository{
   }
   return {records:[...records.values()],legacyRecords:legacy};
  }
+ refreshBrowse(token){
+  if(token===null||token===undefined)return false;
+  if(typeof token!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(token))throw invalid('Atualização inválida.');
+  if(this.browseRefreshTokens.has(token))return false;
+  this.browseRefreshTokens.add(token);if(this.browseRefreshTokens.size>32)this.browseRefreshTokens.delete(this.browseRefreshTokens.values().next().value);
+  this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;return true;
+ }
  async browseContributions(){
-  if(this.browsePending)return this.browsePending;
+  if(this.browsePending?.epoch===this.cacheEpoch)return this.browsePending.promise;
   const epoch=this.cacheEpoch;
-  this.browsePending=(async()=>{
+  const pending={epoch,promise:(async()=>{
    const [taxonomySnapshot,manifestSnapshot]=await Promise.all([this.store.get('settings/reels_v2_taxonomy'),this.store.get(catalogueManifestPath)]);
    const signature=digest([epoch,taxonomySnapshot?.updateTime??taxonomySnapshot?.data??null,manifestSnapshot?.updateTime??manifestSnapshot?.data??null]);
    const cached=this.browseSnapshot;
@@ -92,8 +99,8 @@ export class ReelsRepository{
    const value=await this.buildContextualContributions({...await this.publishedRecords(),taxonomySnapshot,manifestSnapshot});
    if(epoch===this.cacheEpoch)this.browseSnapshot={signature,expiresAt:this.clock()+60000,value};
    return value;
-  })();
-  try{return await this.browsePending;}finally{this.browsePending=null;}
+  })()};this.browsePending=pending;
+  try{return await pending.promise;}finally{if(this.browsePending===pending)this.browsePending=null;}
  }
  async contextualContributions(cachedItems=null){
   const [records,legacyRecords,manifestSnapshot,taxonomySnapshot]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS),this.store.get(catalogueManifestPath),this.store.get('settings/reels_v2_taxonomy')]);
@@ -160,7 +167,7 @@ export class ReelsRepository{
   const {cursor,limit:unused,...filters}=query,hash=digest(filters),sort=query.sort??'newest';
   const key=i=>[sort==='title'?(i.title??'').toLocaleLowerCase('pt-BR'):(i.createdAt??''),i.id];
   const compare=(a,b)=>{const x=key(a),y=key(b),d=x[0]<y[0]?-1:x[0]>y[0]?1:0;return (sort==='newest'?-d:d)||(x[1]<y[1]?-1:x[1]>y[1]?1:0);};
-  const snapshot=query.workspace==='library'?await this.browseContributions():null;
+  const snapshot=query.workspace==='library'&&this.catalogueEnabled?await this.browseContributions():null;
   const rows=(await this.matching(query,snapshot)).sort(compare);let start=0;
   if(cursor){let c;try{c=JSON.parse(Buffer.from(cursor,'base64url').toString());}catch{throw invalid('Cursor inválido.');}if(c.hash!==hash||!Array.isArray(c.key)||c.key.length!==2)throw invalid('Cursor não corresponde à consulta.');start=rows.findIndex(x=>{const k=key(x),d=k[0]<c.key[0]?-1:k[0]>c.key[0]?1:0;return ((sort==='newest'?-d:d)||(k[1]<c.key[1]?-1:k[1]>c.key[1]?1:0))>0;});if(start<0)start=rows.length;}
   const page=rows.slice(start,start+limit);return {items:page,total:rows.length,nextCursor:start+limit<rows.length?Buffer.from(JSON.stringify({hash,key:key(page.at(-1))})).toString('base64url'):null,...(snapshot?{observedAt:snapshot.observedAt,cache:{ttlMs:60000,stale:snapshot.sourceStale}}:this.observation())};

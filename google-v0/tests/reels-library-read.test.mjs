@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 import {Firestore,encodeFields} from '../lib/firestore.mjs';
 import {REEL_LIST_FIELDS} from '../lib/reels-model.mjs';
+import {reelsAPI} from '../lib/reels-api.mjs';
 
 const native=(id,extra={})=>({id,status:'analyzed',analysis_key:'analysis/'+id,analysis_generation:'1',analysis_quality_status:'accepted',analysis:{summary:id,categories:['food']},created_at:'2026-10-18T00:00:00Z',...extra});
 const legacy=id=>({schemaVersion:1,reelId:id,status:'legacy_preserved',originalStatus:'analyzed',historical:true,executable:false,provenance:{recordHash:'a'.repeat(64),sourceSnapshotHash:'b'.repeat(64)},analysis:{summary:id,primary_category:'food'}});
@@ -99,6 +100,38 @@ test('operational items and semantic execution inventory keep default fresh sour
  await f.repository.contextualContributions();const reads=f.reads.slice(prior);
  assert.ok(reads.some(r=>r.collection==='videos'&&r.filters.length===0));
  assert.ok(reads.some(r=>r.collection==='reels_legacy_content'&&r.filters.length===0));
+});
+
+test('authenticated explicit HTTP refresh bypasses warm cache, coalesces the action and propagates failures',async()=>{
+ const f=fixture(),api=reelsAPI({repository:f.repository,authorize:async()=>true,sameOrigin:async()=>true,clock:()=>0});
+ const get=async(path,token)=>{const response=await api(new Request('https://fixture.invalid/api/reels/'+path,{headers:token?{'X-Reels-Refresh':token}:{}}));return {status:response.status,data:await response.json()};};
+ const warm=await get('items?workspace=library&q=UpdatedTitle');assert.equal(warm.status,200);assert.equal(warm.data.total,0);
+ const old=f.docs.get('videos/Native_0000');f.put(old.path,{...old.data,title:'UpdatedTitle'});f.advance(1000);
+ const cached=await get('items?workspace=library&q=UpdatedTitle');assert.equal(cached.data.total,0);assert.equal(cached.data.observedAt,warm.data.observedAt);
+ f.reads.length=0;
+ const [items,categories]=await Promise.all([get('items?workspace=library&q=UpdatedTitle','explicit-1'),get('categories','explicit-1')]);
+ assert.equal(items.status,200);assert.equal(categories.status,200);assert.equal(items.data.total,1);
+ assert.notEqual(items.data.observedAt,warm.data.observedAt);
+ assert.equal(f.reads.filter(r=>r.collection==='videos').length,3,'one shared refresh action rebuilds only once');
+ assert.equal((await get('items?workspace=library','bad.token')).status,400);
+ f.fail(true);const failed=await get('items?workspace=library','explicit-2');assert.equal(failed.status,503);assert.equal(failed.data.items,undefined);
+ f.fail(false);assert.equal((await get('items?workspace=library','explicit-3')).data.total,499);
+ const denied=reelsAPI({repository:f.repository,authorize:async()=>false,sameOrigin:async()=>true});const epoch=f.repository.cacheEpoch;
+ assert.equal((await denied(new Request('https://fixture.invalid/api/reels/items?workspace=library',{headers:{'X-Reels-Refresh':'unauthorized'}}))).status,401);
+ assert.equal(f.repository.cacheEpoch,epoch);
+});
+
+test('explicit browse refresh cannot await or be overwritten by an older in-flight snapshot',async()=>{
+ const f=fixture(),original=f.store.query;let release,oldStarted;const ready=new Promise(resolve=>{oldStarted=resolve;});let first=true;
+ f.store.query=async(...args)=>{const result=await original(...args);if(first){first=false;oldStarted();await new Promise(resolve=>{release=resolve;});}return result;};
+ const old=f.repository.browseContributions();await ready;
+ const row=f.docs.get('videos/Native_0000');f.put(row.path,{...row.data,title:'New epoch'});
+ assert.equal(f.repository.refreshBrowse('new-generation'),true);assert.equal(f.repository.refreshBrowse('new-generation'),false);
+ const fresh=await f.repository.browseContributions();assert.equal(fresh.items.find(i=>i.id==='Native_0000').title,'New epoch');
+ release();await old;
+ assert.equal((await f.repository.browseContributions()).items.find(i=>i.id==='Native_0000').title,'New epoch');
+ assert.equal(f.repository.browsePending,null);
+ for(let n=0;n<40;n++)f.repository.refreshBrowse('bounded-'+n);assert.equal(f.repository.browseRefreshTokens.size,32);
 });
 
 test('projected batchGet validates project, duplicates, missing documents and complete response',async()=>{

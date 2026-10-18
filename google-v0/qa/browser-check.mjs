@@ -10,7 +10,7 @@ try{
  await record('details_and_original_name',async()=>{await page.getByRole('button').filter({has:page.getByRole('heading',{name:'Model Distillation (destilação de modelos)',exact:true})}).click();await page.getByRole('dialog').waitFor();assert.ok((await page.getByRole('dialog').innerText()).includes('Model Distillation (destilação de modelos)'));});
  await record('keywords_and_original_transcript',async()=>{await page.getByRole('button',{name:'Palavras-chave',exact:true}).click();assert.ok((await page.getByRole('dialog').innerText()).includes('#model_distillation'));await page.getByRole('button',{name:'Transcrição de áudio',exact:true}).click();assert.ok((await page.getByRole('dialog').innerText()).includes('Model distillation trains a smaller model.'));});
  await record('literal_evidence',async()=>{await page.getByRole('button',{name:'Conhecimento consolidado',exact:true}).click();await page.getByText('Aplicações e evidências',{exact:true}).click();await page.getByText('Consultar fontes',{exact:true}).click();assert.ok((await page.locator('blockquote').innerText()).includes('Model distillation trains a smaller model.'));});
- await record('synthetic_video_playback',async()=>{await page.getByRole('button',{name:'Vídeo original',exact:true}).click();await page.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();const video=page.locator('.video-preview.full video');await video.evaluate(v=>v.play());await page.waitForFunction(()=>{const v=document.querySelector('.video-preview.full video');return v&&v.readyState>=2&&v.currentTime>0&&!v.error;});});
+ await record('synthetic_video_playback',async()=>{await page.getByRole('button',{name:'Vídeo original',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Carregar vídeo privado',exact:true}).count(),0);const video=page.locator('.video-preview.full video');assert.equal(await video.getAttribute('preload'),'metadata');await video.focus();await video.press('Space');await page.waitForFunction(()=>{const v=document.querySelector('.video-preview.full video');return v&&v.readyState>=2&&v.currentTime>0&&!v.error;});});
  await page.getByRole('button',{name:'Fechar detalhes do Reel'}).click();
  await record('book_and_dual_language_search',async()=>{await page.getByRole('button',{name:'Livro de conhecimento',exact:true}).click();const search=page.getByLabel('Buscar no livro');for(const term of ['distillation','destilação']){await search.fill(term);await page.getByText('Model Distillation (destilação de modelos)',{exact:true}).first().waitFor();}await search.fill('');});
  await record('category_navigation',async()=>{await page.getByRole('button',{name:'Categorias',exact:true}).click();await page.getByRole('button').filter({has:page.getByText('Tecnologia',{exact:true})}).click();await page.getByRole('heading',{name:'Model Distillation (destilação de modelos)',exact:true}).waitFor();});
@@ -64,14 +64,14 @@ try{
  });
 
 
- await record('late_playback_permission_recovers_without_manual_refresh',async()=>{
+ await record('late_playback_permission_recovers_via_player_retry_without_page_refresh',async()=>{
   const row={...structuredClone(fixtureVideo),id:'Late_ready'};server.setLibraryVideos([row]);server.setPlaybackReady(false);
   const late=await context.newPage();await late.clock.install();await late.goto(server.origin);await late.getByRole('button',{name:'Biblioteca',exact:true}).click();
   await late.getByRole('button').filter({has:late.getByRole('heading',{name:row.analysis.title,exact:true})}).click();
-  await late.getByRole('button',{name:'Vídeo original',exact:true}).click();await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();
-  await late.getByText('Reprodução ainda não liberada',{exact:true}).waitFor();server.setPlaybackReady(true);
-  await late.clock.fastForward(15001);await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).waitFor();
-  await late.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();await late.locator('.video-preview.full video').waitFor();
+  await late.getByRole('button',{name:'Vídeo original',exact:true}).click();
+  await late.getByRole('alert').filter({hasText:'Não foi possível acessar o vídeo agora.'}).waitFor();server.setPlaybackReady(true);
+  await late.getByRole('button',{name:'Tentar reproduzir novamente',exact:true}).click();await late.waitForFunction(()=>{const video=document.querySelector('.video-preview.full video');return video&&video.readyState>=2&&video.currentTime>0&&!video.error;});
+  assert.equal(server.calls.filter(call=>call.path==='/api/video/Late_ready').length,0);
   await late.close();server.setPlaybackReady(true);server.setLibraryVideos([fixtureVideo]);
  });
 
@@ -120,3 +120,4 @@ try{
  await page.screenshot({path:join(output,'frontend-check.png'),fullPage:true});const report={passed:true,checks,mode:'synthetic_fixture_actual_components',google_calls:0,production_data_modified:false,credentials_loaded:false,http_calls:server.calls.length,limitations:['This does not validate production Google login or a real Instagram video.','Anonymous-route security is independently checked by existing image smoke tests.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.message,checks,failures}));throw error;}
 finally{await browser?.close();await server.close();}
+

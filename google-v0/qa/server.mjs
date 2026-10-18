@@ -27,10 +27,11 @@ export async function startFixtureServer(){
   if(path==='/api/controls')return send('application/json',JSON.stringify({automation}));
   if(path==='/api/financial')return send('application/json',JSON.stringify({...financial,progress:{items:progressOverride??libraryVideos.filter(v=>v.status!=='pending').map(v=>({id:v.id,stage:v.status==='pending'?'upload':v.status==='downloaded'?'transcription':'analysis',status:v.status==='pending'?'reserved':v.status==='analyzed'?'completed':v.status==='needs_attention'?'uncertain':'started',version:createHash('sha256').update(JSON.stringify(v)).digest('hex')}))}}));
   if(path.startsWith('/api/video/')&&libraryVideos.some(v=>v.id===path.split('/').at(-1))){if(!playbackReady)return send('application/json',JSON.stringify({error:'Reprodução ainda não liberada'}),403);const id=path.split('/').at(-1);return send('application/json',JSON.stringify({url:'/api/media/'+id,expires_at:new Date(Date.now()+60000).toISOString()}));}
-  if(path.startsWith('/api/media/')&&libraryVideos.some(v=>v.id===path.split('/').at(-1)))return send('video/webm',videoBytes);
+  if(path.startsWith('/api/media/')&&libraryVideos.some(v=>v.id===path.split('/').at(-1))){if(!playbackReady)return send('application/json',JSON.stringify({error:'Reprodução ainda não liberada'}),403);return send('video/webm',videoBytes);}
   return send('application/json',JSON.stringify({error:'Fixture endpoint absent'}),404);
  });
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
  return {origin:'http://127.0.0.1:'+server.address().port,calls,setProgress:items=>{progressOverride=items;},setPlaybackReady:value=>{playbackReady=value;},setLibraryVideos:rows=>{libraryVideos=rows;},setLibraryFailure:offset=>{failureOffset=offset;},holdNextLibrary(){let release,started;const wait=new Promise(r=>{release=r;}),began=new Promise(r=>{started=r;});heldLibrary={wait,started};return {release,started:began};},close:async()=>{await new Promise(resolve=>server.close(resolve));const target=resolve(temp);if(dirname(target)!==resolve(tmpdir())||!target.includes('megabrain-frontend-qa-'))throw Error('Cleanup outside QA directory');await rm(target,{recursive:true,force:true});}};
  }catch(error){server?.close();await rm(temp,{recursive:true,force:true});throw error;}
 }
+

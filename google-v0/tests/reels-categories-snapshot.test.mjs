@@ -27,15 +27,15 @@ async function setup({separateDerivedReads=false}={}){
  }
  const api=reelsAPI({repository,semantic,authorize:async()=>true,sameOrigin:async()=>true,clock});
  const get=async()=>{const response=await api(new Request('https://fixture.invalid/api/reels/categories'));return {status:response.status,data:await response.json()};};
- return {store,repository,catalogue,semantic,get,groupId:created.group.id,advance:()=>{time+=1000;}};
+ return {store,repository,catalogue,semantic,get,groupId:created.group.id,advance:(ms=1000)=>{time+=ms;}};
 }
 const sourceReads=store=>Object.fromEntries(['videos','reels_legacy_content'].map(collection=>[collection,store.reads.filter(r=>r.collection===collection).length]));
 const reset=store=>{store.reads.length=0;};
 const node=(data,id)=>data.nodes.find(n=>n.id===id);
 
-test('categories share one fresh metadata scan pair cold and warm while preserving real derived output',async()=>{
+test('categories use published candidates cold and reuse a bounded warm snapshot while preserving derived output',async()=>{
  const shared=await setup(),reference=await setup({separateDerivedReads:true});
- reset(shared.store);const cold=await shared.get();assert.equal(cold.status,200);assert.deepEqual(sourceReads(shared.store),{videos:1,reels_legacy_content:1});
+ reset(shared.store);const cold=await shared.get();assert.equal(cold.status,200);assert.deepEqual(sourceReads(shared.store),{videos:3,reels_legacy_content:1});
  // The comparison uses independent reads with the same source epochs.
  const expected={...await reference.repository.categories(),discovery:await new ReelsTaxonomy({repository:reference.repository}).coverage()};assert.deepEqual(cold.data,expected);
  assert.equal(node(cold.data,'ctx_format_single_recipe').count,1);
@@ -44,7 +44,7 @@ test('categories share one fresh metadata scan pair cold and warm while preservi
  assert.equal(cold.data.revision,13);assert.equal(cold.data.cache.stale,false);
  assert.ok(!JSON.stringify(cold.data).includes('taxonomySnapshot'));
  await shared.repository.items();reset(shared.store);
- const warm=await shared.get();assert.equal(warm.status,200);assert.deepEqual(sourceReads(shared.store),{videos:1,reels_legacy_content:1});
+ const warm=await shared.get();assert.equal(warm.status,200);assert.deepEqual(sourceReads(shared.store),{videos:0,reels_legacy_content:0});
  assert.deepEqual(warm.data,cold.data);
  assert.equal(shared.repository.snapshot.expiresAt>shared.repository.clock(),true);
 });
@@ -54,7 +54,7 @@ test('a new GET observes current manual revision and invalidates old source/sema
  const taxonomy=await s.store.get('settings/reels_v2_taxonomy'),video=await s.store.get('videos/QaFull_single');
  await s.store.patch('settings/reels_v2_taxonomy',{revision:14,nodes:[...taxonomy.data.nodes,{id:'manual-food',name:'Meu preparo',parentId:'receitas',manual:true}]},{updateTime:taxonomy.updateTime});
  await s.store.patch('videos/QaFull_single',{analysis_generation:'9',categoryIds:['manual-food'],taxonomy_override:{manual:true,revision:14}},{updateTime:video.updateTime});
- s.advance();reset(s.store);const fresh=await s.get();assert.equal(fresh.status,200);assert.deepEqual(sourceReads(s.store),{videos:1,reels_legacy_content:1});
+ s.advance();reset(s.store);const fresh=await s.get();assert.equal(fresh.status,200);assert.deepEqual(sourceReads(s.store),{videos:3,reels_legacy_content:1});
  assert.equal(fresh.data.revision,14);assert.equal(node(fresh.data,'manual-food').count,1);assert.equal(node(fresh.data,'manual-food').manual,true);
  assert.equal(node(fresh.data,'ctx_format_single_recipe').count,0);
  assert.equal(node(fresh.data,'semantic_'+s.groupId).count,0);
@@ -66,9 +66,9 @@ test('a new GET observes current manual revision and invalidates old source/sema
 test('failed fresh category metadata cannot be replaced by a warm item cache labeled fresh',async()=>{
  const s=await setup();await s.repository.items();assert.equal((await s.get()).status,200);
  const query=s.store.query;s.store.query=async(collection,...args)=>{if(collection==='videos')throw Error('Synthetic metadata unavailable');return query(collection,...args);};
- const failed=await s.get();assert.ok(failed.status>=500);assert.equal(failed.data.nodes,undefined);assert.equal(failed.data.cache?.stale===false,false);
+ s.repository.refreshBrowse('failure-refresh');const failed=await s.get();assert.ok(failed.status>=500);assert.equal(failed.data.nodes,undefined);assert.equal(failed.data.cache?.stale===false,false);
  s.store.query=query;s.advance();reset(s.store);
- const recovered=await s.get();assert.equal(recovered.status,200);assert.equal(recovered.data.cache.stale,false);assert.deepEqual(sourceReads(s.store),{videos:1,reels_legacy_content:1});
+ const recovered=await s.get();assert.equal(recovered.status,200);assert.equal(recovered.data.cache.stale,false);assert.deepEqual(sourceReads(s.store),{videos:3,reels_legacy_content:1});
 });
 
 test('sharing keeps review-hash and contribution-content validation fail closed',async()=>{
@@ -77,7 +77,7 @@ test('sharing keeps review-hash and contribution-content validation fail closed'
  const revoked=await s.get();assert.equal(revoked.status,200);assert.equal(node(revoked.data,'ctx_format_single_recipe').count,0);assert.equal(revoked.data.cache.stale,true);
  const contributionPath='reels_index/contextual_QaFull_many',contribution=await s.store.get(contributionPath);
  await s.store.patch(contributionPath,{contentHash:'0'.repeat(64)},{updateTime:contribution.updateTime});
- const before=structuredClone([...s.store.docs]);
+ const before=structuredClone([...s.store.docs]);s.repository.refreshBrowse('corruption-refresh');
  const invalid=await s.get();assert.equal(invalid.status,409);assert.equal(invalid.data.code,'CATALOGUE_CONTRIBUTION_CORRUPT');assert.equal(invalid.data.nodes,undefined);assert.equal(invalid.data.cache?.stale===false,false);
  assert.deepEqual([...s.store.docs],before,'GET must neither repair corrupt metadata nor change source records.');
 });
@@ -107,7 +107,8 @@ test('only empty virtual formats shadowed by a populated same-parent manual sibl
  assert.equal(node(empty.data,'ctx_format_recipe_collection').count,0,'An empty manual sibling or a populated different-parent sibling cannot hide the virtual format.');
  const many=await s.store.get('videos/QaFull_many');
  await s.store.patch('videos/QaFull_many',{categoryIds:['food-many-manual'],taxonomy_override:{manual:true,revision:14}},{updateTime:many.updateTime});
- const hidden=await s.get();assert.equal(hidden.status,200);assert.equal(node(hidden.data,'ctx_format_recipe_collection'),undefined);assert.equal(node(hidden.data,'food-many-manual').count,1);
+ s.repository.refreshBrowse('manual-source-refresh');const hidden=await s.get();assert.equal(hidden.status,200);assert.equal(node(hidden.data,'ctx_format_recipe_collection'),undefined);assert.equal(node(hidden.data,'food-many-manual').count,1);
  assert.equal((await s.repository.list({workspace:'library',category:'ctx_format_single_recipe'})).total,0,'Direct canonical filters still resolve normally.');
  assert.equal((await s.store.get('settings/reels_v2_taxonomy')).data.nodes.some(n=>n.id==='food-many-manual'),true);
 });
+

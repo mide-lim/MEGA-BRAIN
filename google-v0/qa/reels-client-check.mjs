@@ -25,9 +25,13 @@ try {
  assert.equal(captured.options.cache,'no-store');
  assert.equal(captured.options.credentials,'same-origin');
  assert.deepEqual(JSON.parse(captured.options.body),{links:'https://www.instagram.com/reel/x/'});
+ assert.equal(captured.options.headers['X-Reels-Refresh'],undefined);
+ await request('/categories',{refresh:'qa-explicit-refresh'});assert.equal(captured.options.headers['X-Reels-Refresh'],'qa-explicit-refresh');assert.equal(captured.options.refresh,undefined);
+ await request('/items?workspace=library');assert.equal(captured.options.headers['X-Reels-Refresh'],undefined);
  globalThis.fetch=async()=>({ok:false,status:423,json:async()=>({error:'Processamento bloqueado',code:'PROCESSING_DISABLED',operationId:'op1'})});
  await assert.rejects(request('/commands'),e=>e.message==='Processamento bloqueado'&&e.code==='PROCESSING_DISABLED'&&e.operationId==='op1'&&e.status===423);
  globalThis.fetch=async()=>({json:async()=>{throw new Error('invalid JSON');}});
  await assert.rejects(request('/summary'),/A resposta do serviço não pôde ser lida/);
 } finally {globalThis.fetch=originalFetch;}
 console.log('Reels client checks passed: navigation, query, missing values, event merge, request contract and safe errors.');
+

@@ -92,8 +92,8 @@ export class ReelsCatalogueRuntime{
   }
   return {...view,active:snapshot.active===true,pendingEvents:snapshot.pendingEvents??null};
  }
- async matchingIds(query={}){
-  const snapshot=await this.snapshot(),taxonomy=(await this.store.get('settings/reels_v2_taxonomy'))?.data??{};
+ async matchingIds(query={},{snapshot=null}={}){
+  snapshot??=await this.snapshot();const taxonomy=(Object.hasOwn(snapshot,'taxonomySnapshot')?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy'))?.data??{};
   let ids=catalogueMatchingIds(snapshot.contributions,query,taxonomy.nodes??[]);
   if(/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
    const {category,...extra}=query,parsed=normalizeCatalogueQuery(extra).query,hasExtra=!!parsed.context||!!parsed.q||parsed.facets.length>0,eligible=hasExtra?new Set(catalogueMatchingIds(snapshot.contributions,extra,taxonomy.nodes??[])):null;
@@ -103,3 +103,4 @@ export class ReelsCatalogueRuntime{
   return {ids,observedAt:this.now(),dataAsOf:snapshot.dataAsOf,sourceStale:snapshot.sourceStale,versionHash:snapshot.versionHash};
  }
 }
+

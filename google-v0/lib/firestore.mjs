@@ -84,6 +84,35 @@ export class Firestore {
     }),nextPageToken:data.nextPageToken??null};
   }
   // Projection is required for scans of legacy videos: never fetch transcript or report bodies.
+  // Bounded projected point reads for the native + preserved published union.
+  async getMany(paths,{select}={}){
+    if(!Array.isArray(paths)||paths.length>10000||new Set(paths).size!==paths.length)throw Error('Leitura múltipla inválida.');
+    const valid=paths.map(documentPath);
+    if(!Array.isArray(select)||!select.length||select.some(f=>typeof f!=='string'||!/^([A-Za-z][A-Za-z0-9_]*)(\.[A-Za-z][A-Za-z0-9_]*)*$/.test(f)))throw Error('Projeção múltipla inválida.');
+    const prefix='projects/'+this.api.project+'/databases/(default)/documents/',result=[];
+    // Four batches at a time bounds memory/connections even for a large legacy set.
+    for(let offset=0;offset<valid.length;offset+=400){
+      const batches=Array.from({length:Math.ceil(Math.min(400,valid.length-offset)/100)},(_,n)=>valid.slice(offset+n*100,offset+(n+1)*100));
+      const pages=await Promise.all(batches.map(async batch=>{
+        const expected=new Set(batch),seen=new Set(),records=[];
+        const rows=await this.api.request(this.root+':batchGet',{method:'POST',json:{documents:batch.map(path=>prefix+path),mask:{fieldPaths:select}}});
+        if(!Array.isArray(rows))throw Error('Leitura múltipla incompleta.');
+        for(const row of rows){
+          if(!row.found&&!row.missing)continue; // Firestore may emit a transaction/readTime envelope.
+          const name=row.found?.name??row.missing;
+          if(typeof name!=='string'||!name.startsWith(prefix)||row.found&&row.missing)throw Error('Documento múltiplo fora do projeto.');
+          const path=documentPath(name.slice(prefix.length));
+          if(!expected.has(path)||seen.has(path))throw Error('Documento múltiplo inesperado ou repetido.');
+          seen.add(path);
+          if(row.found){if(typeof row.found.updateTime!=='string')throw Error('Versão múltipla ausente.');records.push({path,data:decodeFields(row.found.fields??{}),updateTime:row.found.updateTime});}
+        }
+        if(seen.size!==expected.size)throw Error('Leitura múltipla incompleta.');
+        return records;
+      }));
+      result.push(...pages.flat());
+    }
+    return result;
+  }
   async query(collection,{select,filters=[],orderBy=[{field:'__name__',direction:'ASCENDING'}],limit=100,cursor}={}){
     if(!collections.has(collection)||!Number.isInteger(limit)||limit<1||limit>1000)throw Error('Consulta inválida.');
     const field=value=>{if(typeof value!=='string'||!/^(__name__|[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*)$/.test(value))throw Error('Campo de consulta inválido.');return {fieldPath:value};};
@@ -205,3 +234,4 @@ export async function mutateDocument(store,path,calculate,{sleep=ms=>new Promise
   }
  }
 }
+

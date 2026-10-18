@@ -15,9 +15,10 @@ function memory(){
  const store={docs,calls,get writes(){return writes;},get replacements(){return replacements;},
   put(path,data,updateTime=version()){docs.set(path,{data:clone(data),updateTime});},
   async get(path){calls.push({method:'get',path});return clone(docs.get(path)??null);},
+  async getMany(paths,{select}){calls.push({method:'batchGet',paths:clone(paths),select:clone(select)});return paths.flatMap(path=>{const row=docs.get(path);return row?[{path,data:projected(row.data,select),updateTime:row.updateTime}]:[];});},
   async create(path,data){if(docs.has(path))return {created:false};writes++;store.put(path,data);return {created:true,...clone(docs.get(path))};},
   async patch(path,data,{updateTime}={}){const old=docs.get(path);if(old?.updateTime!==updateTime)throw Object.assign(Error('CAS mismatch'),{status:412});writes++;store.put(path,{...old.data,...clone(data)});return clone(docs.get(path));},
-  async query(collection,{select,filters=[],limit=500,cursor}={}){calls.push({method:'query',collection,select:clone(select)});let rows=[...docs].filter(([p])=>p.startsWith(collection+'/')).sort(([a],[b])=>a.localeCompare(b));for(const f of filters)rows=rows.filter(([,r])=>r.data[f.field]===f.value);const offset=Number(cursor??0);return {records:rows.slice(offset,offset+limit).map(([path,r])=>({path,data:projected(r.data,select),updateTime:r.updateTime})),nextCursor:offset+limit<rows.length?String(offset+limit):null};},
+  async query(collection,{select,filters=[],limit=500,cursor}={}){calls.push({method:'query',collection,select:clone(select)});let rows=[...docs].filter(([p])=>p.startsWith(collection+'/')).sort(([a],[b])=>a.localeCompare(b));for(const f of filters)rows=rows.filter(([,r])=>f.field.split('.').reduce((v,k)=>v?.[k],r.data)===f.value);const offset=Number(cursor??0);return {records:rows.slice(offset,offset+limit).map(([path,r])=>({path,data:projected(r.data,select),updateTime:r.updateTime})),nextCursor:offset+limit<rows.length?String(offset+limit):null};},
   async compareAndReplaceDerived({path,replacement,checks}){calls.push({method:'cas',path,checks:clone(checks)});if(checks.some(c=>(docs.get(c.path)?.updateTime??null)!==c.updateTime))return {applied:false};writes++;replacements++;store.put(path,replacement);return {applied:true,updateTime:docs.get(path).updateTime};}
  };return store;
 }
@@ -44,6 +45,7 @@ test('actual API consumes durable source-bound contributions, filters before pag
  const list=await json(x,'items?workspace=library&category=ctx_format_single_recipe&limit=1');assert.equal(list.total,1);assert.deepEqual(list.items.map(i=>i.id),['QaFull_single']);assert.equal(list.items[0].creator,'@fixture');
  const tree=await json(x,'categories');assert.equal(tree.nodes.find(n=>n.id==='ctx_format_single_recipe').count,1);
  assert.equal(x.store.writes,before);assert.ok(!x.store.calls.some(c=>c.method==='get'&&/^(videos|reels_legacy_content)\//.test(c.path)),'overview/list/tree use projected metadata only');
+ assert.ok(x.store.calls.filter(c=>c.method==='batchGet').every(c=>c.select&&!c.select.includes('transcript')&&!c.select.includes('analysis')));
  assert.ok(x.store.calls.filter(c=>c.method==='query'&&['videos','reels_legacy_content'].includes(c.collection)).every(c=>c.select&&!c.select.includes('transcript')&&!c.select.includes('analysis')));
  x.store.calls.length=0;const detail=await json(x,'contextual/QaFull_single');assert.equal(detail.id,'QaFull_single');assert.ok(JSON.stringify(detail).includes('tempere o frango'));
  assert.deepEqual(x.store.calls.filter(c=>c.method==='get'&&c.path.startsWith('videos/')).map(c=>c.path),['videos/QaFull_single']);
@@ -147,3 +149,4 @@ test('inactive catalogue retains explicit legacy discovery compatibility',async(
  const before=clone([...x.store.docs]),writes=x.store.writes,replay=await x.api(request('categories',command));
  assert.equal(replay.status,409);assert.equal((await replay.json()).code,'LEGACY_DISCOVERY_DISABLED');assert.equal(x.store.writes,writes);assert.deepEqual([...x.store.docs],before);
 });
+

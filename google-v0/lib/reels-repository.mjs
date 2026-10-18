@@ -13,7 +13,7 @@ const hasContextualFilters=query=>{let facets=[];if(query.facets!==undefined&&qu
 const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const executionOrder=(a,b)=>{const left=a.queuedAt??a.createdAt,right=b.queuedAt??b.createdAt;if(left!==right)return left===null?1:right===null?-1:left<right?-1:1;const rank={acquisition:0,transcription:1,analysis:2};return (a.attempt??0)-(b.attempt??0)||(rank[a.stage]??3)-(rank[b.stage]??3)||String(a.id??'').localeCompare(String(b.id??''));};
 export class ReelsRepository{
- constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;}
+ constructor({store,clock=Date.now,cacheTtlMs=15000}){if(!Number.isFinite(cacheTtlMs)||cacheTtlMs<0||cacheTtlMs>60000)throw Error('TTL inválido.');this.store=store;this.clock=clock;this.cacheTtlMs=cacheTtlMs;this.snapshot=null;this.pending=null;this.cacheEpoch=0;this.qualitySnapshot=null;this.qualityPending=null;this.browseSnapshot=null;this.browsePending=null;this.browseRefreshTokens=new Set();}
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
  async navigation(items,saved){
@@ -47,10 +47,10 @@ export class ReelsRepository{
   return {items:items.sort(executionOrder),cursor:lastCursor,observedAt:this.now()};
  }
  async detail(id){const v=await this.raw(id);if(!v)return null;const legacy=(await this.store.get('reels_legacy_content/'+id))?.data,saved=preservedDetail(legacy,id),base=withPreservedSummary(reelDetail(v),legacy);if(saved){if(base.publication.source==='legacy_preserved'){base.analysis=saved;}else base.preservedAnalysis=saved;}if(preservedRecordAvailable(legacy,id)&&base.transcript.state==='missing'&&typeof legacy.transcript==='string')base.transcript={state:legacy.transcript.trim()?'present':'empty',text:legacy.transcript,segments:null,source:'legacy_preserved'};const detail=(await this.navigation([base],(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items[0],history=await this.executionHistory(id),hasNew=history.items.length>0,inlineLegacy=detail.executions?.length>0;return {...detail,executions:hasNew?history.items:inlineLegacy?detail.executions.sort(executionOrder):null,executionsHistory:{source:hasNew?'reels-v2':inlineLegacy?'legacy':'none',cursor:hasNew?history.cursor:null,observedAt:history.observedAt,complete:inlineLegacy&&!hasNew?null:true}};}
- async scan(collection,select){
+ async scan(collection,select,filters=[]){
   if(typeof this.store.query!=='function')throw Error('Store requer consulta projetada; leitura integral não permitida.');
   const records=[];let cursor;const seen=new Set();
-  do{const page=await this.store.query(collection,{select,limit:1000,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Consulta não avançou.');if(cursor)seen.add(cursor);}while(cursor);
+  do{const page=await this.store.query(collection,{select,filters,limit:1000,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Consulta não avançou.');if(cursor)seen.add(cursor);}while(cursor);
   return records;
  }
  async items(){
@@ -60,8 +60,53 @@ export class ReelsRepository{
   this.pending=(async()=>{try{const [records,legacyRecords]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS)]),legacy=new Map(legacyRecords.map(({data,path})=>[path.split('/')[1],data])),items=(await this.navigation(records.map(({data,path})=>{const id=data.id??path.split('/')[1];return withPreservedSummary(projectReel({...data,id}),legacy.get(id));}),(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items;const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
   return this.pending;
  }
+ // Published browsing has its own bounded cache. Execution/paid safeguards keep
+ // calling contextualContributions() and always load current source metadata.
+ async publishedRecords(){
+  const [accepted,preservedCandidate,priorCandidate,legacyRecords]=await Promise.all([
+   this.scan('videos',REEL_LIST_FIELDS,[{field:'analysis_quality_status',op:'eq',value:'accepted'}]),
+   this.scan('videos',REEL_LIST_FIELDS,[{field:'publication.available',op:'eq',value:true}]),
+   this.scan('videos',REEL_LIST_FIELDS,[{field:'analysis_quality_status',op:'eq',value:'review_required'}]),
+   this.scan('reels_legacy_content',LEGACY_LIST_FIELDS,[{field:'originalStatus',op:'eq',value:'analyzed'}])
+  ]);
+  const records=new Map([...accepted,...preservedCandidate,...priorCandidate].map(r=>[r.path,r]));
+  const legacy=legacyRecords.filter(r=>preservedRecordAvailable(r.data,r.path.split('/')[1]));
+  const missing=[...new Set(legacy.map(r=>'videos/'+r.path.split('/')[1]))].filter(path=>!records.has(path));
+  if(missing.length){
+   // Production reads projected documents in bounded batches; fixture adapters
+   // may expose only point reads. Never scan unpublished registrations here.
+   const extra=typeof this.store.getMany==='function'?await this.store.getMany(missing,{select:REEL_LIST_FIELDS}):await Promise.all(missing.map(async path=>{const s=await this.store.get(path);return s?{path,...s}:null;}));
+   for(const r of extra)if(r)records.set(r.path,r);
+  }
+  return {records:[...records.values()],legacyRecords:legacy};
+ }
+ refreshBrowse(token){
+  if(token===null||token===undefined)return false;
+  if(typeof token!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(token))throw invalid('Atualização inválida.');
+  if(this.browseRefreshTokens.has(token))return false;
+  this.browseRefreshTokens.add(token);if(this.browseRefreshTokens.size>32)this.browseRefreshTokens.delete(this.browseRefreshTokens.values().next().value);
+  this.cacheEpoch++;if(this.snapshot)this.snapshot.expiresAt=0;return true;
+ }
+ async browseContributions(){
+  if(this.browsePending?.epoch===this.cacheEpoch)return this.browsePending.promise;
+  const epoch=this.cacheEpoch;
+  const pending={epoch,promise:(async()=>{
+   const [taxonomySnapshot,manifestSnapshot]=await Promise.all([this.store.get('settings/reels_v2_taxonomy'),this.store.get(catalogueManifestPath)]);
+   const signature=digest([epoch,taxonomySnapshot?.updateTime??taxonomySnapshot?.data??null,manifestSnapshot?.updateTime??manifestSnapshot?.data??null]);
+   const cached=this.browseSnapshot;
+   if(cached&&cached.signature===signature&&cached.expiresAt>this.clock())return cached.value;
+   // Do not convert a failed refresh into a new observation or a fresh cache hit.
+   const value=await this.buildContextualContributions({...await this.publishedRecords(),taxonomySnapshot,manifestSnapshot});
+   if(epoch===this.cacheEpoch)this.browseSnapshot={signature,expiresAt:this.clock()+60000,value};
+   return value;
+  })()};this.browsePending=pending;
+  try{return await pending.promise;}finally{if(this.browsePending===pending)this.browsePending=null;}
+ }
  async contextualContributions(cachedItems=null){
   const [records,legacyRecords,manifestSnapshot,taxonomySnapshot]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS),this.store.get(catalogueManifestPath),this.store.get('settings/reels_v2_taxonomy')]);
+  return this.buildContextualContributions({records,legacyRecords,manifestSnapshot,taxonomySnapshot});
+ }
+ async buildContextualContributions({records,legacyRecords,manifestSnapshot,taxonomySnapshot}){
   const legacy=new Map(legacyRecords.map(r=>[r.path.split('/')[1],r])),versions=new Map(),rawItems=[];
   for(const r of records){const id=r.data.id??r.path.split('/')[1],old=legacy.get(id);versions.set(id,{video:r.updateTime,...(!publicationAvailable({...r.data,id})&&old?{legacy:old.updateTime}:{})});rawItems.push(withPreservedSummary(projectReel({...r.data,id}),old?.data));}
   const taxonomy=taxonomySnapshot?.data??{},items=categoryNavigation(rawItems,taxonomy).items.filter(i=>i.publication.available),inventoryIds=items.map(i=>i.id).sort(),byId=new Map(items.map(i=>[i.id,i]));
@@ -102,12 +147,12 @@ export class ReelsRepository{
  }
  async matching(query={},snapshot=null){
   this.validateQuery(query);
-  if(query.curationDomainId!==undefined){if(query.workspace!=='library'||!this.semanticDomains)throw invalid('Área de curadoria indisponível.');const selected=new Set(await this.semanticDomains.matchingIds(query.curationDomainId)),{curationDomainId,...rest}=query;return (await this.matching(rest)).filter(i=>selected.has(i.id));}
+  if(query.curationDomainId!==undefined){if(query.workspace!=='library'||!this.semanticDomains)throw invalid('Área de curadoria indisponível.');const selected=new Set(await this.semanticDomains.matchingIds(query.curationDomainId,{snapshot})),{curationDomainId,...rest}=query;return (await this.matching(rest,snapshot)).filter(i=>selected.has(i.id));}
   const semanticId=query.semanticFacet??(/^semantic_[a-f0-9]{64}$/.test(query.category??'')?query.category.slice(9):null);
-  if(semanticId){if(query.workspace!=='library'||!this.semanticCurator||!/^[a-f0-9]{64}$/.test(semanticId))throw invalid('Filtro semântico inválido.');const ids=new Set(await this.semanticCurator.matchingIds(semanticId,{facet:!!query.semanticFacet})),{semanticFacet,category,...rest}=query;return (await this.matching({...rest,...(category&&!category.startsWith('semantic_')?{category}:{})})).filter(i=>ids.has(i.id));}
+  if(semanticId){if(query.workspace!=='library'||!this.semanticCurator||!/^[a-f0-9]{64}$/.test(semanticId))throw invalid('Filtro semântico inválido.');const ids=new Set(await this.semanticCurator.matchingIds(semanticId,{facet:!!query.semanticFacet,...(snapshot?{state:await this.semanticCurator.freshGroups({inventorySnapshot:snapshot,taxonomySnapshot:snapshot.taxonomySnapshot})}:{})})),{semanticFacet,category,...rest}=query;return (await this.matching({...rest,...(category&&!category.startsWith('semantic_')?{category}:{})},snapshot)).filter(i=>ids.has(i.id));}
   if(this.catalogueRuntime&&/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
-   const matched=await this.catalogueRuntime.matchingIds(query),{category,...rest}=query,extra=this.semanticCurator?await this.semanticCurator.formatIds(category.slice(11)):[],eligible=hasContextualFilters(rest)?new Set((await this.catalogueRuntime.matchingIds(rest)).ids):null,selected=new Set([...matched.ids,...extra.filter(id=>!eligible||eligible.has(id))]);
-   return (await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
+   const matched=await this.catalogueRuntime.matchingIds(query,{snapshot}),{category,...rest}=query,extra=this.semanticCurator?await this.semanticCurator.formatIds(category.slice(11),snapshot?await this.semanticCurator.freshGroups({inventorySnapshot:snapshot,taxonomySnapshot:snapshot.taxonomySnapshot}):null):[],eligible=hasContextualFilters(rest)?new Set((await this.catalogueRuntime.matchingIds(rest,{snapshot})).ids):null,selected=new Set([...matched.ids,...extra.filter(id=>!eligible||eligible.has(id))]);
+   return (snapshot?snapshot.items:await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
   }
   const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
   const sourceItems=snapshot?snapshot.items:await this.items(),taxonomySnapshot=snapshot?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy');
@@ -122,12 +167,10 @@ export class ReelsRepository{
   const {cursor,limit:unused,...filters}=query,hash=digest(filters),sort=query.sort??'newest';
   const key=i=>[sort==='title'?(i.title??'').toLocaleLowerCase('pt-BR'):(i.createdAt??''),i.id];
   const compare=(a,b)=>{const x=key(a),y=key(b),d=x[0]<y[0]?-1:x[0]>y[0]?1:0;return (sort==='newest'?-d:d)||(x[1]<y[1]?-1:x[1]>y[1]?1:0);};
-  // Only this ordinary library-category request shares its fresh inventory.
-  // Paid execution and other query modes retain their existing read boundaries.
-  const snapshot=query.workspace==='library'&&query.category&&!query.semanticFacet&&!query.curationDomainId&&!/^(semantic_|ctx_format_)/.test(query.category)&&this.semanticCurator?await this.contextualContributions():null;
+  const snapshot=query.workspace==='library'&&this.catalogueEnabled?await this.browseContributions():null;
   const rows=(await this.matching(query,snapshot)).sort(compare);let start=0;
   if(cursor){let c;try{c=JSON.parse(Buffer.from(cursor,'base64url').toString());}catch{throw invalid('Cursor inválido.');}if(c.hash!==hash||!Array.isArray(c.key)||c.key.length!==2)throw invalid('Cursor não corresponde à consulta.');start=rows.findIndex(x=>{const k=key(x),d=k[0]<c.key[0]?-1:k[0]>c.key[0]?1:0;return ((sort==='newest'?-d:d)||(k[1]<c.key[1]?-1:k[1]>c.key[1]?1:0))>0;});if(start<0)start=rows.length;}
-  const page=rows.slice(start,start+limit);return {items:page,total:rows.length,nextCursor:start+limit<rows.length?Buffer.from(JSON.stringify({hash,key:key(page.at(-1))})).toString('base64url'):null,...(snapshot?{observedAt:snapshot.observedAt,cache:{ttlMs:0,stale:snapshot.sourceStale}}:this.observation())};
+  const page=rows.slice(start,start+limit);return {items:page,total:rows.length,nextCursor:start+limit<rows.length?Buffer.from(JSON.stringify({hash,key:key(page.at(-1))})).toString('base64url'):null,...(snapshot?{observedAt:snapshot.observedAt,cache:{ttlMs:60000,stale:snapshot.sourceStale}}:this.observation())};
  }
  async summary(){const counts={registered:0,queued:0,running:0,waiting:0,completed:0,published:0,attention:0,ready:0,confirmedFailures:0,inconclusive:0,total:0,totalInventory:0};for(const i of await this.items()){counts.total++;if(Object.hasOwn(counts,i.status))counts[i.status]++;if(i.publication.available)counts.published++;if(eligibility(i)===null)counts.ready++;if(!i.publication.available){if(i.status==='failed')counts.confirmedFailures++;if(i.status==='uncertain')counts.inconclusive++;if(['uncertain','failed'].includes(i.status))counts.attention++;}counts.totalInventory=counts.total;}return {counts,...this.observation(),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
  async queues(){const items=await this.items(),config=Object.fromEntries(await Promise.all(['acquisition','transcription','analysis'].map(async id=>[id,(await this.store.get('reels_controls/'+id))?.data??{}])));return {stages:['acquisition','transcription','analysis'].map(id=>{const rows=items.filter(i=>i.stage===id),c=config[id]??{};return {id,name:{acquisition:'Aquisição',transcription:'Transcrição',analysis:'Análise'}[id],...Object.fromEntries(['queued','running','waiting','failed','uncertain'].map(s=>[s,rows.filter(i=>i.status===s).length])),paused:c.paused??true,desiredConcurrency:c.desiredConcurrency??null,effectiveConcurrency:c.effectiveConcurrency??null,...this.observation()};}),processingAllowed:false,processingReason:'Processamento real desabilitado nesta entrega.'};}
@@ -171,7 +214,7 @@ export class ReelsRepository{
  }
  async categories({snapshot:providedSnapshot=null}={}){
   // Share only this request's fresh metadata. Paid execution never uses it.
-  const snapshot=this.catalogueRuntime?(providedSnapshot??await this.contextualContributions()):null;
+  const snapshot=this.catalogueRuntime?(providedSnapshot??await this.browseContributions()):null;
   const sourceItems=snapshot?snapshot.items:await this.items();
   const taxonomySnapshot=snapshot?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy');
   const navigation=await this.navigation(sourceItems,taxonomySnapshot?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
@@ -192,3 +235,4 @@ export class ReelsRepository{
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}
 }
 export default ReelsRepository;
+

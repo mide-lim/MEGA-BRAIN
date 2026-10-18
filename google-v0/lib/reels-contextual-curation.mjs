@@ -19,7 +19,7 @@ export class ReelsContextualCurator{
  }
  invalidate(){this.snapshot=null;}
  async snapshotData(){
-  const durable=typeof this.repository.contextualContributions==='function'?await this.repository.contextualContributions():null;
+  const durable=typeof this.repository.browseContributions==='function'?await this.repository.browseContributions():typeof this.repository.contextualContributions==='function'?await this.repository.contextualContributions():null;
   const all=Array.isArray(durable?.items)?durable.items:await this.repository.items(),items=all.filter(i=>i.publication?.available);
   const contributionVersion=durable?{versionHash:durable.versionHash??contextualHash(listContributions(durable).map(c=>[c.reelId,c.idempotencyKey])),sourceStale:durable.sourceStale===true,dataAsOf:durable.dataAsOf??null}:null;
   const metadataHash=contextualHash({rule:contextualRuleHash,contributionVersion,taxonomyVersion:durable?.taxonomySnapshot?.updateTime??null,sourceVersions:durable?.sourceVersions?[...durable.sourceVersions].sort(([a],[b])=>a.localeCompare(b)):null,items:items.map(i=>({id:i.id,publication:i.publication,updatedAt:i.updatedAt,categories:i.categoryIds,manual:i.categoryOverride,title:i.title,creator:i.creator,sourceUrl:i.sourceUrl,tags:i.tags})).sort((a,b)=>a.id.localeCompare(b.id))});
@@ -54,12 +54,12 @@ export class ReelsContextualCurator{
   try{return await this.pending;}finally{this.pending=null;}
  }
  async matchingIds(query={}){
-  const {curationDomainId,...plain}=query;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId)??(()=>{throw bad();})());query=plain;
+  const {curationDomainId,...plain}=query;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId,{snapshot:typeof this.repository.browseContributions==='function'?await this.repository.browseContributions():null})??(()=>{throw bad();})());query=plain;
   const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),entries=normalized.impossible?[]:snapshot.entries.filter(e=>(!domainIds||domainIds.has(e.id))&&(!normalized.virtual||!e.curation?.manual));
   return {ids:filterContextualEntries(entries,normalized.query,snapshot.nodes).map(e=>e.id),observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,stale:snapshot.sourceStale};
  }
  async overview(input={}){
-  const {curationDomainId,...plain}=input;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId)??(()=>{throw bad();})());
+  const {curationDomainId,...plain}=input;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId,{snapshot:typeof this.repository.browseContributions==='function'?await this.repository.browseContributions():null})??(()=>{throw bad();})());
   const query=parseContextualQuery(plain),limit=Number(input.limit??40);
   if(!Number.isInteger(limit)||limit<1||limit>100)throw bad();
   const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),eligible=normalized.impossible?[]:snapshot.entries.filter(e=>(!domainIds||domainIds.has(e.id))&&(!normalized.virtual||!e.curation?.manual)),index=buildContextualIndex(eligible,{nodes:snapshot.nodes,query:normalized.query}),entries=index.entries.slice().sort((a,b)=>a.id.localeCompare(b.id)),queryHash=contextualHash({query,curationDomainId:curationDomainId??null});
@@ -99,3 +99,4 @@ export class ReelsContextualCurator{
  }
 }
 export default ReelsContextualCurator;
+

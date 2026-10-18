@@ -13,7 +13,7 @@ export class ReelsSemanticDomains{
   const rows=inventory.items.map(item=>({item,id:item.id,sourceVersions:inventory.sourceVersions.get(item.id),route:routeExistingSemanticDomain(item.categoryIds,taxonomy?.data?.nodes??[])})),byId=new Map(rows.map(r=>[r.id,r])),candidate=manifest?.data,valid=semanticDomainManifestValid(candidate)&&candidate.inventoryCount===rows.length&&candidate.sources.every(s=>byId.has(s.id)&&same(s.sourceVersions,byId.get(s.id).sourceVersions))&&candidate.taxonomyHash===semanticHash(taxonomy?.data??{});
   return {inventory,rows,taxonomy,manifest,valid,coordinator,policy,sourceStale:!valid,dataAsOf:inventory.dataAsOf??null};
  }
- async matchingIds(id){if(!semanticDomainProfile(id))fail('DOMAIN_NOT_FOUND',404);return (await this.snapshot()).rows.filter(r=>r.route.domainId===id).map(r=>r.id);}
+ async matchingIds(id,{snapshot=null}={}){if(!semanticDomainProfile(id))fail('DOMAIN_NOT_FOUND',404);if(snapshot)return snapshot.items.filter(item=>routeExistingSemanticDomain(item.categoryIds,snapshot.taxonomySnapshot?.data?.nodes??[]).domainId===id).map(item=>item.id);return (await this.snapshot()).rows.filter(r=>r.route.domainId===id).map(r=>r.id);}
  async history(){
   const resultRows=await this.semantic.scan('semantic_result',['kind','id','binding','bindingHash','rawHash','processed','phase']),snapshots=await this.semantic.scan('semantic_job',['kind','id','status','phase','cursor','callsUsed','maxCalls','pins','batch','policy','policyHash','promptHash','cohortHash','dispatch','domainCuration','updatedAt']),histories=[];
   for(const job of snapshots){const j=job.data,results=resultRows.filter(r=>r.data.binding?.jobId===j.id&&r.data.binding.phase==='extract'),recoveries=[];for(const result of results.filter(r=>r.data.binding.pins?.some(p=>!p.sourceProjectionVersion))){const recovery=await this.store.get('reels_index/semantic_source_recovery_'+result.data.id);if(recovery)recoveries.push(recovery);}histories.push({job,results,recoveries});}
@@ -54,3 +54,4 @@ export class ReelsSemanticDomains{
   return this.semantic.create({selection:{domainId:input.domainId},previewHash:input.previewHash,idempotencyKey:input.idempotencyKey});
  }
 }
+

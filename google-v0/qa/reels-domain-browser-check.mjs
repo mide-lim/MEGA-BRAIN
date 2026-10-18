@@ -12,6 +12,7 @@ import {makeSemanticDomainFixture,seedSemanticDomainManifest,seedSyntheticDomain
 const output=process.env.MEGABRAIN_REELS_DOMAIN_QA_OUTPUT??join(tmpdir(),'megabrain-reels-domain-qa'),checks=[],failures=[];
 await mkdir(output,{recursive:true});
 const browser=await chromium.launch({headless:true});
+async function openLibraryElements(page){const filters=page.locator('.contextual-library-filters'),summary=filters.locator('summary').first();await summary.waitFor();if(await filters.getAttribute('open')===null)await summary.click();return filters;}
 async function start(fixture=makeSemanticFixture()){
  const server=await startReelsFixtureServer({semanticFixture:fixture}),context=await browser.newContext({viewport:{width:1440,height:1000}});
  await context.addCookies([{name:'qa_session',value:'local',url:server.origin}]);
@@ -79,12 +80,12 @@ try{
    await state.page.screenshot({path:join(output,'manual-tools-with-uncertain-operation.png'),fullPage:true});
   }finally{await state.close();}
  });
- await record('library_prioritizes_items_before_auxiliary_element_queries',async()=>{
+ await record('library_renders_items_without_auxiliary_queries_until_filters_open',async()=>{
   const state=await start(),hold=state.server.holdNext(url=>url.pathname==='/api/reels/items'&&url.searchParams.get('workspace')==='library');
   try{
    await navigate(state.page,'Biblioteca');await hold.started;
    assert.equal(state.server.calls.some(call=>call.path==='/api/reels/contextual'),false,'Initial auxiliary queries must wait for the first published items response');
-   const auxiliary=state.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/reels/contextual');hold.release();await auxiliary;
+   hold.release();await state.page.locator('.library-card').first().waitFor();assert.equal(state.server.calls.some(call=>call.path==='/api/reels/contextual'),false,'Published cards must render without auxiliary context reads');const auxiliary=state.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/reels/contextual');await openLibraryElements(state.page);await auxiliary;
    const search=state.page.getByLabel('Buscar no acervo',{exact:true}),updated=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('q')==='QaFull';});
    await search.fill('QaFull');await updated;assert.equal(await search.evaluate(element=>element===document.activeElement),true,'Reading the next result must preserve the search focus');assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
   }finally{hold.release();await state.close();}
@@ -244,7 +245,7 @@ try{
    assert.equal(await state.page.getByRole('button',{name:'Segmentar por evidências',exact:true}).count(),0,'Removed legacy action must not advertise a known409 route');
    await detail.getByRole('button',{name:'Explorar área na Biblioteca →',exact:true}).click();await state.page.getByText('Área:',{exact:false}).waitFor();
    const contextual=await read(state,'/contextual?curationDomainId=food');assert.equal(contextual.total,40);assert.equal(contextual.facets.find(facet=>facet.dimensionId==='ingredient'&&facet.valueId==='frango')?.supportCount,40,'Element counts and OR options must use the domain, not the42-source inventory');
-   const ingredient=state.page.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});await ingredient.waitFor();assert.match(await ingredient.innerText(),/40/);const faceted=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('curationDomainId')==='food'&&url.searchParams.get('facets')?.includes('frango');});await ingredient.click();await faceted;
+   await openLibraryElements(state.page);const ingredient=state.page.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});await ingredient.waitFor();assert.match(await ingredient.innerText(),/40/);const faceted=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('curationDomainId')==='food'&&url.searchParams.get('facets')?.includes('frango');});await ingredient.click();await faceted;
    const first=await read(state,'/items?workspace=library&curationDomainId=food&limit=25');assert.equal(first.total,40);assert.equal(first.items.length,25);assert.ok(first.nextCursor);
    const next=await read(state,'/items?workspace=library&curationDomainId=food&limit=25&cursor='+encodeURIComponent(first.nextCursor));assert.deepEqual([...first.items,...next.items].map(item=>item.id).sort(),expected);assert.equal(Boolean(next.nextCursor),false);
    const paged=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('curationDomainId')==='food'&&url.searchParams.get('limit')==='25';});
@@ -263,3 +264,5 @@ try{
  const report={passed:true,checks,mode:'synthetic_saved_sources_real_API_and_workspace',realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,limitations:['Synthetic source categories prove routing and UI behavior, not real-corpus semantic accuracy.','Automatic domain execution stays subject to server policy and independent operational authorization.']};await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));throw error;}
 finally{await browser.close();}
+
+

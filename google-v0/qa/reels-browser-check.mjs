@@ -18,8 +18,9 @@ const record=async(name,action)=>{await action();checks.push(name);};
 const responseFor=(page,path,predicate=()=>true)=>{const pending=page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname===path&&predicate(url,response);});pending.catch(()=>{});return pending;};
 const postFor=(page,path)=>responseFor(page,path,(_,response)=>response.request().method()==='POST');
 async function navigate(page,label){await page.getByRole('navigation').getByRole('button',{name:new RegExp(label)}).click();await page.getByRole('heading',{name:label,exact:true,level:1}).waitFor();if(label==='Categorias'){const sources=page.locator('details.contextual-source-explorer');await page.locator('details.contextual-source-explorer > summary').waitFor();if(await sources.getAttribute('open')===null)await sources.getByText('Fontes estruturadas, formatos e ingredientes',{exact:true}).click();}}
+async function openLibraryElements(page){const filters=page.locator('.contextual-library-filters'),summary=filters.locator('summary').first();await summary.waitFor();if(await filters.getAttribute('open')===null)await summary.click();return filters;}
 // API-asserting journeys deliberately expire only the read clock. Timers and UI behavior are unchanged.
-async function expireReadCache(page){await page.clock.setFixedTime(new Date(await page.evaluate(()=>Date.now()+15001)));}
+async function expireReadCache(page){await page.clock.setFixedTime(new Date(await page.evaluate(()=>Date.now()+60001)));}
 async function search(page,term){await expireReadCache(page);const response=responseFor(page,'/api/reels/items',url=>(url.searchParams.get('q')??'')===term);await page.getByLabel('Buscar no acervo').fill(term);await response;}
 async function closeDialog(page){await page.getByRole('dialog').getByRole('button',{name:'Fechar painel',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});}
 async function preview(page,button,total,eligible,type='start'){
@@ -66,7 +67,7 @@ try {
   await dialog.getByRole('button',{name:'Legenda',exact:true}).click();await dialog.getByText('Legenda original preservada de QaPub_tech',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Transcrição',exact:true}).click();await dialog.getByText('Transcrição preservada de QaPub_tech',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Análise visual',exact:true}).click();await dialog.getByText('Quadro sintético vertical.',{exact:true}).waitFor();
-  await dialog.getByRole('button',{name:'Carregar vídeo privado',exact:true}).click();const video=dialog.locator('video');await video.evaluate(element=>element.play());
+  assert.equal(await dialog.getByRole('button',{name:'Carregar vídeo privado',exact:true}).count(),0);const video=dialog.locator('video');assert.equal(await video.getAttribute('preload'),'metadata');assert.equal(await video.getAttribute('src'),'/api/media/QaPub_tech');assert.equal(server.calls.filter(call=>call.path==='/api/video/QaPub_tech').length,0);await video.focus();await video.press('Space');
   await page.waitForFunction(()=>{const video=document.querySelector('dialog video');return video&&video.readyState>=2&&video.currentTime>0&&!video.error;});
   const box=await dialog.locator('.video-preview').boundingBox();assert.ok(Math.abs(box.width/box.height-9/16)<0.03);
   await dialog.getByRole('button',{name:'Visão geral',exact:true}).click();const denied=postFor(page,'/api/reels/commands');await dialog.getByRole('button',{name:'Solicitar complemento ao servidor',exact:true}).click();assert.equal((await denied).status(),423);await dialog.getByRole('alert').filter({hasText:'PROCESSING_DISABLED'}).waitFor();
@@ -145,7 +146,7 @@ try {
   const orPage=await context.newPage();
   try {
    await orPage.clock.setFixedTime(new Date('2026-10-18T12:00:00.000Z'));await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
-   const filters=orPage.locator('.contextual-library-filters');await filters.locator('summary').first().click();
+   const filters=await openLibraryElements(orPage);
    await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');
    const chicken=responseFor(orPage,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"value":"frango"'));
    await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');assert.equal((await (await chicken).json()).total,1);
@@ -220,7 +221,7 @@ try {
 await panel.getByText('Desconhecido não significa erro de processamento.',{exact:false}).waitFor();assert.equal(await panel.getByText('em ao menos um preparo',{exact:false}).count(),0);
    const single=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_single_recipe');await panel.getByRole('button',{name:'Explorar formato Receita única',exact:true}).click();assert.deepEqual((await (await single).json()).items.map(item=>item.id),['QaFull_single']);
    const tree=cataloguePage.locator('.library-navigation');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Receita única'}).waitFor();await tree.locator('.tree-name').filter({hasText:'Várias receitas'}).waitFor();assert.equal(await tree.locator('.tree-name').filter({hasText:/Receitas com (Frango|Ovo)/}).count(),0);
-   const ingredient=cataloguePage.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});const chicken=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_single_recipe'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));await ingredient.click();assert.deepEqual((await (await chicken).json()).items.map(item=>item.id),['QaFull_single']);assert.equal(await ingredient.getAttribute('aria-pressed'),'true');
+   await openLibraryElements(cataloguePage);const ingredient=cataloguePage.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});const chicken=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_single_recipe'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));await ingredient.click();assert.deepEqual((await (await chicken).json()).items.map(item=>item.id),['QaFull_single']);assert.equal(await ingredient.getAttribute('aria-pressed'),'true');
    await search(cataloguePage,'QaFull_single');await cataloguePage.locator('.library-card').filter({hasText:'QaFull_single'}).waitFor();
    const categoryNodes=server.calls.filter(call=>call.path==='/api/reels/categories'&&call.method==='GET'&&call.status===200&&Array.isArray(call.result?.nodes)).at(-1).result.nodes,recipeBranch=categoryNodes.find(node=>node.id==='receitas');
    assert.ok(recipeBranch,'The actual contextual recipe branch must be present');for(const id of ['ctx_format_single_recipe','ctx_format_recipe_collection'])assert.equal(categoryNodes.find(node=>node.id===id)?.parentId,recipeBranch.id,'Both format nodes must belong to the contextual recipe branch');
@@ -230,7 +231,7 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
    await navigate(cataloguePage,'Financeiro');await navigate(cataloguePage,'Biblioteca');await cataloguePage.locator('.library-card').filter({hasText:'QaFull_single'}).waitFor();assert.equal(await cataloguePage.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'QaFull_single');assert.equal(await ingredient.getAttribute('aria-pressed'),'true');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Receita única'}).waitFor();
    await navigate(cataloguePage,'Categorias');const many=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_recipe_collection'&&!url.searchParams.get('q'));await panel.getByRole('button',{name:'Explorar formato Várias receitas',exact:true}).click();assert.deepEqual((await (await many).json()).items.map(item=>item.id),['QaFull_many']);
    await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Várias receitas'}).waitFor();assert.equal(await cataloguePage.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'');
-   const filters=cataloguePage.locator('.contextual-library-filters');await filters.locator('summary').first().click();await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');await filters.getByLabel('Relação 1',{exact:true}).selectOption('SAME_UNIT');await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('tool');
+   const filters=await openLibraryElements(cataloguePage);await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');await filters.getByLabel('Relação 1',{exact:true}).selectOption('SAME_UNIT');await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('tool');
    const crossed=responseFor(cataloguePage,'/api/reels/items',url=>{const facets=JSON.parse(url.searchParams.get('facets')||'[]');return url.searchParams.get('category')==='ctx_format_recipe_collection'&&facets.some(f=>f.value==='frango')&&facets.some(f=>f.value==='forno')&&facets.every(f=>f.quantifier==='SAME_UNIT');});
    await filters.getByLabel('Elemento 2',{exact:true}).selectOption('forno');assert.equal((await (await crossed).json()).total,0,'A collection must not combine chicken from one preparation with an oven from another');
    const derivedBefore=await server.store.get('reels_index/contextual_QaFull_single');await server.store.patch('reels_index/contextual_QaFull_single',{obsoleteFixtureMarker:true},{updateTime:derivedBefore.updateTime});
@@ -410,6 +411,21 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
   await navigate(page,'Financeiro');await page.getByRole('heading',{name:'Financeiro preservado do acervo',exact:true}).waitFor();await page.getByText('Reserva antiga',{exact:true}).waitFor();await page.getByText('Sem data comprovada',{exact:true}).waitFor();
   assert.equal([...server.store.docs.keys()].filter(path=>path.startsWith('reels_executions/')).length,2);
  });
+ await record('library_reuses_navigation_without_idle_operational_scans_and_context_loads_on_demand',async()=>{
+  const library=await context.newPage(),requests=[];
+  library.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/api/'))requests.push({path:url.pathname,query:url.search,refresh:request.headers()['x-reels-refresh']});});
+  await library.clock.install();await library.goto(server.origin);await library.getByLabel('Selecionar Entrada 000',{exact:true}).waitFor();
+  const firstLibrary=requests.length;await navigate(library,'Biblioteca');await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();const tree=library.locator('.library-navigation');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).waitFor();
+  assert.equal(requests.slice(firstLibrary).filter(x=>x.path==='/api/reels/summary').length,0,'Library must not request the operational summary');
+  assert.equal(requests.slice(firstLibrary).filter(x=>x.path==='/api/reels/contextual').length,0,'Collapsed contextual filters must not fetch the archive');
+  const settled=requests.length;await library.clock.fastForward(60001);assert.equal(requests.length,settled,'Idle Library must not poll items, taxonomy, contextual data or summary');
+  const tech=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech');await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await tech;
+  const food=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_food');await tree.locator('.tree-name').filter({has:library.getByText('Receitas',{exact:true})}).click();await food;
+  const beforeBack=requests.length;await tree.locator('.tree-name').filter({hasText:'Tecnologia'}).click();await library.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();assert.equal(requests.length,beforeBack,'A visited category should reuse the last fresh page without another GET');
+  const refreshed=responseFor(library,'/api/reels/items',url=>url.searchParams.get('category')==='cat_tech'),refreshedTree=responseFor(library,'/api/reels/categories'),beforeRefresh=requests.length;await library.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await Promise.all([refreshed,refreshedTree]);const manual=requests.slice(beforeRefresh).filter(x=>['/api/reels/items','/api/reels/categories'].includes(x.path));assert.equal(manual.length,2);assert.ok(manual.every(x=>typeof x.refresh==='string'&&x.refresh.length>0));assert.equal(new Set(manual.map(x=>x.refresh)).size,1,'Current items and category tree share one explicit refresh token');
+  const contextRead=responseFor(library,'/api/reels/contextual');await openLibraryElements(library);await contextRead;assert.ok(requests.some(x=>x.path==='/api/reels/contextual'));
+  assert.deepEqual(server.externalAttempts,[]);await library.close();
+ });
  await record('idle_and_hidden_refresh_queries_only_the_visible_workspace',async()=>{
   const idle=await context.newPage();await idle.clock.install();const categoryReads=()=>server.calls.filter(x=>x.path==='/api/reels/categories'&&x.method==='GET').length,beforeCategories=categoryReads();await idle.goto(server.origin);await idle.getByLabel('Selecionar Entrada 000',{exact:true}).waitFor();assert.equal(categoryReads(),beforeCategories,'Entry must not load editorial taxonomy');
   await navigate(idle,'Financeiro');await idle.getByRole('heading',{name:'Operação',exact:true}).waitFor();const idlePoll=responseFor(idle,'/api/reels/summary');await idle.clock.fastForward(60001);await idlePoll;assert.equal(categoryReads(),beforeCategories,'Financial polling must not load categories');
@@ -426,3 +442,6 @@ await panel.getByText('Desconhecido não significa erro de processamento.',{exac
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally {await browser?.close();await server.close();}
+
+
+

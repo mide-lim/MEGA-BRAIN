@@ -47,6 +47,12 @@ jobs:
       - name: Evaluate every saved publication and prepare derived bootstrap
         if: steps.source.outputs.available == 'true'
         run: node google-v0/scripts/prepare-contextual-catalogue.mjs --input "$RUNNER_TEMP/catalogue-input.json" --output "$RUNNER_TEMP/catalogue-review"
+      - name: Rehearse the actual saved metadata plan with owner guards and transaction budgets
+        if: steps.source.outputs.available == 'true'
+        run: python3 ops/rehearse-reels-catalogue.py --input "$RUNNER_TEMP/catalogue-input.json" --plan "$RUNNER_TEMP/catalogue-review/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-review/owner-plan-rehearsal.json" --store "$RUNNER_TEMP/catalogue-applied-store.json"
+      - name: Verify the complete applied saved catalogue through the real API
+        if: steps.source.outputs.available == 'true'
+        run: node google-v0/scripts/verify-contextual-catalogue-store.mjs --store "$RUNNER_TEMP/catalogue-applied-store.json" --plan "$RUNNER_TEMP/catalogue-review/bootstrap-plan.json" --output "$RUNNER_TEMP/catalogue-review/catalogue-runtime-rehearsal.json"
       - name: Package exact committed owner operation without credentials
         if: steps.source.outputs.available == 'true'
         run: |

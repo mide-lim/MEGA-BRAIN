@@ -1,6 +1,6 @@
 import {measureSemanticDomainRequest} from './reels-semantic-domain-budget.mjs';
 import {semanticDomainPlanPath,validateSemanticDomainDestinations} from './reels-semantic-domain-contract.mjs';
-import {prepareDomainSemanticJobPlan,semanticDomainManifestValid} from './reels-semantic-domain-planner.mjs';
+import {prepareDomainSemanticJobPlan,semanticDomainManifestValid,semanticDomainBatchPins} from './reels-semantic-domain-planner.mjs';
 import {domainBudgetPath,domainAuthorityPath,domainQuarantinePath,domainClaimPath,validateDomainExecutionAuthority} from './reels-semantic-domain-authority.mjs';
 import {semanticCorrectiveCapabilityVersion,validateSemanticCorrectiveCapability,consumeSemanticCorrectiveCapability} from './reels-semantic-corrective-capability.mjs';
 import {semanticContractSpec as spec} from './reels-semantic-contract-definition.mjs';
@@ -43,7 +43,7 @@ export class ReelsSemanticCurator{
  domainPolicy(root,domainId,manifest){
   if(!root.domainCuration||!semanticDomainManifestValid(manifest)||root.domainCuration.planHash!==manifest.manifestHash)throw problem('DOMAIN_ROOT_POLICY_OR_MANIFEST_INVALID','A configuração raiz ou o plano mudou.',423);
   const domain=manifest.domains.find(d=>d.id===domainId);if(!domain)throw problem('DOMAIN_NOT_FOUND','Área inexistente.',404);
-  return semanticPolicy({...root,authorizationId:'domain_'+semanticHash({rootAuthorizationId:root.authorizationId,authorizationGroupId:root.domainCuration.authorizationGroupId,domainId}),authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>b.pins).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),domainCuration:{...root.domainCuration,domainId}});
+  return semanticPolicy({...root,authorizationId:'domain_'+semanticHash({rootAuthorizationId:root.authorizationId,authorizationGroupId:root.domainCuration.authorizationGroupId,domainId}),authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>semanticDomainBatchPins(manifest,b)).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),domainCuration:{...root.domainCuration,domainId}});
  }
  async executionPolicy(job){
   const root=await this.policy();if(!job.domainCuration)return root;

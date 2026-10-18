@@ -7,7 +7,7 @@ import {ReelsSemanticDomains} from '../lib/reels-semantic-domain-service.mjs';
 import {reelsAPI} from '../lib/reels-api.mjs';
 import {semanticHash,semanticPolicy} from '../lib/reels-semantic-source.mjs';
 import {semanticDomainProfiles,routeExistingSemanticDomain,validateSemanticDomainDestinations} from '../lib/reels-semantic-domain-contract.mjs';
-import {prepareSemanticDomainManifest,semanticDomainManifestValid,measureSemanticDomainManifestStorage,domainSourcePin,measureSemanticDomainRequest,semanticDomainRecordFromSaved} from '../lib/reels-semantic-domain-planner.mjs';
+import {prepareSemanticDomainManifest,semanticDomainManifestValid,measureSemanticDomainManifestStorage,semanticDomainBatchPins,domainSourcePin,measureSemanticDomainRequest,semanticDomainRecordFromSaved} from '../lib/reels-semantic-domain-planner.mjs';
 import {prepareOwnerDomainQuarantine,domainQuarantineReviewScope,domainBudgetPath,domainQuarantinePath,uniqueDomainAuthorityChecks} from '../lib/reels-semantic-domain-authority.mjs';
 import {prepareSemanticProviderRequest,semanticExecutionPromptHash,semanticPromptHash,ReelsSemanticProvider} from '../lib/reels-semantic-provider.mjs';
 import {makeSemanticDomainFixture,seedSemanticDomainManifest,seedSyntheticDomainOwner} from './reels-semantic-domain-fixture.mjs';
@@ -72,7 +72,7 @@ test('owner quarantine preparation protects submitted sources and preserves old 
  const oldHash=semanticHash([await s.store.get(s.originJob.path),await s.store.get(s.originLedger.path)]);
  assert.equal((await s.store.commitSemantic({checks:s.plan.checks,writes:s.plan.writes})).applied,true);
  assert.equal((await s.curator.runDelivery({jobId:s.originJob.data.id,sequence:1,outboxId:s.originJob.data.dispatch.outboxId})).quarantined,true);assert.equal(s.fixture.calls.length,0);
- const domain=s.manifest.domains.find(d=>d.id==='food'),policy=semanticPolicy({...s.originJob.data.policy,authorizationId:'synthetic-new-food-authorization',authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>b.pins).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),expiresAt:s.input.ownerApproval.expiresAt,domainCuration:{version:'semantic-domain-job-v1',domainId:'food',planHash:s.manifest.manifestHash,authorizationGroupId:s.input.ownerApproval.authorizationGroupId}});
+ const domain=s.manifest.domains.find(d=>d.id==='food'),policy=semanticPolicy({...s.originJob.data.policy,authorizationId:'synthetic-new-food-authorization',authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>semanticDomainBatchPins(s.manifest,b)).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),expiresAt:s.input.ownerApproval.expiresAt,domainCuration:{version:'semantic-domain-job-v1',domainId:'food',planHash:s.manifest.manifestHash,authorizationGroupId:s.input.ownerApproval.authorizationGroupId}});
  await s.store.patch('settings/reels_v2_semantic_policy',policy,{updateTime:(await s.store.get('settings/reels_v2_semantic_policy'))?.updateTime}).catch(async()=>s.store.create('settings/reels_v2_semantic_policy',policy));
  const preview=await s.curator.preview({domainId:'food'});assert.equal(preview.preview.providerEnabled,true);const created=await s.curator.create({selection:{domainId:'food'},previewHash:preview.previewHash,idempotencyKey:'synthetic-domain-food-create'});s.deliveries.length=0;
  await s.curator.runDelivery({jobId:created.job.id,sequence:created.job.dispatch.sequence,outboxId:created.job.dispatch.outboxId,maxBatches:3});
@@ -86,8 +86,8 @@ test('quarantine and global budget fail closed on source/race/missing owner auth
 });
 
 async function startOwnerDomain(s,domainId='food',authorizationId='synthetic-domain-'+domainId){
- const old=(await s.store.get('settings/reels_v2_semantic_policy')),domain=(await s.store.get('settings/reels_v2_semantic_domain_plan')).data.domains.find(d=>d.id===domainId);
- const p=semanticPolicy({...old.data,authorizationId,authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>b.pins).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),domainCuration:{...old.data.domainCuration,domainId}});
+ const old=(await s.store.get('settings/reels_v2_semantic_policy')),manifest=(await s.store.get('settings/reels_v2_semantic_domain_plan')).data,domain=manifest.domains.find(d=>d.id===domainId);
+ const p=semanticPolicy({...old.data,authorizationId,authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>semanticDomainBatchPins(manifest,b)).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),domainCuration:{...old.data.domainCuration,domainId}});
  await s.store.patch('settings/reels_v2_semantic_policy',p,{updateTime:old.updateTime});
  const preview=await s.curator.preview({domainId});return s.domains.command({action:'create',domainId,previewHash:preview.previewHash,idempotencyKey:'synthetic-'+authorizationId});
 }
@@ -229,4 +229,17 @@ test('the complete owner quarantine plan uses unique epoch checks through the re
  assert.deepEqual(uniqueDomainAuthorityChecks([{path:'videos/QaEpoch',updateTime:'same'},{path:'videos/QaEpoch',updateTime:'same'}]),[{path:'videos/QaEpoch',updateTime:'same'}]);
  assert.throws(()=>uniqueDomainAuthorityChecks([{path:'videos/QaEpoch',updateTime:'old'},{path:'videos/QaEpoch',updateTime:'new'}]),{code:'DOMAIN_QUARANTINE_CONFLICTING_EPOCHS'});
  const blocked={checks:[...checks,{path:'settings/not_a_domain_plan',updateTime:null}],writes:plan.writes},before=calls.length;await assert.rejects(()=>store.commitSemantic(blocked));assert.equal(calls.length,before);
+});
+
+test('compact executable batches rehydrate only the unique sealed source pins and reject tampered IDs, epochs or proof hashes',async()=>{
+ const s=setup(),seed=await seedSyntheticDomainOwner({curator:s.curator}),manifest=seed.manifest;
+ for(const domain of manifest.domains)for(const b of domain.batches){assert.equal(b.pins,undefined);const pins=semanticDomainBatchPins(manifest,b);assert.equal(semanticHash(pins),b.pinsHash);assert.deepEqual(pins.map(p=>p.id),b.sourceIds);}
+ const preview=await s.curator.preview({domainId:'food'}),created=await s.curator.create({selection:{domainId:'food'},previewHash:preview.previewHash,idempotencyKey:'synthetic-compact-runtime'}),job=(await s.store.get('reels_index/semantic_job_'+created.job.id)).data;
+ for(const b of job.domainCuration.batches){assert.equal(semanticHash(b.pins),b.pinsHash);assert.deepEqual(b.pins,semanticDomainBatchPins(manifest,manifest.domains.find(d=>d.id==='food').batches.find(x=>x.id===b.id)));}
+ for(const mutation of ['pins_hash','source_epoch','source_proof','duplicate_id']){
+  const altered=clone(manifest),b=altered.domains.find(d=>d.id==='food').batches[0],source=altered.sources.find(s=>s.id===b.sourceIds[0]);
+  if(mutation==='pins_hash')b.pinsHash=semanticHash('wrong');else if(mutation==='source_epoch')source.sourceVersions.video='2026-10-18T00:00:01.000Z';else if(mutation==='source_proof')source.semanticProofHash=semanticHash('changed');else b.sourceIds.push(b.sourceIds[0]);
+  delete altered.manifestHash;altered.manifestHash=semanticHash(altered);assert.equal(semanticDomainManifestValid(altered),false);assert.throws(()=>semanticDomainBatchPins(altered,b),{code:'DOMAIN_BATCH_PIN_HASH_INVALID'});
+ }
+ assert.equal(s.fixture.calls.length,0);
 });

@@ -38,10 +38,10 @@ export function prepareSemanticDomainManifest({records,taxonomy={nodes:[]},histo
  for(const profile of semanticDomainProfiles){
   const members=sources.filter(s=>s.domainId===profile.id);
   const measure=ids=>{const request=prepareRequest({phase:'extract',payload:{sources:ids.map(id=>original.get(id)),catalogue},requestId:'0'.repeat(64),domainId:profile.id,measurementOnly:true});return measureSemanticDomainRequest(request,budget);};
-  function pack(candidates,markBlocked){const batches=[];let pending=[];const flush=()=>{if(!pending.length)return;const pins=pending.map(id=>domainSourcePin(original.get(id))),from=batches.reduce((n,b)=>n+b.sourceIds.length,0),measurement=measure(pending);batches.push({id:semanticHash({version:semanticDomainVersion,domainId:profile.id,pins,budget}),fromCursor:from,toCursor:from+pending.length,sourceIds:pending,pins,measurement});pending=[];};
+  function pack(candidates,markBlocked){const batches=[];let pending=[];const flush=()=>{if(!pending.length)return;const pins=pending.map(id=>domainSourcePin(original.get(id))),from=batches.reduce((n,b)=>n+b.sourceIds.length,0),measurement=measure(pending);batches.push({id:semanticHash({version:semanticDomainVersion,domainId:profile.id,pins,budget}),fromCursor:from,toCursor:from+pending.length,sourceIds:pending,pinsHash:semanticHash(pins),measurement});pending=[];};
    for(const source of candidates){const next=[...pending,source.id];if(next.length<=budget.maxSources&&measure(next).withinBudget){pending=next;continue;}flush();const measurement=measure([source.id]);if(measurement.withinBudget)pending=[source.id];else{source.measurement=measurement;source.measurementState='single_source_over_budget';if(markBlocked){source.state='input_over_budget';source.reason='SINGLE_SOURCE_FULL_REQUEST_OVER_BUDGET';}}}flush();return batches;
   }
-  const batches=pack(members.filter(s=>s.state==='eligible'),true),measurementBatches=pack(members.filter(s=>['eligible','historical_coverage_unconfirmed'].includes(s.state)&&original.get(s.id).fields.length),false).map(({pins,...batch})=>({...batch,pinsHash:semanticHash(pins)}));
+  const batches=pack(members.filter(s=>s.state==='eligible'),true),measurementBatches=pack(members.filter(s=>['eligible','historical_coverage_unconfirmed'].includes(s.state)&&original.get(s.id).fields.length),false);
   domains.push({id:profile.id,label:profile.label,profileVersion:profile.version,profileHash:semanticHash(profile),memberIds:members.map(s=>s.id),eligibleIds:batches.flatMap(b=>b.sourceIds),batches,measurementBatches,maximumNewCalls:batches.length*2+(batches.length?1:0),measurementCallUpperBound:measurementBatches.length*2+(measurementBatches.length?1:0),inventoryCount:members.length,eligibleCount:batches.reduce((n,b)=>n+b.sourceIds.length,0),retainedCount:members.filter(s=>s.state==='retained_applied').length,protectedCount:members.filter(s=>s.state==='protected_uncertain').length,historicalUnconfirmedCount:members.filter(s=>s.state==='historical_coverage_unconfirmed').length,inputOverBudgetCount:members.filter(s=>s.measurementState==='single_source_over_budget').length});
  }
  const baseline=historyCoverageConfirmed?(histories??[]).reduce((n,h)=>{const j=h.job?.data??h.job;return n+(Number.isSafeInteger(j?.callsUsed)?j.callsUsed:0);},0):null;
@@ -56,16 +56,24 @@ export function measureSemanticDomainManifestStorage(value){
  return {version:'firestore-native-size-v1',nativeDocumentBytes,compactJsonUtf8Bytes:Buffer.byteLength(JSON.stringify(value),'utf8'),maximumNativeBytes:900000,hardDocumentLimitBytes:1048576,withinLimit:nativeDocumentBytes<=900000,scope:'native_document_size_estimate_not_rest_encoding'};
 }
 
+
+export function semanticDomainBatchPins(manifest,batch){
+ if(!Array.isArray(batch?.sourceIds)||new Set(batch.sourceIds).size!==batch.sourceIds.length||batch.pins!==undefined)throw Object.assign(Error('DOMAIN_BATCH_PIN_HASH_INVALID'),{code:'DOMAIN_BATCH_PIN_HASH_INVALID'});
+ const sources=new Map((manifest?.sources??[]).map(s=>[s.id,s])),pins=batch.sourceIds.map(id=>{const source=sources.get(id);if(!source)throw Object.assign(Error('DOMAIN_BATCH_PIN_HASH_INVALID'),{code:'DOMAIN_BATCH_PIN_HASH_INVALID'});return domainSourcePin(source);});
+ if(semanticHash(pins)!==batch.pinsHash)throw Object.assign(Error('DOMAIN_BATCH_PIN_HASH_INVALID'),{code:'DOMAIN_BATCH_PIN_HASH_INVALID'});
+ return pins;
+}
+
 export function semanticDomainManifestValid(value){
  try{const {manifestHash,...body}=value;if(!measureSemanticDomainManifestStorage(value).withinLimit||value.storagePolicy?.maximumNativeBytes!==900000)return false;if(value.kind!=='semantic_domain_manifest'||value.version!==semanticDomainVersion||semanticHash(body)!==manifestHash||value.executionAuthorized!==false||value.globalConcurrency!==1||value.inventoryCount!==value.sources.length||new Set(value.sources.map(s=>s.id)).size!==value.sources.length||!same(value.budget,semanticDomainBudget(value.budget))||value.budgetHash!==semanticHash(value.budget))return false;
   const all=value.domains.flatMap(d=>d.memberIds);if(all.length!==value.sources.length||new Set(all).size!==all.length)return false;
-  return value.domains.length===semanticDomainProfiles.length&&value.domains.every(d=>{const profile=semanticDomainProfile(d.id);if(!profile||d.profileHash!==semanticHash(profile)||!same(d.memberIds,value.sources.filter(s=>s.domainId===d.id).map(s=>s.id)))return false;let offset=0;for(const b of d.batches){if(b.fromCursor!==offset||b.toCursor!==offset+b.sourceIds.length||!b.sourceIds.length||b.sourceIds.length>value.budget.maxSources||!b.measurement.withinBudget||!same(b.sourceIds,b.pins.map(p=>p.id))||!b.pins.every(p=>same(p,domainSourcePin(value.sources.find(s=>s.id===p.id))))||b.sourceIds.some(id=>value.sources.find(s=>s.id===id)?.state!=='eligible'))return false;offset=b.toCursor;}return same(d.eligibleIds,d.batches.flatMap(b=>b.sourceIds))&&d.maximumNewCalls===d.batches.length*2+(d.batches.length?1:0);});
+  return value.domains.length===semanticDomainProfiles.length&&value.domains.every(d=>{const profile=semanticDomainProfile(d.id);if(!profile||d.profileHash!==semanticHash(profile)||!same(d.memberIds,value.sources.filter(s=>s.domainId===d.id).map(s=>s.id)))return false;let offset=0;for(const b of d.batches){const pins=semanticDomainBatchPins(value,b);if(b.fromCursor!==offset||b.toCursor!==offset+b.sourceIds.length||!b.sourceIds.length||b.sourceIds.length>value.budget.maxSources||!b.measurement.withinBudget||b.id!==semanticHash({version:semanticDomainVersion,domainId:d.id,pins,budget:value.budget})||b.sourceIds.some(id=>value.sources.find(s=>s.id===id)?.state!=='eligible'))return false;offset=b.toCursor;}return same(d.eligibleIds,d.batches.flatMap(b=>b.sourceIds))&&d.maximumNewCalls===d.batches.length*2+(d.batches.length?1:0);});
  }catch{return false;}
 }
 
 export function prepareDomainSemanticJobPlan({inventory,selection,policy,manifest,observedAt,promptHash}){
  const dc=policy.domainCuration;if(!dc||dc.version!=='semantic-domain-job-v1'||!semanticDomainManifestValid(manifest)||dc.planHash!==manifest.manifestHash||!semanticDomainProfile(dc.domainId)||selection?.domainId!==dc.domainId||Object.keys(selection).some(k=>k!=='domainId'))throw Object.assign(Error('DOMAIN_SELECTION_OR_MANIFEST_INVALID'),{code:'DOMAIN_SELECTION_OR_MANIFEST_INVALID',status:409});
- const domain=manifest.domains.find(d=>d.id===dc.domainId),byId=new Map(inventory.map(s=>[s.id,s])),pins=domain.batches.flatMap(b=>b.pins).map(s=>({id:s.id,sourceVersions:s.sourceVersions})),cohortHash=semanticHash(pins),maximumCalls=domain.maximumNewCalls,blockingReasons=[];
+ const domain=manifest.domains.find(d=>d.id===dc.domainId),byId=new Map(inventory.map(s=>[s.id,s])),pins=domain.batches.flatMap(b=>semanticDomainBatchPins(manifest,b)).map(s=>({id:s.id,sourceVersions:s.sourceVersions})),cohortHash=semanticHash(pins),maximumCalls=domain.maximumNewCalls,blockingReasons=[];
  if(!pins.length)blockingReasons.push('DOMAIN_HAS_NO_ELIGIBLE_SOURCES');
  if(pins.some(p=>!byId.has(p.id)||!same(byId.get(p.id).sourceVersions,p.sourceVersions)))blockingReasons.push('DOMAIN_SOURCE_EPOCH_CHANGED');
  if(!policy.enabled)blockingReasons.push('CURATION_NOT_AUTHORIZED');
@@ -74,7 +82,7 @@ export function prepareDomainSemanticJobPlan({inventory,selection,policy,manifes
  if(!stamp(observedAt)||!stamp(policy.expiresAt)||Date.parse(policy.expiresAt)<=Date.parse(observedAt))blockingReasons.push('AUTHORIZATION_EXPIRED');
  if(maximumCalls>policy.maxCalls||maximumCalls>125)blockingReasons.push('DOMAIN_EXCEEDS_REMAINING_GLOBAL_CAP');
  if(!dc.authorizationGroupId)blockingReasons.push('OWNER_QUARANTINE_AUTHORITY_REQUIRED');
- const domainCuration={version:dc.version,domainId:dc.domainId,planHash:dc.planHash,authorizationGroupId:dc.authorizationGroupId,profileHash:domain.profileHash,promptHash,budget:manifest.budget,batches:domain.batches};
+ const domainCuration={version:dc.version,domainId:dc.domainId,planHash:dc.planHash,authorizationGroupId:dc.authorizationGroupId,profileHash:domain.profileHash,promptHash,budget:manifest.budget,batches:domain.batches.map(b=>({...b,pins:semanticDomainBatchPins(manifest,b)}))};
  const preview={publishedCount:inventory.length,selectedCount:pins.length,cohortHash,batchSize:null,variableBatches:true,batchCount:domain.batches.length,maximumCalls,model:policy.model,promptHash,providerEnabled:blockingReasons.length===0,blockingReasons,domainId:dc.domainId,globalMaximumCalls:127,baselineConsumedCalls:2,remainingGlobalCalls:125,estimated:true};
  return {version:semanticDomainVersion,pins,policy,preview,domainCuration,previewHash:semanticHash({pins,policy,domainCuration,maximumCalls}),observedAt,providerCalls:0,inferenceStarted:false};
 }

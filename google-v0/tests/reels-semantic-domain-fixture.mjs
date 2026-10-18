@@ -2,7 +2,7 @@ import {semanticDomainProfiles} from '../lib/reels-semantic-domain-contract.mjs'
 import {domainSourcePin} from '../lib/reels-semantic-domain-planner.mjs';
 import {domainQuarantineReviewScope,prepareOwnerDomainQuarantine} from '../lib/reels-semantic-domain-authority.mjs';
 import {semanticHash,semanticPolicy,semanticSourceFromSaved} from '../lib/reels-semantic-source.mjs';
-import {semanticDomainRecordFromSaved,prepareSemanticDomainManifest} from '../lib/reels-semantic-domain-planner.mjs';
+import {semanticDomainRecordFromSaved,prepareSemanticDomainManifest,semanticDomainBatchPins} from '../lib/reels-semantic-domain-planner.mjs';
 import {prepareSemanticProviderRequest,semanticExecutionPromptHash} from '../lib/reels-semantic-provider.mjs';
 import {semanticEnvelope} from './reels-semantic-fixture.mjs';
 export function semanticDomainUnknownProvider(){
@@ -36,7 +36,7 @@ export async function seedSyntheticDomainOwner({curator,store=curator.store,doma
  input.review={path:'native-review/synthetic-domain-quarantine',sha256:semanticHash('synthetic review'),data:{kind:'native_independent_review',executor:'codex-native',role:'Revisor',actorId:'/root/synthetic-review',accepted:true,scopeHash,reviewedAt:s.now}};
  const trustedReview={scopeHash,dataHash:semanticHash(input.review.data),sha256:input.review.sha256,actorId:input.review.data.actorId},plan=prepareOwnerDomainQuarantine(input,{trustedReview,ownerApproval});
  if(activate){const result=await store.commitSemantic({checks:plan.checks,writes:plan.writes});if(result.applied!==true)throw Error('SYNTHETIC_DOMAIN_OWNER_CAS_FAILED');
-  const domain=manifest.domains.find(d=>d.id===domainId),policy=semanticPolicy({...oldPolicy,authorizationId:'synthetic-domain-authorization-'+domainId,authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>b.pins).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),expiresAt:ownerApproval.expiresAt,domainCuration:{version:'semantic-domain-job-v1',domainId,planHash:manifest.manifestHash,authorizationGroupId:ownerApproval.authorizationGroupId}}),old=await store.get('settings/reels_v2_semantic_policy');if(old)await store.patch('settings/reels_v2_semantic_policy',policy,{updateTime:old.updateTime});else await store.create('settings/reels_v2_semantic_policy',policy);
+  const domain=manifest.domains.find(d=>d.id===domainId),policy=semanticPolicy({...oldPolicy,authorizationId:'synthetic-domain-authorization-'+domainId,authorizedCohortHash:semanticHash(domain.batches.flatMap(b=>semanticDomainBatchPins(manifest,b)).map(p=>({id:p.id,sourceVersions:p.sourceVersions}))),expiresAt:ownerApproval.expiresAt,domainCuration:{version:'semantic-domain-job-v1',domainId,planHash:manifest.manifestHash,authorizationGroupId:ownerApproval.authorizationGroupId}}),old=await store.get('settings/reels_v2_semantic_policy');if(old)await store.patch('settings/reels_v2_semantic_policy',policy,{updateTime:old.updateTime});else await store.create('settings/reels_v2_semantic_policy',policy);
  }
  return {domainId,manifest,plan,originJob,originLedger,selectedIds:manifest.domains.find(d=>d.id===domainId).eligibleIds,actualGoogleObservations:false,providerCalls:0,queueWrites:0};
 }

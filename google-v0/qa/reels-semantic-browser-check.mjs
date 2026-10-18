@@ -4,14 +4,33 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {chromium} from 'playwright';
 import {startReelsFixtureServer} from './reels-server.mjs';
-import {makeSemanticFixture} from '../tests/reels-semantic-fixture.mjs';
+import {makeSemanticFixture,semanticEnvelope} from '../tests/reels-semantic-fixture.mjs';
+import {semanticHash,semanticPolicyPath} from '../lib/reels-semantic-source.mjs';
+
+
+function makeProofNavigationFixture(){
+ const base=makeSemanticFixture(),template=base.documents.find(record=>record.path==='videos/QaFull_single'),documents=base.documents.filter(record=>!record.path.startsWith('videos/')&&!record.path.startsWith('reels_legacy_content/')&&record.path!==semanticPolicyPath),pins=[],calls=[];
+ for(let index=0;index<25;index++){
+  const id='QaProof_'+String(index).padStart(3,'0'),video=structuredClone(template.data);video.id=id;video.title='Prova salva '+id;video.analysis={...video.analysis,title:video.title};video.analysis_key='analysis/'+id+'.json';video.source_caption.capture_id='caption-'+id;
+  documents.push({path:'videos/'+id,data:video,updateTime:template.updateTime});pins.push({id,sourceVersions:{video:template.updateTime}});
+ }
+ const policy={...base.policy,batchSize:8,maxCalls:9,maxSources:25,authorizationId:'fixture-proof-navigation25',authorizedCohortHash:semanticHash(pins)};
+ documents.push({path:semanticPolicyPath,data:policy,updateTime:template.updateTime});
+ const proof=source=>{const field=source.fields.find(field=>field.fieldPath==='caption');assert.ok(field);return {fieldPath:field.fieldPath,excerpt:field.text};};
+ const provider={
+  async infer(input){calls.push('extract');const prior=input.catalogue.groups.find(group=>group.key==='preparos-com-provas');return semanticEnvelope({version:1,profiles:input.sources.map(source=>({reelId:source.id,context:'recipe',state:'proposed',reason:'Synthetic saved-proof navigation fixture only.',units:[]})),groups:[{key:'preparos-com-provas',name:'Preparos com provas salvas',context:'recipe',kind:'segment',definition:'Preparo culinário descrito nas fontes salvas.',aliases:[],positiveCriteria:['Preparo desenvolvido no conteúdo.'],negativeCriteria:['Menção isolada sem preparo.'],...(prior?{existingGroupId:prior.id}:{}),members:input.sources.map(source=>({reelId:source.id,role:'central',unitIds:[],evidence:[proof(source)]})),negativeExamples:[]}]},input.model);},
+  async consolidate(input){calls.push('consolidate');return semanticEnvelope({version:1,resolutions:input.groups.map(group=>({groupId:group.id,decision:'keep',mergeInto:'',reason:'One synthetic source-bound group.'}))},input.model);},
+  async verify(input){calls.push('verify');const byId=new Map(input.sources.map(source=>[source.id,source]));return semanticEnvelope({version:1,members:input.members.map(member=>({groupId:member.groupId,reelId:member.reelId,verdict:'supported',reason:'Synthetic saved-proof contract fixture.',evidence:[proof(byId.get(member.reelId))]})),negativeExamples:[]},input.model);}
+ };
+ return {documents,provider,calls,policy};
+}
 
 const output=process.env.MEGABRAIN_REELS_SEMANTIC_QA_OUTPUT??join(tmpdir(),'megabrain-reels-semantic-qa');
 await mkdir(output,{recursive:true});
 const fixture=makeSemanticFixture({navigationGroups:true}),server=await startReelsFixtureServer({semanticFixture:fixture}),checks=[],failures=[];
 const sourceSnapshot=()=>JSON.stringify([...server.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/')).sort(([a],[b])=>a.localeCompare(b)));
 const originalSources=sourceSnapshot(),semanticPath='/api/reels/curation/semantic';
-let browser,page,context,jobId,manualId;
+let browser,page,context,jobId,manualId,proofJourneyCalls=0;
 const record=async(name,action)=>{await action();checks.push(name);};
 const responseFor=(path,predicate=()=>true)=>page.waitForResponse(response=>new URL(response.url()).pathname===path&&predicate(response));
 const postFor=action=>responseFor(semanticPath,response=>response.request().method()==='POST'&&response.request().postDataJSON()?.action===action);
@@ -154,7 +173,31 @@ try{
   assert.equal(server.calls.filter(call=>call.path==='/api/reels/commands').length,0);assert.equal(semanticPosts().filter(call=>call.body.action==='create').length,1);assert.equal(semanticPosts().filter(call=>call.body.action==='advance').length,0);
   assert.equal(fixture.calls.length,paidFixtureCalls);assert.deepEqual(server.externalAttempts,[]);assert.deepEqual(failures,[]);
  });
- const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
+ await record('member_after_twenty_loads_complete_saved_proof_on_demand_without_inference',async()=>{
+  await page.close();page=null;
+  const proofFixture=makeProofNavigationFixture(),proofServer=await startReelsFixtureServer({semanticFixture:proofFixture});let proofContext,proofPage;
+  try{
+   const preview=await proofServer.semantic.preview({all:true});assert.equal(preview.preview.selectedCount,25);
+   const created=await proofServer.semantic.create({selection:{all:true},previewHash:preview.previewHash,idempotencyKey:'fixture-proof-navigation25-start'});await proofServer.pumpSemantic();assert.equal((await proofServer.semantic.job(created.job.id)).job.status,'completed');
+   assert.equal(proofFixture.calls.length,9);const group=(await proofServer.semantic.overview()).groups[0];
+   proofContext=await browser.newContext({viewport:{width:1440,height:1000}});await proofContext.addCookies([{name:'qa_session',value:'local',url:proofServer.origin}]);
+   await proofContext.route('**/*',route=>{if(new URL(route.request().url()).origin===proofServer.origin)return route.continue();failures.push('Unexpected proof browser external request');return route.abort();});
+   proofPage=await proofContext.newPage();proofPage.setDefaultTimeout(20000);proofPage.on('pageerror',error=>failures.push(error.message));await proofPage.goto(proofServer.origin);
+   await proofPage.getByRole('navigation').getByRole('button',{name:/Categorias/}).click();await proofPage.getByRole('button',{name:'Ver contexto Preparos com provas salvas',exact:true}).click();
+   const detail=proofPage.getByRole('region',{name:'Detalhes do contexto semântico'}),member=detail.locator('article').filter({has:proofPage.getByRole('button',{name:'Prova salva QaProof_024',exact:true})});
+   await detail.getByText('Trechos de 20 de 25 Reels disponíveis nesta leitura. Carregue os demais individualmente quando precisar.',{exact:true}).waitFor();
+   const button=member.getByRole('button',{name:'Carregar provas de Prova salva QaProof_024',exact:true});await button.waitFor();
+   assert.equal(await member.getByText('A evidência deste membro não está disponível nesta leitura.',{exact:true}).count(),0);
+   assert.equal(proofServer.calls.filter(call=>call.query.includes('memberId=')).length,0,'Unopened members must not all fetch their raw proofs');
+   const result=proofPage.waitForResponse(response=>{const url=new URL(response.url());return url.pathname===semanticPath+'/groups/'+group.id&&url.searchParams.get('memberId')==='QaProof_024';});await button.click();
+   const payload=await (await result).json();assert.equal(payload.inferenceOnGet,false);assert.equal(payload.proofDetails.hydratedMembers,1);assert.equal(payload.proofDetails.rawPreserved,true);assert.equal(payload.members.length,25);
+   await member.getByText('Por que este Reel pertence ao contexto',{exact:true}).click();await member.getByText('Frango na frigideira: tempere o frango, cozinhe na frigideira e sirva.',{exact:true}).waitFor();
+   assert.equal(proofFixture.calls.length,9,'Loading saved proof is a GET, never a new semantic call');assert.equal(proofServer.calls.filter(call=>call.query.includes('memberId=')).length,1);assert.equal(proofServer.calls.filter(call=>call.method==='POST').length,0);
+   assert.deepEqual(proofServer.externalAttempts,[]);proofJourneyCalls=proofFixture.calls.length;await proofPage.screenshot({path:join(output,'semantic-member25-saved-proof.png'),fullPage:true});
+  }catch(error){await proofPage?.screenshot({path:join(output,'semantic-member-proof-failure.png'),fullPage:true}).catch(()=>{});throw error;}
+  finally{await writeFile(join(output,'proof-http-calls.json'),JSON.stringify(proofServer.calls,null,2));await proofContext?.close();await proofServer.close();}
+ });
+ const report={passed:true,checks,mode:'synthetic_saved_sources_real_workspace_API_and_queue_runner',savedPublications:5,syntheticProviderCalls:fixture.calls.length,syntheticProofNavigationCalls:proofJourneyCalls,realProviderCalls:0,newReelsProcessed:0,sourceAnalysesChanged:false,browserAdvancePosts:0,createPosts:1,limitations:['Synthetic model envelopes validate product orchestration and source binding, not semantic accuracy on the real499.','Google authentication, actual queue transport and deployed provider IAM require independent acceptance.']};
  await writeFile(join(output,'report.json'),JSON.stringify(report,null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));console.log(JSON.stringify(report));
 }catch(error){await page?.screenshot({path:join(output,'failure.png'),fullPage:true}).catch(()=>{});await writeFile(join(output,'report.json'),JSON.stringify({passed:false,error:error.stack,checks,failures},null,2));await writeFile(join(output,'http-calls.json'),JSON.stringify(server.calls,null,2));throw error;}
 finally{await browser?.close();await server.close();}

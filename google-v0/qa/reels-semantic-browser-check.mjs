@@ -277,9 +277,34 @@ try{
    const checkpoint=(await checkpointServer.semantic.job(seed.jobId)).job;
    assert.equal(checkpoint.status,'paused');assert.equal(checkpoint.reason,'SEMANTIC_ALIGNMENT_CHECKPOINT');assert.equal(checkpoint.processed,16);assert.equal(checkpoint.callsUsed,2);assert.equal(checkpoint.canContinueAlignmentCheckpoint,true);assert.equal(checkpointServer.semanticDeliveries.length,0,'Checkpoint must not dispatch the remaining corpus');
    const checkpointCalls=checkpointFixture.calls.length;assert.equal(checkpointCalls,1,'Only second batch invokes the synthetic provider');
-   async function refresh(){const pending=checkpointPage.waitForResponse(result=>new URL(result.url()).pathname===semanticPath&&result.request().method()==='GET');await checkpointPage.getByRole('button',{name:'Atualizar curadoria',exact:true}).click();return (await pending).json();}
    const path='reels_index/semantic_job_'+seed.jobId;
-   async function setStatus(status,reason=checkpoint.reason){const saved=await checkpointServer.store.get(path);await checkpointServer.store.patch(path,{status,reason},{updateTime:saved.updateTime});}
+   let expectedSnapshot=null;
+   async function setStatus(status,reason=checkpoint.reason){
+    const saved=await checkpointServer.store.get(path),updatedAt=new Date(Math.max(Date.now(),Date.parse(saved.data.updatedAt)+1)).toISOString();
+    await checkpointServer.store.patch(path,{status,reason,updatedAt},{updateTime:saved.updateTime});
+    expectedSnapshot={id:seed.jobId,status,reason,updatedAt};
+   }
+   async function refresh(overrides={}){
+    const target={...expectedSnapshot,...overrides};
+    // A response from the previous revision may arrive after the next click.
+    // Match the persisted fixture epoch and state, never the expected capability.
+    const pending=checkpointPage.waitForResponse(async result=>{
+     if(new URL(result.url()).pathname!==semanticPath||result.request().method()!=='GET')return false;
+     try{const value=await result.json(),job=value.jobs.find(job=>job.id===target.id);return job?.status===target.status&&job.reason===target.reason&&job.updatedAt===target.updatedAt;}catch{return false;}
+    });
+    await checkpointPage.getByRole('button',{name:'Atualizar curadoria',exact:true}).click();
+    const overview=await(await pending).json();
+    const qualityPause=['SEMANTIC_ALIGNMENT_CHECKPOINT','SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT'].includes(target.reason),label=qualityPause?'Lote pronto para conferência':target.status==='running'?'Lendo análises':target.status==='paused'?'Pausada':'Precisa de conferência';
+    // The history and capability controls render in the same React commit.
+    // Wait for that rendered state before checking presence or absence of actions.
+    await checkpointPage.waitForFunction(label=>{
+     const section=document.querySelector('.semantic-curator'),summary=[...(section?.querySelectorAll('summary')??[])].find(value=>value.textContent==='Últimas operações de curadoria');
+     return summary?.parentElement.querySelector('article strong')?.textContent===label;
+    },label);
+    await continuation.waitFor({state:target.status==='paused'&&qualityPause?'visible':'detached'});
+    if(target.status==='running')await checkpointPage.getByRole('region',{name:'Curadoria em andamento'}).waitFor();
+    return overview;
+   }
    for(const [status,reason] of [['uncertain',checkpoint.reason],['failed',checkpoint.reason],['running',checkpoint.reason],['paused','UNRELATED_REVIEW_REQUIRED']]){
     await setStatus(status,reason);const overview=await refresh();assert.equal(overview.jobs.find(job=>job.id===seed.jobId).canContinueAlignmentCheckpoint,false);assert.equal(await continuation.count(),0,'No continuation for '+status+'/'+reason);assert.equal(checkpointFixture.calls.length,checkpointCalls);
    }
@@ -289,7 +314,7 @@ try{
     // the private real-engine suite, not by this response presentation fixture.
     const pattern=checkpointServer.origin+semanticPath;
     await checkpointPage.route(pattern,async route=>{assert.equal(route.request().method(),'GET');const response=await route.fetch(),data=await response.json(),job=data.jobs.find(value=>value.id===seed.jobId);assert.equal(job.canContinueAlignmentCheckpoint,true);Object.assign(job,{reason:'SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT',callsUsed:3});await route.fulfill({response,json:data});});
-    try{await refresh();await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();assert.equal(await continuation.isEnabled(),true);assert.equal(checkpointFixture.calls.length,checkpointCalls);assert.equal(checkpointServer.semanticDeliveries.length,0);}finally{await checkpointPage.unroute(pattern);}
+    try{await refresh({reason:'SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT'});await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();assert.equal(await continuation.isEnabled(),true);assert.equal(checkpointFixture.calls.length,checkpointCalls);assert.equal(checkpointServer.semanticDeliveries.length,0);}finally{await checkpointPage.unroute(pattern);}
     await refresh();assert.equal(checkpointFixture.calls.length,checkpointCalls);
    });
    await checkpointPage.getByRole('region',{name:'Lote salvo para conferência'}).waitFor();await continuation.click();

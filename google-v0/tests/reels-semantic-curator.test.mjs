@@ -88,3 +88,8 @@ test('automatic active membership becomes candidate when a bound source changes 
  const v=await s.store.get('videos/'+s.fixture.expected.memberIds[0]);await s.store.patch('videos/'+s.fixture.expected.memberIds[0],{editorial_test_revision:2},{updateTime:v.updateTime});
  assert.equal((await s.curator.overview()).groups[0].status,'candidate');assert.deepEqual(await s.curator.matchingIds(g.id),[]);
 });
+
+test('mentioned or unknown association never enters library membership or parent counts',async()=>{
+ const s=setup(),infer=s.fixture.provider.infer;s.curator.provider={...s.fixture.provider,infer:async input=>{const e=await infer(input),o=JSON.parse(e.rawResponse.candidates[0].content.parts[0].text);for(const g of o.groups)for(const m of g.members)m.role=m.reelId==='QaFull_many'?'mentioned':'unknown';e.rawResponse.candidates[0].content.parts[0].text=JSON.stringify(o);return e;}};
+ await start(s);await pump(s);const g=(await s.curator.overview()).groups[0],path='reels_index/semantic_group_'+g.id,r=await s.store.get(path);await s.store.patch(path,{status:'active',manual:true},{updateTime:r.updateTime});assert.deepEqual(await s.curator.matchingIds(g.id),[]);assert.deepEqual(await s.curator.categoryIds('receitas'),[]);assert.equal((await s.repository.list({workspace:'library',category:'semantic_'+g.id})).total,0);
+});

@@ -30,7 +30,8 @@
     "ops/prepare-reels-catalogue.mjs",
     "ops/prepare-reels-catalogue.test.mjs",
     "ops/apply-reels-catalogue.py",
-    "ops/test_apply_reels_catalogue.py"
+    "ops/test_apply_reels_catalogue.py",
+    ".github/workflows/reels-alignment-review.yml"
   ],
   "context": [
     {

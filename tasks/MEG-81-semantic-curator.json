@@ -3,18 +3,19 @@
   "id": "MEG-81",
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "9798b3648726a09b1d36619775d31929481fb37e",
-  "objective": "Implementar curador semântico real sobre análises publicadas salvas499, com propostas/evidências/promoção por critérios e controle manual; ligar snapshot vivo versionado ao worker final. Entrega web integrada, CI GitHub exclusivo, preservação de fontes/publicações/49incertos; sem novos Reels ou repetição de vídeo/STT/inferência paga incerta.",
+  "base_commit": "111f4c5404c6dd7e1b605f877c83fc6b9626928d",
+  "objective": "Destravar a curadoria das análises publicadas salvas com especialistas por grandes domínios, lotes limitados por tamanho e um catálogo único; diagnosticar e propor destinos fundamentados para Outros temas e tornar as ferramentas web independentes e utilizáveis. Preservar fonte/manual/499job antigo/8aplicados/329f; nenhum novo Reel, vídeo/STT, replay pago, exclusão ou grant IAM.",
   "risk": "high",
   "acceptance_criteria": [
-    "Real structured semantic inference adapter consumes saved accepted knowledge only; no keyword/count-only substitute labeled semantic, no Codex manual labels as production engine.",
-    "Exact499 inventory/source/version pinned; native+legacy preserved; stale source/manual versions invalidate old proposals; useful published knowledge and source/media unchanged.",
-    "Context/format/entities with evidence and unit associations; unknown abstains without processing-error labels. Stable contextual proposals across domains, synonyms/aliases/coherence/negative examples and configurable unique-member thresholds.",
-    "Global curator and publication-owned incremental catalogue isolated from acquisition/STT/video pipeline; finite durable jobs, idempotency, recoverable operations and no automatic paid retry after uncertain acknowledgment.",
-    "Worker final loads relevant compact current catalogue through repository at execution, source/version bound, rather than static config snapshot only; existing final analysis call reused.",
-    "Owner web can inspect coverage, candidate reasons/members/evidence, create/rename/merge/reject/protect manual groups and safely run/observe saved-only curation. GET never starts inference.",
-    "Tests/preparation/calibration/build exclusively GitHubActions; real saved499 offline rehearsal, adversarial semantic contract cases and authenticated browser journey through real API synthetics; semantic real inference separately evidenced.",
-    "Reviewed finite metadata and necessary closed product publication, actual source/control preservation and authenticated real web acceptance before delivered. No newReels, video/STT reanalysis,49cleanup,IAM changes, queue resume or unbounded provider work inferred."
+    "Per-domain curator profiles share one versioned catalogue, evidence contract, global concurrency coordinator and authorization accounting; no cloud worker per category is required.",
+    "Routing is anchored in existing accepted category/source evidence, never silent keyword classification. Other/unclassified sources expose original-analysis presence/coverage and support domain destination proposals or abstention with provenance; do not force all110 into categories or hardcode counts.",
+    "New optional domain jobs have immutable source/version/manifest hashes and explicit limits. Full request instruction/schema/catalogue/source content contributes to byte and conservative token estimate bounds; estimated tokens must be labeled estimated. Oversized individual sources are explicitly blocked or losslessly selected with evidence rules, never silently truncated into certainty.",
+    "Old499 job, first8 saved profiles, uncertain329f and ledger/counter2 remain untouched; no new policy/cohort/capability installed or reused automatically. Global uncertainty blocks new execution but not read-only domain diagnostics or manual editorial actions.",
+    "Web renders semantic/manual sections independently of slow or failed category-tree reads; partial loads show local status/retry and preserve content. Do not weaken server-derived execution gates.",
+    "Legacy segment action is hidden/replaced with a useful current-curation route when backend says unavailable. Virtual category editing requires correct capabilities; no UI action intentionally calls known409 routes.",
+    "Domain coverage/progress/proposals and Other destination diagnostics come from read-only API metadata; user can navigate published content and preview manual edits. GET/refresh/opening pages never invokes providers or starts workers.",
+    "GitHubActions-only tests/build/rehearsal. Use already-approved saved source artifacts without adding raw operational/corpus fixtures to public GitHub. Include real API/browser journey for loading failures/slow sections and strict domain/token/provenance/coordinator/idempotency tests.",
+    "Independent exact-head review plus coherent product PR; no merge or deploy without corresponding direct authorization. Actual provider acceptance/semantic accuracy remain separate from synthetic CI."
   ],
   "allowed_paths": [
     "tasks/MEG-81-semantic-curator.json",
@@ -34,65 +35,71 @@
     ".github/workflows/google-v0.yml",
     ".github/workflows/google-deploy.yml",
     "google-v0/web-google/lib/server.mjs",
-    "google-v0/qa/"
+    "google-v0/qa/",
+    "ops/prepare-semantic-domain-curation.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/reels-contextual-catalogue-runtime.mjs",
-      "reason": "Durable source-bound projection and outbox",
+      "path": "google-v0/lib/reels-semantic-curator.mjs",
+      "reason": "Current durable job, coordinator and strict execution boundaries",
       "sections": [
-        "runtime",
-        "transaction"
+        "semanticPolicy",
+        "prepareSemanticPlan",
+        "runDelivery",
+        "publicJob"
+      ],
+      "max_chars": 2400
+    },
+    {
+      "path": "google-v0/lib/reels-semantic-provider.mjs",
+      "reason": "Exact semantic source request and schema boundary",
+      "sections": [
+        "payload",
+        "schemaForPhase"
       ],
       "max_chars": 1800
-    },
-    {
-      "path": "google-v0/lib/reels-contextual-curation.mjs",
-      "reason": "Context attributes and current candidates",
-      "sections": [
-        "curation"
-      ],
-      "max_chars": 1600
-    },
-    {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Existing Vertex request boundary/current static catalogue input",
-      "sections": [
-        "analysis",
-        "catalogue snapshot"
-      ],
-      "max_chars": 1800
-    },
-    {
-      "path": "google-v0/lib/reels-analysis-contract.mjs",
-      "reason": "Evidence,units,attributes",
-      "sections": [
-        "contextualSignalsSchema"
-      ],
-      "max_chars": 1600
-    },
-    {
-      "path": "google-v0/web-google/app/reels/curation.jsx",
-      "reason": "Actual category UI",
-      "sections": [
-        "catalogue",
-        "curation"
-      ],
-      "max_chars": 1500
     },
     {
       "path": "google-v0/lib/reels-api.mjs",
-      "reason": "Authenticated API and repository integration",
+      "reason": "Authenticated saved-catalogue API integration",
       "sections": [
-        "curation"
+        "semantic routes",
+        "categories"
+      ],
+      "max_chars": 1600
+    },
+    {
+      "path": "google-v0/web-google/app/reels/semantic-curator.jsx",
+      "reason": "Current semantic controls and source coverage",
+      "sections": [
+        "SemanticCurator",
+        "job actions"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/web-google/app/reels/workspace.jsx",
+      "reason": "Independent category/library load and manual editing controls",
+      "sections": [
+        "Categories",
+        "Library"
+      ],
+      "max_chars": 1600
+    },
+    {
+      "path": "google-v0/qa/reels-semantic-browser-check.mjs",
+      "reason": "API and synthetic worker/browser acceptance",
+      "sections": [
+        "record",
+        "checkpoint"
       ],
       "max_chars": 1600
     }
   ],
   "validation_commands": [
-    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 9798b3648726a09b1d36619775d31929481fb37e --diff-head HEAD",
-    "GitHub Actions Google v0 integration",
-    "GitHub Actions saved499 semantic curator rehearsal and browser journeys; no local product tests"
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 111f4c5404c6dd7e1b605f877c83fc6b9626928d --diff-head HEAD",
+    "GitHub Actions Google v0 integration, Semantic curator, Frontend browser QA and documentation CI",
+    "GitHub-only saved499 read-only domain/input-size rehearsal using pre-existing approved private artifacts; no provider calls or local product tests"
   ],
   "execution_budget": {
     "worker_runs": 1,
@@ -105,27 +112,27 @@
   "review": {
     "mode": "independent_agent_and_human",
     "status": "pending",
-    "reason": "Revisor nativo fresco e versão exata/CI/manifesto; usuário autorizou implementar e conferir web sem processamento. Correções delimitadas e publicação fechada necessária incluídas; nenhuma expansão de IAM ou processamento."
+    "reason": "New domain/input/UI contracts require independent exact-head review; preserve prior PR77 approval as historical only."
   },
   "native_coordination": {
-    "authorized_by": "Pedido humano atual category calibration/quality + AGENTS persistente v2",
+    "authorized_by": "Direct human request: domain curators for all contexts, resolve Other110 classification and web loading/tools; explicit PR77 closed release answer call_0da0a59e8f55443493939bde9c87a080",
     "executor": "codex-native",
     "max_concurrent_slots": 4,
     "processing": false,
     "real_deletion": false,
-    "live_google_mutations": "Reviewed finite derived saved-catalogue curation and necessary closed web/three-stage images only. New IAM/resource creation requires exact review/authorization if necessary.",
-    "merge_deploy": "Necessary coherent reviewed product publication within human implement-and-verify-web instruction; no newReels/queue resume.",
+    "live_google_mutations": "None for developers/reviewer or this implementation packet. Only root separately approved exact PR77 closed publication; no new provider/job/policy/IAM/queue operation inferred.",
+    "merge_deploy": "PR77 exact fd5b9e explicit owner approval exists separately; this new coherent domain/UI change still requires exact final review/authorization before merge/deploy.",
     "ci_authorization": "Only GitHubActions tests/build/preparation/rehearsal. Real runtime semantic operation over saved499 distinct from testing, under finite reviewed package. No raw video/STT/provider replay.",
     "ownership": {
-      "developer_backend": "alignment_backend: semantic service/provider/store/API/live worker catalogue/tests",
-      "developer_frontend": "alignment_frontend: category UX/library navigation/browser tests only",
-      "root": "single integration branch/CI/saved source fixture transport/ops/packet/docs/deploy/rootstate",
-      "review": "fresh native independent reviewer, no implementation"
+      "developer_backend": "alignment_backend: new domain/size planning modules, semantic runtime opt-in newjobs, source/provider/API integration and pure backend tests",
+      "developer_frontend": "alignment_frontend: app/reels category/semantic/library UX, web tests and browser QA; communicate fixture contracts with backend",
+      "root": "single integration branch, packet/docs/Dockerfile/workflow, saved private artifact wiring, deployment and official state",
+      "review": "read-only independent exact code/tests/proof review"
     },
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
     "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies.",
-    "canonical_revision": 320,
-    "paid_scope": "Implement semantic provider over existing saved text; no provider execution by developers. Root will seal precise finite source/model/call limits and check current authorization before any inference. Existing blanket provider prohibition otherwise preserved."
+    "canonical_revision": 360,
+    "paid_scope": "No provider execution in this implementation. New domain contract authorization is separate; do not mutate or replay the historical saved499 job."
   }
 }

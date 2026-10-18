@@ -54,13 +54,15 @@ export class ReelsContextualCurator{
   try{return await this.pending;}finally{this.pending=null;}
  }
  async matchingIds(query={}){
-  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),entries=normalized.impossible?[]:snapshot.entries.filter(e=>!normalized.virtual||!e.curation?.manual);
+  const {curationDomainId,...plain}=query;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId)??(()=>{throw bad();})());query=plain;
+  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),entries=normalized.impossible?[]:snapshot.entries.filter(e=>(!domainIds||domainIds.has(e.id))&&(!normalized.virtual||!e.curation?.manual));
   return {ids:filterContextualEntries(entries,normalized.query,snapshot.nodes).map(e=>e.id),observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,stale:snapshot.sourceStale};
  }
  async overview(input={}){
-  const query=parseContextualQuery(input),limit=Number(input.limit??40);
+  const {curationDomainId,...plain}=input;const domainIds=curationDomainId===undefined?null:new Set(await this.repository.semanticDomains?.matchingIds(curationDomainId)??(()=>{throw bad();})());
+  const query=parseContextualQuery(plain),limit=Number(input.limit??40);
   if(!Number.isInteger(limit)||limit<1||limit>100)throw bad();
-  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),eligible=normalized.impossible?[]:snapshot.entries.filter(e=>!normalized.virtual||!e.curation?.manual),index=buildContextualIndex(eligible,{nodes:snapshot.nodes,query:normalized.query}),entries=index.entries.slice().sort((a,b)=>a.id.localeCompare(b.id)),queryHash=contextualHash(query);
+  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),eligible=normalized.impossible?[]:snapshot.entries.filter(e=>(!domainIds||domainIds.has(e.id))&&(!normalized.virtual||!e.curation?.manual)),index=buildContextualIndex(eligible,{nodes:snapshot.nodes,query:normalized.query}),entries=index.entries.slice().sort((a,b)=>a.id.localeCompare(b.id)),queryHash=contextualHash({query,curationDomainId:curationDomainId??null});
   let offset=0;
   if(input.cursor){
    let c;try{c=JSON.parse(Buffer.from(input.cursor,'base64url').toString());}catch{throw bad();}
@@ -68,7 +70,7 @@ export class ReelsContextualCurator{
   }
   const page=entries.slice(offset,offset+limit),nextCursor=offset+limit<entries.length?Buffer.from(JSON.stringify({queryHash,versionHash:snapshot.versionHash,offset:offset+limit})).toString('base64url'):null;
   const {entries:unused,...summary}=index;
-  return {...summary,observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,sourceStale:snapshot.sourceStale,cache:{ttlMs:this.cacheTtlMs,readOnly:true},acceptedInventory:snapshot.acceptedInventory,missingAcceptedSource:snapshot.missingAcceptedSource,items:page.map(contextualListItem),nextCursor,automaticCreationEnabled:false,processingStarted:false,coverageNote:'Suporte identifica atributo sustentado na fonte publicada; não é verificação externa do fato. Ausência de campo não significa ausência no vídeo.'};
+  return {...summary,observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,sourceStale:snapshot.sourceStale,cache:{ttlMs:this.cacheTtlMs,readOnly:true},acceptedInventory:domainIds?domainIds.size:snapshot.acceptedInventory,missingAcceptedSource:domainIds?Math.max(0,domainIds.size-snapshot.entries.filter(e=>domainIds.has(e.id)).length):snapshot.missingAcceptedSource,domainFilterApplied:!!domainIds,items:page.map(contextualListItem),nextCursor,automaticCreationEnabled:false,processingStarted:false,coverageNote:'Suporte identifica atributo sustentado na fonte publicada; não é verificação externa do fato. Ausência de campo não significa ausência no vídeo.'};
  }
  async detail(id){
   if(!reelIdPattern.test(id??''))throw bad();

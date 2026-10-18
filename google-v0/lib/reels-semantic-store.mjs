@@ -1,7 +1,7 @@
 import {isDeepStrictEqual} from 'node:util';
 import {encodeFields} from './firestore.mjs';
 const allowedWrite=p=>/^reels_index\/semantic_[A-Za-z0-9_-]{1,110}$/.test(p);
-const allowedRead=p=>allowedWrite(p)||/^(?:videos|reels_legacy_content)\/[A-Za-z0-9_-]{5,32}$/.test(p)||/^reels_index\/contextual_review_[A-Za-z0-9_-]{5,32}$/.test(p)||/^reels_quality_receipts\/quality_[a-f0-9]{64}$/.test(p)||['settings/reels_v2_taxonomy','settings/reels_v2_semantic_policy','settings/reels_v2_contextual_catalogue'].includes(p);
+const allowedRead=p=>allowedWrite(p)||/^(?:videos|reels_legacy_content)\/[A-Za-z0-9_-]{5,32}$/.test(p)||/^reels_index\/contextual_review_[A-Za-z0-9_-]{5,32}$/.test(p)||/^reels_quality_receipts\/quality_[a-f0-9]{64}$/.test(p)||['settings/reels_v2_taxonomy','settings/reels_v2_semantic_policy','settings/reels_v2_contextual_catalogue','settings/reels_v2_semantic_domain_plan'].includes(p);
 export async function commitSemanticStore(store,{checks,writes}){
  if(!Array.isArray(checks)||!checks.length||checks.length>1024||!Array.isArray(writes)||!writes.length||writes.length>160)throw Error('Transação semântica fora do limite.');
  const expected=new Map();for(const c of checks){if(!allowedRead(c.path)||expected.has(c.path)||c.updateTime!==null&&(typeof c.updateTime!=='string'||!c.updateTime||c.updateTime.length>100))throw Error('Precondição semântica inválida.');expected.set(c.path,c.updateTime);}

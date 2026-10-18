@@ -60,10 +60,25 @@ The provider transport uses the versioned flat schema. Types, finite IDs and enu
 
 Verification eligibility is computed from the same current memberships and negative examples used by normal verification. An empty eligible range receives a `semantic_no_targets` receipt with `semanticVerified: false`, source and group epochs, and zero calls. Job, policy, ledger, source, existing group and exclusive-coordinator checks are committed together. The coordinator enforces the existing single-writer protocol; this is not a collection transaction against arbitrary external database writers. `verificationProcessed` records ranges traversed for compatibility; `verificationSkippedSources` and `verificationTargetDecisions` distinguish skipped sources from actual decisions.
 
-## Finite corrective owner operation
+## Historical finite corrective owner operation
 
 A rejected-attempt preparation receipt cannot execute work. The separate owner capability is restricted to the recorded incident, original cohort, policy, source epochs and approved prompt. It preserves the old intent and consumed counter; a corrective submission receives a new attempt identity and consumes the third attempt. It then stops at the exact 16-source/3-attempt checkpoint. The original normal 16/2 checkpoint remains separate. No browser request may manufacture this capability or supply its own approval actor.
 
 The owner client has `prepare` and `apply` modes. Preparation reads current metadata and emits a bounded review request. Application requires pinned packet, deployment, approval and independent-review files, verifies the private owner account, refreshes the same protected conditions and attempts one three-write transaction. An ambiguous acknowledgement permits one readback and no commit retry. It cannot call inference, storage media, worker endpoints or mutate queues. Queue delivery remains a separate explicitly authorized operation.
 
 Builds, contract checks, rehearsal and HTTP/browser fixtures run in GitHub Actions. The owner source archive contains tracked application libraries and the operator only, without Reel inputs, runtime credentials or temporary historical provider copies. Live release and any corrective inference still require their explicit authorization and the real quality checkpoint; synthetic completion does not certify the published collection.
+
+
+## Domain curation of saved publications
+
+Domain profiles specialize interpretation for Food, Technology, Health, Work, Home, Travel and unresolved destinations while sharing one versioned contextual catalogue. A routing hint from an existing category is not a newly certified semantic classification. Unresolved destinations retain their original analysis and show source/acceptance gaps or supported destination suggestions; an isolated ingredient does not become a category.
+
+The read-only domain view and manual editorial controls render independently of category-tree loading. Ordinary editable categories, semantic groups and virtual format views expose different capabilities. Navigating or refreshing never starts inference. Domain filters apply before pagination and to both facet queries.
+
+New domain execution is opt-in and needs a source-bound manifest and an independently reviewed owner authority. The legacy job and its uncertain attempt remain preserved. A versioned quarantine must prevent old deliveries from submitting again before a different authorized job can acquire the global coordinator. Previously applied sources and protected uncertain sources are excluded from new extraction. The global authorization pool includes historical attempts; its ceiling is shared rather than multiplied by the number of profiles.
+
+Request planning measures the complete serialized body including instructions, response schema, catalogue and source text. Byte counts are exact; the conservative token proxy is explicitly an estimate, not CountTokens or provider usage. Oversized sources and insufficient authorization are reported instead of silently dropping evidence. The model reference currently documents a 1,048,576-token context window for Gemini 3.5 Flash; a request size in bytes alone does not establish that the historical400 was a context overflow. See [model reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-5-flash) and [structured output considerations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/control-generated-output).
+
+GitHub Actions is the only product test/build/rehearsal environment. Saved-source domain measurements, synthetic runtime tests and browser journeys validate preservation and orchestration; they do not certify live Gemini acceptance, semantic precision or actual reclassification of the current archive.
+
+The prior corrective-owner packet is historical and is not a domain activation capability. The domain manifest, quarantine authority and shared pool require their own exact review; installing this code or opening a domain never installs that authority.

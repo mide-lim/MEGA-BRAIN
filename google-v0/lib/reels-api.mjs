@@ -1,3 +1,4 @@
+import {ReelsSemanticDomains} from './reels-semantic-domain-service.mjs';
 import {ReelsSemanticCurator} from './reels-semantic-curator.mjs';
 import {ReelsCatalogueRuntime,catalogueManifestActive,catalogueManifestPath} from './reels-contextual-catalogue-runtime.mjs';
 import {ReelsService} from './reels-service.mjs';
@@ -14,6 +15,7 @@ function query(url){const result=Object.fromEntries(url.searchParams);if(result.
 export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued,contextual,semantic,onSemanticQueued,service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued}),reconciliation=new ReelsReconciliation({repository,processingEnabled,clock})}){
  const taxonomy=new ReelsTaxonomy({repository,clock}),finance=new ReelsFinance({repository,clock});
  let semanticCurator=semantic;const getSemantic=()=>semanticCurator??=new ReelsSemanticCurator({repository,clock,enqueue:onSemanticQueued});
+ let domains;const getDomains=()=>domains??=new ReelsSemanticDomains({repository,semantic:getSemantic(),clock});
  let catalogue;
  const getCatalogue=()=>catalogue??=new ReelsCatalogueRuntime({repository,clock});
  let contextualCurator=contextual;
@@ -25,12 +27,14 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
  return async function handle(request){
   try{
    if(!await authorize(request))return response({error:'Não autorizado.',code:'UNAUTHORIZED'},401);
-   if(typeof repository.contextualContributions==='function'){getCatalogue();getSemantic();}
+   if(typeof repository.contextualContributions==='function'){getCatalogue();getSemantic();getDomains();}
    const url=new URL(request.url);if(!url.pathname.startsWith('/api/reels/'))throw fail('NOT_FOUND','Rota não encontrada.',404);const path=url.pathname.slice('/api/reels/'.length),parts=path.split('/');
    if(!['GET','POST'].includes(request.method))throw fail('METHOD_NOT_ALLOWED','Método não permitido.',405);
    if(request.method==='POST'&&!await sameOrigin(request))throw fail('ORIGIN_REJECTED','Origem não autorizada.',403);
    if(request.method==='GET'){
     const q=query(url);
+    if(parts.length===5&&parts.slice(0,4).join('/')==='curation/semantic/domains/destinations')return response(await getDomains().destination(parts[4]));
+    if(path==='curation/semantic/domains')return response(await getDomains().overview());
     if(path==='curation/semantic')return response(await getSemantic().overview());
     if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='jobs'&&parts.length===4)return response(await getSemantic().job(parts[3]));
     if(parts[0]==='curation'&&parts[1]==='semantic'&&parts[2]==='groups'&&parts.length===4)return response(await getSemantic().detail(parts[3],{memberId:url.searchParams.get('memberId')}));
@@ -52,6 +56,7 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(parts[0]==='commands'&&parts.length===2)return response(await service.operation(decodeURIComponent(parts[1])));
     if(parts[0]==='reconciliations'&&parts.length===2)return response(await reconciliation.inspect(decodeURIComponent(parts[1])));
    }else{const input=await body(request);
+    if(path==='curation/semantic/domains')return response(await getDomains().command(input));
     if(path==='curation/semantic')return response(await getSemantic().command(input));
     if(path==='curation/catalogue'){
      if(input.action!=='reconcile'||!Array.isArray(input.reelIds)||!input.reelIds.length||input.reelIds.length>25||Object.keys(input).some(k=>!['action','reelIds'].includes(k))||input.reelIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{5,32}$/.test(id)))throw fail('INVALID_CATALOGUE_RECOVERY','Identifique até25publicações para retomar somente o índice.');

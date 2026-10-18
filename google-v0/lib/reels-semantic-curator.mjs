@@ -13,7 +13,7 @@ const jobPath=id=>'reels_index/semantic_job_'+id;
 const resultPath=id=>'reels_index/semantic_result_'+id;
 const validHash=id=>/^[a-f0-9]{64}$/.test(id??'');
 const sourceCurrent=(a,b)=>semanticHash(a??{})===semanticHash(b??{});
-const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0});
+const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0,proposalOverflowCount:list(j.proposalOverflow).length,coverageLimit:j.coverageLimit??null});
 export class ReelsSemanticCurator{
  constructor({repository,provider=null,enqueue=null,clock=Date.now,leaseMs=180000}){
   if(!repository?.store)throw Error('Curador semântico exige repositório.');
@@ -188,7 +188,7 @@ export class ReelsSemanticCurator{
   return {groups,sourceStale:stale,inventory:inv,taxonomySnapshot,observedAt:this.now(),dataAsOf:groups.map(g=>g.updatedAt).filter(Boolean).sort()[0]??this.now()};
  }
  async overview(){
-  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
+  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
   const current=profiles.filter(p=>sourceCurrent(p.data.sourceVersions,state.inventory.sourceVersions.get(p.data.reelId))),unknown=current.filter(p=>p.data.state!=='proposed').length;
   let preview;try{preview=await this.preview({all:true});}catch{preview={preview:{blockingReasons:['SAVED_INVENTORY_UNAVAILABLE']}};}
   const view=g=>({...g,members:undefined,negativeExamples:undefined,verification:g.verification?{status:g.verification.status,authorModel:g.verification.authorModel,verifierModel:g.verification.verifierModel}:null});
@@ -201,7 +201,7 @@ export class ReelsSemanticCurator{
   const ids=new Set([id]);if(!facet){let changed=true;while(changed){changed=false;for(const g of state.groups)if(g.status==='active'&&!['facet','format'].includes(g.kind)&&(ids.has(g.parentId)||ids.has(String(g.parentId).replace(/^semantic_/,'')))&&!ids.has(g.id)){ids.add(g.id);changed=true;}}}
   return [...new Set(state.groups.filter(g=>ids.has(g.id)&&g.status==='active').flatMap(g=>g.members.map(m=>m.id)))];
  }
- async categoryIds(categoryId,state=null){state??=await this.freshGroups();const parents=new Set([categoryId]),groups=new Set();let changed=true;while(changed){changed=false;for(const g of state.groups)if(g.status==='active'&&!['facet','format'].includes(g.kind)&&(parents.has(g.parentId)||parents.has('semantic_'+g.parentId))&&!groups.has(g.id)){groups.add(g.id);parents.add('semantic_'+g.id);changed=true;}}return [...new Set(state.groups.filter(g=>groups.has(g.id)).flatMap(g=>g.members.map(m=>m.id)))];}
+ async categoryIds(categoryId,state=null){state??=await this.freshGroups();const parents=new Set([categoryId]),groups=new Set();let changed=true;while(changed){changed=false;for(const g of state.groups)if(g.status==='active'&&g.kind!=='facet'&&(parents.has(g.parentId)||parents.has('semantic_'+g.parentId))&&!groups.has(g.id)){groups.add(g.id);parents.add('semantic_'+g.id);changed=true;}}return [...new Set(state.groups.filter(g=>groups.has(g.id)).flatMap(g=>g.members.map(m=>m.id)))];}
  async formatIds(value,state=null){state??=await this.freshGroups();return [...new Set(state.groups.filter(g=>g.kind==='format'&&g.key===value&&g.status==='active').flatMap(g=>g.members.map(m=>m.id)))];}
  async nodes(state=null){state??=await this.freshGroups();const active=state.groups.filter(g=>g.status==='active'&&!['facet','format'].includes(g.kind));return Promise.all(active.map(async g=>({id:'semantic_'+g.id,name:g.name,parentId:validHash(g.parentId)?'semantic_'+g.parentId:g.parentId,count:(await this.matchingIds(g.id,{state})).length,directCount:g.memberCount,manual:g.manual===true,semantic:true,groupId:g.id})));}
  async command(input){

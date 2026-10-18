@@ -101,7 +101,9 @@ try {
 
  await record('two_curations_saved_publications_real_api_context_filters_and_unknown_units',async()=>{
   const writeCount=server.calls.filter(x=>['/api/reels/commands','/api/reels/categories'].includes(x.path)&&x.method==='POST').length;
-  const curate=await context.newPage();await curate.goto(server.origin);await navigate(curate,'Filas');
+  const curate=await context.newPage();
+  // Freeze Date.now (not timers) so cache reuse is deterministic even on a slow CI runner.
+  await curate.clock.setFixedTime(new Date('2026-10-18T12:00:00.000Z'));await curate.goto(server.origin);await navigate(curate,'Filas');
   const quality=curate.getByRole('region',{name:'Curadoria até o acervo',exact:true});
   const result=responseFor(curate,'/api/reels/quality',url=>url.searchParams.get('q')==='Receita publicada');
   await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).fill('Receita publicada');const qualityData=await (await result).json();
@@ -115,14 +117,16 @@ try {
   await navigate(curate,'Filas');assert.equal(await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).inputValue(),'Receita publicada');
   await navigate(curate,'Categorias');const contextPanel=curate.getByRole('region',{name:'Curadoria do acervo',exact:true});
   const library=responseFor(curate,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
-  await contextPanel.getByRole('button',{name:'Explorar ingrediente Frango neste recorte',exact:true}).click();const filtered=await (await library).json();
+  await contextPanel.getByRole('button',{name:'Explorar ingrediente Frango neste recorte',exact:true}).click();const libraryResponse=await library,filtered=await libraryResponse.json(),anyQuery=new URL(libraryResponse.url()).searchParams.toString(),anyReads=()=>server.calls.filter(call=>call.method==='GET'&&call.path==='/api/reels/items'&&new URLSearchParams(call.query).toString()===anyQuery).length;
   assert.equal(filtered.total,1);await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await curate.locator('.library-card').count(),1);
   const facetDetails=curate.locator('.contextual-library-filters');assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');
   const sameUnit=responseFor(curate,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('SAME_UNIT'));
   await facetDetails.getByLabel('Relação 1',{exact:true}).selectOption('SAME_UNIT');const unproven=await (await sameUnit).json();assert.equal(unproven.total,0,'Missing unit proof must not satisfy SAME_UNIT');
   await curate.getByText('Nenhum registro nesta seleção',{exact:true}).waitFor();
-  const any=responseFor(curate,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"quantifier":"ANY"'));await facetDetails.getByLabel('Relação 1',{exact:true}).selectOption('ANY');assert.equal((await (await any).json()).total,1);
-  await navigate(curate,'Financeiro');await navigate(curate,'Biblioteca');await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');
+  const beforeReuse=anyReads();await facetDetails.getByLabel('Relação 1',{exact:true}).selectOption('ANY');
+  await curate.locator('.catalog .pagination').filter({hasText:'1 resultados · página 1'}).waitFor();await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await curate.locator('.library-card').count(),1);assert.equal(await facetDetails.getByLabel('Relação 1',{exact:true}).inputValue(),'ANY');assert.equal(anyReads(),beforeReuse,'Returning to the same fresh ANY query must reuse its saved response');
+  await navigate(curate,'Financeiro');await navigate(curate,'Biblioteca');await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await curate.locator('.library-card').count(),1);assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');assert.equal(await facetDetails.getByLabel('Relação 1',{exact:true}).inputValue(),'ANY');assert.equal(anyReads(),beforeReuse,'Returning to the Library must restore its fresh filter without another identical GET');
+  const refreshed=responseFor(curate,'/api/reels/items',(url,response)=>response.request().method()==='GET'&&url.searchParams.toString()===anyQuery);await curate.getByRole('button',{name:'↻ Atualizar',exact:true}).click();const refreshedData=await (await refreshed).json();assert.equal(refreshedData.total,1);assert.deepEqual(refreshedData.items.map(item=>item.id),filtered.items.map(item=>item.id));await curate.locator('.catalog .pagination').filter({hasText:'1 resultados · página 1'}).waitFor();assert.equal(anyReads(),beforeReuse+1,'Explicit refresh must invalidate the fresh response and send one new GET');
   const clear=responseFor(curate,'/api/reels/items',url=>!url.searchParams.get('facets'));await facetDetails.getByRole('button',{name:'Limpar elementos',exact:true}).click();await clear;if(await facetDetails.getAttribute('open')===null)await facetDetails.locator('summary').first().click();
   const mentions=responseFor(curate,'/api/reels/contextual',url=>url.searchParams.get('facetMode')==='mentioned');await facetDetails.getByLabel('Papel dos elementos',{exact:true}).selectOption('mentioned');const mentionsData=await (await mentions).json();
   const fryer=mentionsData.facets.find(f=>f.dimensionId==='tool'&&f.valueId==='air-fryer');assert.ok(fryer,'Saved literal reference must be available as a mention');assert.equal(fryer.supportCount,0);assert.equal(fryer.mentionedCount,1);

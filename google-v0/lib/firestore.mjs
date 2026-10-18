@@ -105,8 +105,11 @@ export class Firestore {
   async compareAndReplaceDerived({path,replacement,checks}){
     const id=replacement?.reelId;
     if(!/^[A-Za-z0-9_-]{5,32}$/.test(id??'')||path!=='reels_index/contextual_'+id||replacement.kind!=='contextual_contribution'||!Array.isArray(checks))throw Error('Mutação fora do catálogo derivado.');
-    const expected=new Map();for(const c of checks){documentPath(c.path);if(expected.has(c.path)||c.updateTime!==null&&(typeof c.updateTime!=='string'||!c.updateTime))throw Error('Precondição derivada inválida.');expected.set(c.path,c.updateTime);}
-    for(const required of [path,'videos/'+id,'settings/reels_v2_taxonomy','reels_index/contextual_review_'+id])if(!expected.has(required))throw Error('Fonte editorial ou revisão sem precondição.');
+    const allowed=new Set([path,'videos/'+id,'reels_legacy_content/'+id,'settings/reels_v2_taxonomy','settings/reels_v2_contextual_catalogue','reels_index/contextual_review_'+id]);
+    if(checks.length>7)throw Error('Precondições derivadas excedem o escopo.');
+    const expected=new Map();for(const c of checks){documentPath(c.path);if(!allowed.has(c.path)&&!/^reels_quality_receipts\/quality_[a-f0-9]{64}$/.test(c.path))throw Error('Precondição fora da fonte contextual.');if(expected.has(c.path)||c.updateTime!==null&&(typeof c.updateTime!=='string'||!c.updateTime))throw Error('Precondição derivada inválida.');expected.set(c.path,c.updateTime);}
+    for(const required of [path,'videos/'+id,'settings/reels_v2_taxonomy','settings/reels_v2_contextual_catalogue','reels_index/contextual_review_'+id])if(!expected.has(required))throw Error('Fonte editorial ou revisão sem precondição.');
+    if(expected.get('videos/'+id)!==replacement.sourceVersions?.video||!expected.get('settings/reels_v2_contextual_catalogue'))throw Error('Fonte ou manifesto sem versão ativa.');
     if(replacement.sourceVersions?.legacy&&!expected.has('reels_legacy_content/'+id))throw Error('Fonte preservada sem precondição.');
     const prefix='projects/'+this.api.project+'/databases/(default)/documents/',begin=await this.api.request(this.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
     if(typeof transaction!=='string'||!transaction)throw Error('Transação derivada ausente.');

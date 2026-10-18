@@ -20,7 +20,16 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.19.0'
+      - name: Load pinned historical transport schemas for offline comparison
+        run: |
+          git fetch --no-tags origin 8150c85ad40f48c5cac50048f9b233506259068c 120293ac4286e04ef89980e394eb72619967b501
+          git show 8150c85ad40f48c5cac50048f9b233506259068c:google-v0/lib/reels-semantic-provider.mjs > google-v0/lib/semantic-provider-8150.mjs
+          git show 120293ac4286e04ef89980e394eb72619967b501:google-v0/lib/reels-semantic-provider.mjs > google-v0/lib/semantic-provider-120293.mjs
+          mkdir -p "$RUNNER_TEMP/semantic-curator-evidence"
       - name: Semantic contracts and final worker live catalogue with synthetic adapters
+        env:
+          SEMANTIC_SCHEMA_BASES_DIR: ${{ github.workspace }}/google-v0/lib
+          SEMANTIC_SCHEMA_METRICS_OUTPUT: ${{ runner.temp }}/semantic-curator-evidence/schema-complexity-comparison.json
         run: node --test google-v0/tests/reels-semantic*.test.mjs google-v0/tests/reels-live-catalogue.test.mjs
       - name: Select the finite saved499 evidence event
         id: finite
@@ -62,6 +71,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node ops/receive-semantic-recovery.mjs --source google-v0/config/semantic-source-recovery-input.json --output "$RUNNER_TEMP/semantic-paid-input.json"
+      - name: Reuse the historical receipt already stored in GitHub
+        if: steps.finite.outputs.recovery == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12126601621/zip" > "$RUNNER_TEMP/semantic-historical-main.zip"
+          echo "80c384b65b7b8e5a545cf0dd9784f7f132eb17df8ba21768a297e21857209873  $RUNNER_TEMP/semantic-historical-main.zip" | sha256sum -c -
+          unzip -p "$RUNNER_TEMP/semantic-historical-main.zip" source-recovery-receipt.json > "$RUNNER_TEMP/semantic-historical-receipt.json"
+          echo "6309285396cf4951336089605dd94e6fe88f2439641c9ba4984fd5ef88d6f770  $RUNNER_TEMP/semantic-historical-receipt.json" | sha256sum -c -
+      - name: Check historical provenance and finite recovery contract offline
+        if: steps.finite.outputs.recovery == 'true'
+        env:
+          SEMANTIC_HISTORICAL_RECOVERY_RECEIPT: ${{ runner.temp }}/semantic-historical-receipt.json
+          SEMANTIC_HISTORICAL_RECOVERY_SOURCE: ${{ runner.temp }}/semantic-saved-source.json
+          SEMANTIC_REJECTED_RECOVERY_INPUT: ${{ runner.temp }}/semantic-paid-input.json
+        run: node --test google-v0/tests/reels-semantic-historical-source-proof.test.mjs google-v0/tests/reels-semantic-rejected-attempt-recovery.test.mjs
       - name: Rehearse source projection and exact saved-response recovery
         if: steps.finite.outputs.recovery == 'true'
         run: node google-v0/scripts/prepare-semantic-source-recovery.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"

@@ -1,11 +1,12 @@
 import {createHash} from 'node:crypto';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
-import {join} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {join,resolve} from 'node:path';
+import {pathToFileURL,fileURLToPath} from 'node:url';
 import {decodeFields} from '../lib/firestore.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 import {ReelsCatalogueRuntime} from '../lib/reels-contextual-catalogue-runtime.mjs';
-import {ReelsSemanticProvider,semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
+import * as currentProvider from '../lib/reels-semantic-provider.mjs';
+const {ReelsSemanticProvider,semanticPromptHash}=currentProvider;
 import {semanticHash,semanticPolicyVersion,semanticSourceFromSaved} from '../lib/reels-semantic-source.mjs';
 import {memoryReelsStore} from '../qa/reels-fixture.mjs';
 
@@ -48,13 +49,14 @@ export function measureSemanticSchema(schema){
 
 // This function only reads supplied immutable files and captures the current
 // adapter request with an in-memory transport. It has no Google client or token.
-export async function prepareSemanticNextInputAudit(input,paid,{expected=payloadAuditScope}={}){
+export async function prepareSemanticNextInputAudit(input,paid,{expected=payloadAuditScope,historicalProvider=null}={}){
+ const Provider=historicalProvider?.ReelsSemanticProvider??ReelsSemanticProvider,adapterPromptHash=historicalProvider?.semanticPromptHash??semanticPromptHash;
  const observation=input?.observation;
  requireValue(input?.schemaVersion===1&&observation?.readOnly===true&&observation.providerCalls===0&&observation.writes===0,'SOURCE_HEADER_INVALID');
  requireValue(input.sourceObservationSHA256===expected.sourceObservationSHA256,'SOURCE_OBSERVATION_CHANGED');
  requireValue([1,2].includes(paid?.schemaVersion)&&paid.kind==='saved_semantic_first_response_reconciliation_input'&&paid.readOnly===true&&paid.providerCalls===0&&paid.writes===0&&paid.sourceObservationSHA256===expected.sourceObservationSHA256,'PAID_HEADER_INVALID');
  requireValue(Array.isArray(observation.records)&&observation.records.length===expected.sourceDocuments,'SOURCE_COUNT_CHANGED');
- requireValue(semanticPromptHash===expected.promptHash,'CURRENT_PROMPT_CHANGED');
+ requireValue(adapterPromptHash===expected.promptHash,'CURRENT_PROMPT_CHANGED');
  const sourcePaths=new Set(),store=memoryReelsStore();
  for(const row of observation.records){
   requireValue(typeof row.path==='string'&&/^(videos|reels_legacy_content)\/[A-Za-z0-9_-]+$/.test(row.path)&&!sourcePaths.has(row.path)&&typeof row.updateTime==='string','SOURCE_RECORD_INVALID');
@@ -90,29 +92,53 @@ export async function prepareSemanticNextInputAudit(input,paid,{expected=payload
   requireValue(loaded?.item?.publication?.available===true&&same(pin.sourceVersions,loaded.sourceVersions),'NEXT_SOURCE_VERSION_CHANGED');
   const source=semanticSourceFromSaved(loaded);requireValue(source.id===pin.id,'NEXT_SOURCE_ID_CHANGED');sources.push(source);
  }
- const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:[]};
+ const catalogue={version:semanticPolicyVersion,promptHash:adapterPromptHash,groups:[]};
  requireValue(semanticHash(catalogue)===expected.catalogueHash,'OBSERVED_CATALOGUE_HASH_CHANGED');
- const binding={jobId:job.id,phase:'extract',cursor:expected.offset,pins:sources.map(source=>({id:source.id,sourceProjectionVersion:source.sourceProjectionVersion,semanticProofHash:source.semanticProofHash,sourceVersions:source.sourceVersions,editorialHash:source.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:semanticPromptHash,promptTransitionHash:expected.promptTransitionHash};
+ const binding={jobId:job.id,phase:'extract',cursor:expected.offset,pins:sources.map(source=>({id:source.id,sourceProjectionVersion:source.sourceProjectionVersion,semanticProofHash:source.semanticProofHash,sourceVersions:source.sourceVersions,editorialHash:source.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:adapterPromptHash,promptTransitionHash:expected.promptTransitionHash};
  requireValue(semanticHash(binding)===expected.bindingHash,'OBSERVED_NEXT_BINDING_CHANGED');
  let captured=null,captures=0;
- const provider=new ReelsSemanticProvider({api:{project:'megabrain-v0-1017370021431',async request(_url,options){requireValue(captures++===0&&options.method==='POST'&&options.attempt===1,'AUDIT_CAPTURE_SCOPE_INVALID');captured=structuredClone(options.json);return {candidates:[]};}}});
+ const provider=new Provider({api:{project:'megabrain-v0-1017370021431',async request(_url,options){requireValue(captures++===0&&options.method==='POST'&&options.attempt===1,'AUDIT_CAPTURE_SCOPE_INVALID');captured=structuredClone(options.json);return {candidates:[]};}}});
  const envelope=await provider.infer({sources,catalogue,requestId,model:job.policy.model});requireValue(captures===1&&captured,'EXACT_ONE_OFFLINE_CAPTURE_REQUIRED');
  requireValue(before===semanticHash([...store.docs]),'DIAGNOSTIC_MUTATED_MEMORY_SOURCES');
  const metrics=measureSemanticSchema(captured.generationConfig.responseSchema);
  requireValue(metrics.unsupportedKeywords.length===0,'UNSUPPORTED_SCHEMA_KEYWORD');
  const contents=JSON.parse(captured.contents[0].parts[0].text);
  requireValue(contents.phase==='extract'&&contents.requestId===requestId&&contents.sources.length===expected.batchSize&&contents.catalogue.groups.length===0,'CAPTURE_PAYLOAD_CHANGED');
- const report={schemaVersion:1,kind:'semantic_next_input_metadata_audit',sourceCommit:expected.sourceCommit,diagnosticCommit:process.env.GITHUB_SHA??null,sourceObservationSHA256:expected.sourceObservationSHA256,jobId:job.id,offset:expected.offset,sourceIds:pins.map(pin=>pin.id),sourceVersionsUnchanged:true,sourceMemoryUnchanged:true,cohortHash:job.cohortHash,promptHash:semanticPromptHash,bindingHash:semanticHash(binding),catalogueHash:semanticHash(catalogue),promptTransitionHash:expected.promptTransitionHash,requestId,requestHash:envelope.requestHash,generationConfigHash:semanticHash(captured.generationConfig),schemaHash:semanticHash(captured.generationConfig.responseSchema),wireBodySHA256:sha(JSON.stringify(captured)),model:job.policy.model,catalogueGroups:0,adapterRequestsCaptured:1,actualProviderCalls:0,googleWrites:0,networkRequests:0,inferenceExecuted:false,paidResponseReplayed:false,bytes:{schema:bytes(captured.generationConfig.responseSchema),systemInstruction:bytes(captured.systemInstruction),contents:bytes(captured.contents),request:bytes(captured),payload:bytes({sources,catalogue})},schema:metrics,sources:sources.map(source=>({id:source.id,semanticProofHash:source.semanticProofHash,fieldCount:source.fields.length,truncated:source.truncated})),remoteAcceptanceProven:false,incidentCauseEstablished:false,retryAuthorized:false,limitations:['Offline request reconstruction is not Vertex schema validation or inference.','Schema metrics have no published numeric acceptance threshold.','The second uncertain intent is preserved and is not repeated by this diagnostic.','Corpus text, quotations, headers, tokens and full request bodies are intentionally excluded.']};
+ const report={schemaVersion:1,kind:'semantic_next_input_metadata_audit',sourceCommit:expected.sourceCommit,diagnosticCommit:process.env.GITHUB_SHA??null,sourceObservationSHA256:expected.sourceObservationSHA256,jobId:job.id,offset:expected.offset,sourceIds:pins.map(pin=>pin.id),sourceVersionsUnchanged:true,sourceMemoryUnchanged:true,cohortHash:job.cohortHash,promptHash:adapterPromptHash,bindingHash:semanticHash(binding),catalogueHash:semanticHash(catalogue),promptTransitionHash:expected.promptTransitionHash,requestId,requestHash:envelope.requestHash,generationConfigHash:semanticHash(captured.generationConfig),schemaHash:semanticHash(captured.generationConfig.responseSchema),wireBodySHA256:sha(JSON.stringify(captured)),model:job.policy.model,catalogueGroups:0,adapterRequestsCaptured:1,actualProviderCalls:0,googleWrites:0,networkRequests:0,inferenceExecuted:false,paidResponseReplayed:false,bytes:{schema:bytes(captured.generationConfig.responseSchema),systemInstruction:bytes(captured.systemInstruction),contents:bytes(captured.contents),request:bytes(captured),payload:bytes({sources,catalogue})},schema:metrics,sources:sources.map(source=>({id:source.id,semanticProofHash:source.semanticProofHash,fieldCount:source.fields.length,truncated:source.truncated})),remoteAcceptanceProven:false,incidentCauseEstablished:false,retryAuthorized:false,limitations:['Offline request reconstruction is not Vertex schema validation or inference.','Schema metrics have no published numeric acceptance threshold.','The second uncertain intent is preserved and is not repeated by this diagnostic.','Corpus text, quotations, headers, tokens and full request bodies are intentionally excluded.']};
  const generationConfig=structuredClone(captured.generationConfig);
  const probe={schemaVersion:1,kind:'optional_count_tokens_schema_probe',operation:'countTokens',target:{project:'megabrain-v0-1017370021431',location:'global',publisher:'google',model:job.policy.model,method:'countTokens'},maximumManualRequests:1,automaticRetries:0,executor:'root_reviewed_owner_only',model:job.policy.model,sourceCommit:expected.sourceCommit,diagnosticCommit:process.env.GITHUB_SHA??null,sourceObservationSHA256:expected.sourceObservationSHA256,sourceBindingHash:report.bindingHash,originalAdapterRequestHash:report.requestHash,generationConfigHash:report.generationConfigHash,schemaHash:report.schemaHash,request:{contents:[{role:'user',parts:[{text:'Technical schema probe. No Reel content.'}]}],generationConfig},finiteReelIdsPresentOnlyAsSchemaMetadata:true,sourceTextIncluded:false,sourceIdsInContents:false,inferenceRequested:false,generatedContent:0,providerCallsExecuted:0,googleRequestsExecuted:0,approvedForExecution:false,remoteGenerateContentAcceptanceProven:false,limitations:['CountTokens receives the exact generationConfig but none of the original system instruction or source text.','Counting tokens does not prove GenerateContent acceptance, diagnose the parameter behind HTTP400, measure semantic accuracy or authorize replay.','No call is executed by this packet or its preparation. Owner review is required before any separate Google request.']};
- probe.requestBodyJSON=JSON.stringify(probe.request);probe.requestBodySHA256=sha(probe.requestBodyJSON);probe.packetHash=semanticHash(probe);return {report,probe};
+ probe.requestBodyJSON=JSON.stringify(probe.request);probe.requestBodySHA256=sha(probe.requestBodyJSON);probe.packetHash=semanticHash(probe);
+ let candidateReport=null;
+ if(adapterPromptHash!==semanticPromptHash){
+  requireValue(currentProvider.semanticWireSchemaVersion==='semantic-wire-flat-v1','CANDIDATE_WIRE_VERSION_CHANGED');
+  let candidateBody=null,candidateCaptures=0;
+  const candidateCatalogue={...catalogue,promptHash:semanticPromptHash};
+  const candidateProvider=new ReelsSemanticProvider({api:{project:'megabrain-v0-1017370021431',async request(_url,options){requireValue(candidateCaptures++===0&&options.method==='POST'&&options.attempt===1,'CANDIDATE_CAPTURE_SCOPE_INVALID');candidateBody=structuredClone(options.json);return {candidates:[]};}}});
+  const candidateEnvelope=await candidateProvider.infer({sources,catalogue:candidateCatalogue,requestId,model:job.policy.model});
+  requireValue(candidateCaptures===1&&candidateBody&&before===semanticHash([...store.docs]),'CANDIDATE_CAPTURE_OR_SOURCE_CHANGED');
+  candidateReport={schemaVersion:1,kind:'semantic_current_candidate_metadata_audit',historicalReconstruction:false,historicalPromptHash:adapterPromptHash,historicalBindingHash:report.bindingHash,historicalRequestHash:report.requestHash,candidatePromptHash:semanticPromptHash,candidateWireVersion:currentProvider.semanticWireSchemaVersion??null,candidateCatalogueHash:semanticHash(candidateCatalogue),candidateSchemaHash:semanticHash(candidateBody.generationConfig.responseSchema),candidateRequestHash:candidateEnvelope.requestHash,candidateGenerationConfigHash:semanticHash(candidateBody.generationConfig),sourceIds:report.sourceIds,sourceVersionsUnchanged:true,sourceMemoryUnchanged:true,bytes:{schema:bytes(candidateBody.generationConfig.responseSchema),systemInstruction:bytes(candidateBody.systemInstruction),contents:bytes(candidateBody.contents),request:bytes(candidateBody)},schema:measureSemanticSchema(candidateBody.generationConfig.responseSchema),adapterRequestsCaptured:1,actualProviderCalls:0,networkRequests:0,googleWrites:0,inferenceExecuted:false,remoteAcceptanceProven:false,retryAuthorized:false,limitations:['This is an offline current-code candidate, not the request sent by the historical intent.','The original observed binding and prompt remain unchanged in the separate historical report.','No GenerateContent acceptance, incident cause, billing or execution permission is established.']};
+ }
+ return {report,probe,candidateReport};
 }
 export async function diagnoseSemanticNextInput(input,paid,options){return (await prepareSemanticNextInputAudit(input,paid,options)).report;}
+export async function loadPinnedHistoricalSemanticProvider(directory){
+ requireValue(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REPOSITORY==='mide-lim/MEGA-BRAIN','CENTRAL_GITHUB_ACTIONS_REQUIRED');
+ const libDirectory=fileURLToPath(new URL('../lib/',import.meta.url));
+ requireValue(typeof directory==='string'&&resolve(directory)===resolve(libDirectory),'PINNED_PROVIDER_DIRECTORY_INVALID');
+ const path=join(directory,'semantic-provider-120293.mjs'),content=await readFile(path);
+ const gitBlobHash=createHash('sha1').update(Buffer.concat([Buffer.from('blob '+content.length+'\0'),content])).digest('hex');
+ requireValue(gitBlobHash==='c91859a229dcb7ad75316e326f952b596f81adda','PINNED_HISTORICAL_PROVIDER_CHANGED');
+ const historical=await import(pathToFileURL(path).href);
+ requireValue(historical.semanticPromptHash===payloadAuditScope.promptHash&&typeof historical.ReelsSemanticProvider==='function','PINNED_HISTORICAL_PROMPT_CHANGED');
+ return historical;
+}
 async function main(){
  requireValue(process.env.GITHUB_ACTIONS==='true'&&process.env.GITHUB_REPOSITORY==='mide-lim/MEGA-BRAIN','CENTRAL_GITHUB_ACTIONS_REQUIRED');
  const args=process.argv.slice(2);requireValue(args.length===6&&args[0]==='--input'&&args[2]==='--paid-input'&&args[4]==='--output-dir','EXPLICIT_DIAGNOSTIC_PATHS_REQUIRED');
  const [sourceText,paidText]=await Promise.all([readFile(args[1],'utf8'),readFile(args[3],'utf8')]);requireValue(sha(paidText)===payloadAuditScope.paidInputSHA256,'SEALED_PAID_INPUT_CHANGED');
- const {report,probe}=await prepareSemanticNextInputAudit(JSON.parse(sourceText),JSON.parse(paidText));await mkdir(args[5],{recursive:true});await writeFile(join(args[5],'next-input-payload-audit.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});await writeFile(join(args[5],'schema-only-count-tokens-probe.json'),JSON.stringify(probe,null,2)+'\n',{flag:'wx'});
- console.log(JSON.stringify({ready:true,sourceCount:report.sourceIds.length,requestHash:report.requestHash,requestBytes:report.bytes.request,schemaBytes:report.bytes.schema,actualProviderCalls:0,googleWrites:0,remoteAcceptanceProven:false,retryAuthorized:false}));
+ const historicalProvider=await loadPinnedHistoricalSemanticProvider(process.env.SEMANTIC_SCHEMA_BASES_DIR);
+ const {report,probe,candidateReport}=await prepareSemanticNextInputAudit(JSON.parse(sourceText),JSON.parse(paidText),{historicalProvider});await mkdir(args[5],{recursive:true});await writeFile(join(args[5],'next-input-payload-audit.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});await writeFile(join(args[5],'schema-only-count-tokens-probe.json'),JSON.stringify(probe,null,2)+'\n',{flag:'wx'});
+ if(candidateReport)await writeFile(join(args[5],'current-candidate-payload-audit.json'),JSON.stringify(candidateReport,null,2)+'\n',{flag:'wx'});
+ console.log(JSON.stringify({ready:true,candidateCaptured:Boolean(candidateReport),sourceCount:report.sourceIds.length,requestHash:report.requestHash,requestBytes:report.bytes.request,schemaBytes:report.bytes.schema,actualProviderCalls:0,googleWrites:0,remoteAcceptanceProven:false,retryAuthorized:false}));
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)try{await main();}catch(error){console.error(JSON.stringify({code:/^[A-Z0-9_]{1,96}$/.test(error.code??'')?error.code:'PAYLOAD_AUDIT_FAILED',actualProviderCalls:0,googleWrites:0,rawIncluded:false}));process.exitCode=1;}

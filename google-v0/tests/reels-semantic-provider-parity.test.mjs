@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ReelsSemanticProvider,semanticResponseSchema,semanticConsolidationSchema,semanticVerificationSchema,semanticSchemaForPhase,semanticInstruction,semanticConsolidationInstruction,semanticVerificationInstruction,semanticPromptVersion,semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
+import {ReelsSemanticProvider,semanticResponseSchema,semanticConsolidationSchema,semanticVerificationSchema,semanticSchemaForPhase,semanticInstruction,semanticConsolidationInstruction,semanticVerificationInstruction,semanticPromptVersion,semanticPromptHash,semanticWireSchemaVersion} from '../lib/reels-semantic-provider.mjs';
 import {semanticContractSpec as S} from '../lib/reels-semantic-contract-definition.mjs';
-import {validateSemanticOutput} from '../lib/reels-semantic-contract.mjs';
+import {validateSemanticOutput,validateSemanticVerificationEvidence} from '../lib/reels-semantic-contract.mjs';
 
 const clone=value=>structuredClone(value);
 const source=id=>({id,title:id,fields:[{fieldPath:'caption',source:'caption',sourceIdentity:'fixture-caption',text:'Preparo completo de frango. Preparo completo de peixe. '+ 'a'.repeat(1700)}],sourceIdentity:{kind:'native',reelId:id,analysisKey:'fixture/'+id,analysisGeneration:'1'},sourceVersions:{video:'2026-10-18T00:00:00Z'},semanticProofHash:'a'.repeat(64),editorial:{manual:false},editorialHash:'b'.repeat(64),truncated:false});
@@ -28,7 +28,7 @@ function schemaAccepts(schema,value){
  if(schema.type==='INTEGER')return Number.isInteger(value)&&(schema.minimum===undefined||value>=schema.minimum)&&(schema.maximum===undefined||value<=schema.maximum);
  return false;
 }
-const keywords=new Set(['type','enum','items','minimum','maximum','minItems','maxItems','nullable','properties','description','propertyOrdering','required','anyOf']);
+const keywords=new Set(['type','enum','items','nullable','properties','description','propertyOrdering','required']);
 function assertSupported(schema){
  for(const [key,value] of Object.entries(schema)){
   assert.ok(keywords.has(key),'Unsupported Vertex responseSchema keyword '+key);
@@ -50,39 +50,41 @@ test('actual adapter sends finite, supported, phase-specific schemas and shared 
   assert.deepEqual(request.generationConfig.responseSchema,semanticSchemaForPhase(phase,payload));
   assert.equal(request.systemInstruction.parts[0].text,[semanticInstruction,semanticConsolidationInstruction,semanticVerificationInstruction][index]);
   assertSupported(request.generationConfig.responseSchema);
-  assert.equal(request.generationConfig.responseSchema.properties.version.minimum,S.outputVersion);
-  assert.equal(request.generationConfig.responseSchema.properties.version.maximum,S.outputVersion);
+  assert.equal(request.generationConfig.responseSchema.properties.version.minimum,undefined);
+  assert.equal(request.generationConfig.responseSchema.properties.version.maximum,undefined);assert.match(request.generationConfig.responseSchema.properties.version.description,/1/);
  }
  const extract=requests[0].options.json.generationConfig.responseSchema,consolidate=requests[1].options.json.generationConfig.responseSchema,verify=requests[2].options.json.generationConfig.responseSchema;
- assert.equal(extract.properties.profiles.minItems,2);assert.equal(extract.properties.profiles.maxItems,2);
+ assert.equal(extract.properties.profiles.minItems,undefined);assert.equal(extract.properties.profiles.maxItems,undefined);assert.match(extract.properties.profiles.description,/Exatamente 2/);
  assert.deepEqual(extract.properties.profiles.items.properties.reelId.enum,sources.map(s=>s.id));
- assert.equal(consolidate.properties.resolutions.minItems,1);assert.equal(consolidate.properties.resolutions.maxItems,1);
- assert.equal(verify.properties.members.minItems,1);assert.equal(verify.properties.negativeExamples.maxItems,1);
- for(const branch of verify.properties.members.items.anyOf){assert.deepEqual(branch.properties.reelId.enum,[sources[0].id]);assert.deepEqual(branch.properties.groupId.enum,['fixture-group']);}
- for(const branch of verify.properties.negativeExamples.items.anyOf){assert.deepEqual(branch.properties.reelId.enum,[sources[1].id]);assert.deepEqual(branch.properties.groupId.enum,['negative-group']);}
+ assert.equal(consolidate.properties.resolutions.minItems,undefined);assert.equal(consolidate.properties.resolutions.maxItems,undefined);assert.match(consolidate.properties.resolutions.description,/Exatamente 1/);
+ assert.equal(verify.properties.members.minItems,undefined);assert.equal(verify.properties.negativeExamples.maxItems,undefined);
+ assert.deepEqual(verify.properties.members.items.properties.reelId.enum,[sources[0].id]);assert.deepEqual(verify.properties.members.items.properties.groupId.enum,['fixture-group']);
+ assert.deepEqual(verify.properties.negativeExamples.items.properties.reelId.enum,[sources[1].id]);assert.deepEqual(verify.properties.negativeExamples.items.properties.groupId.enum,['negative-group']);
  assert.notStrictEqual(semanticVerificationSchema.properties.members.items,semanticVerificationSchema.properties.negativeExamples.items);
- assert.equal(semanticVerificationSchema.properties.members.items.anyOf[0].properties.reelId.enum,undefined,'Per-request narrowing must not mutate the exported schema');
+ assert.equal(semanticVerificationSchema.properties.members.items.properties.reelId.enum,undefined,'Per-request narrowing must not mutate the exported schema');
+ assert.equal(semanticWireSchemaVersion,'semantic-wire-flat-v1');
  assert.equal(semanticPromptVersion,S.version);assert.match(semanticPromptHash,/^[a-f0-9]{64}$/);
 });
-test('schema branches share enums and enforce canonical recipe format or required six-valued facet',()=>{
+test('flat wire retains enums while conditional facet and canonical recipe rules remain strict server guards',()=>{
  for(const schema of [semanticResponseSchema,semanticConsolidationSchema,semanticVerificationSchema])assertSupported(schema);
  const profiles=semanticResponseSchema.properties.profiles.items.properties;
  assert.deepEqual(profiles.context.enum,S.contexts);assert.deepEqual(profiles.state.enum,S.profileStates);
  assert.deepEqual(profiles.units.items.properties.type.enum,S.unitTypes);assert.deepEqual(profiles.units.items.properties.completeness.enum,S.completeness);
- const branches=semanticResponseSchema.properties.groups.items.anyOf,format=branches.find(b=>b.properties.kind.enum.includes('format')),facet=branches.find(b=>b.properties.kind.enum.includes('facet'));
- assert.deepEqual(format.properties.key.enum,S.formats);assert.deepEqual(format.properties.context.enum,['recipe']);
- assert.ok(facet.required.includes('dimension'));assert.deepEqual(facet.properties.dimension.enum,S.facetDimensions);
+ const flat=semanticResponseSchema.properties.groups.items;
+ assert.equal(flat.anyOf,undefined);assert.deepEqual(flat.properties.kind.enum,S.groupKinds);assert.deepEqual(flat.properties.context.enum,S.contexts);assert.deepEqual(flat.properties.dimension.enum,S.facetDimensions);assert.equal(flat.properties.dimension.nullable,true);assert.equal(flat.required.includes('dimension'),false);
  for(const dimension of S.facetDimensions){const output=valid();Object.assign(output.groups[0],{kind:'facet',dimension});assert.equal(schemaAccepts(semanticResponseSchema,output),true);assert.doesNotThrow(()=>validateSemanticOutput(output,sources));}
- for(const dimension of [null,'protein','ingredients','']){const output=valid();Object.assign(output.groups[0],{kind:'facet',dimension});assert.equal(schemaAccepts(semanticResponseSchema,output),false);assert.throws(()=>validateSemanticOutput(output,sources));}
- const missing=valid();missing.groups[0].kind='facet';assert.equal(schemaAccepts(semanticResponseSchema,missing),false);
- for(const bad of [{key:'tipo-de-prato',context:'recipe'},{key:'single_recipe',context:'technology'}]){const output=valid();Object.assign(output.groups[0],{kind:'format',...bad});assert.equal(schemaAccepts(semanticResponseSchema,output),false);assert.throws(()=>validateSemanticOutput(output,sources));}
+ for(const dimension of [null,'protein','ingredients','']){const output=valid();Object.assign(output.groups[0],{kind:'facet',dimension});assert.equal(schemaAccepts(semanticResponseSchema,output),dimension===null);assert.throws(()=>validateSemanticOutput(output,sources),{code:'SEMANTIC_FACET_INVALID'});}
+ const missing=valid();missing.groups[0].kind='facet';assert.equal(schemaAccepts(semanticResponseSchema,missing),true);assert.throws(()=>validateSemanticOutput(missing,sources),{code:'SEMANTIC_FACET_INVALID'});
+ const nonFacet=valid();nonFacet.groups[0].dimension='ingredient';assert.equal(schemaAccepts(semanticResponseSchema,nonFacet),true);assert.throws(()=>validateSemanticOutput(nonFacet,sources),{code:'SEMANTIC_NON_FACET_DIMENSION_FORBIDDEN'});
+ for(const bad of [{key:'tipo-de-prato',context:'recipe'},{key:'single_recipe',context:'technology'}]){const output=valid();Object.assign(output.groups[0],{kind:'format',...bad});assert.equal(schemaAccepts(semanticResponseSchema,output),true);assert.throws(()=>validateSemanticOutput(output,sources),{code:'SEMANTIC_FORMAT_NOT_CANONICAL'});}
+
 });
-test('output versions, array boundaries and proof cardinality agree with the real extraction validator',()=>{
- for(const version of [0,2,1.5,'1']){const output=valid();output.version=version;assert.equal(schemaAccepts(semanticResponseSchema,output),false);assert.throws(()=>validateSemanticOutput(output,sources));}
- for(const [count,allowed] of [[S.limits.groups,true],[S.limits.groups+1,false]]){const output=valid();output.groups=Array.from({length:count},(_,i)=>({...clone(output.groups[0]),key:'group-'+i}));assert.equal(schemaAccepts(semanticResponseSchema,output),allowed);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
- for(const [count,allowed] of [[S.limits.units,true],[S.limits.units+1,false]]){const output=valid();output.profiles[0].units=Array.from({length:count},(_,i)=>({unitId:'unit'+i,type:'concept',completeness:'complete',evidence:[proof]}));assert.equal(schemaAccepts(semanticResponseSchema,output),allowed);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
- for(const count of [0,S.limits.evidence,S.limits.evidence+1]){const output=valid();output.groups[0].members[0].evidence=Array.from({length:count},()=>proof);const allowed=count>0&&count<=S.limits.evidence;assert.equal(schemaAccepts(semanticResponseSchema,output),allowed);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
- for(const name of ['positiveCriteria','negativeCriteria','members']){const output=valid();output.groups[0][name]=[];assert.equal(schemaAccepts(semanticResponseSchema,output),false);assert.throws(()=>validateSemanticOutput(output,sources));}
+test('wire describes output and array limits while the real extraction validator enforces every boundary',()=>{
+ for(const version of [0,2,1.5,'1']){const output=valid();output.version=version;assert.equal(schemaAccepts(semanticResponseSchema,output),Number.isInteger(version));assert.throws(()=>validateSemanticOutput(output,sources));}
+ for(const [count,allowed] of [[S.limits.groups,true],[S.limits.groups+1,false]]){const output=valid();output.groups=Array.from({length:count},(_,i)=>({...clone(output.groups[0]),key:'group-'+i}));assert.equal(schemaAccepts(semanticResponseSchema,output),true);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
+ for(const [count,allowed] of [[S.limits.units,true],[S.limits.units+1,false]]){const output=valid();output.profiles[0].units=Array.from({length:count},(_,i)=>({unitId:'unit'+i,type:'concept',completeness:'complete',evidence:[proof]}));assert.equal(schemaAccepts(semanticResponseSchema,output),true);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
+ for(const count of [0,S.limits.evidence,S.limits.evidence+1]){const output=valid();output.groups[0].members[0].evidence=Array.from({length:count},()=>proof);const allowed=count>0&&count<=S.limits.evidence;assert.equal(schemaAccepts(semanticResponseSchema,output),true);if(allowed)assert.doesNotThrow(()=>validateSemanticOutput(output,sources));else assert.throws(()=>validateSemanticOutput(output,sources));}
+ for(const name of ['positiveCriteria','negativeCriteria','members']){const output=valid();output.groups[0][name]=[];assert.equal(schemaAccepts(semanticResponseSchema,output),true);assert.throws(()=>validateSemanticOutput(output,sources));}
 });
 test('character and regexp limits stay server guards with accurate schema descriptions, not unsupported keywords',()=>{
  const cases=[
@@ -116,9 +118,9 @@ test('cross-source identity, exact unit evidence and format semantics cannot be 
 });
 test('verification schemas distinguish supported proofs from abstention without claiming semantic truth',()=>{
  const base={version:1,members:[{groupId:'g',reelId:sources[0].id,verdict:'supported',reason:'Sintético.',evidence:[]}],negativeExamples:[]};
- assert.equal(schemaAccepts(semanticVerificationSchema,base),false);
- base.members[0].verdict='inconclusive';assert.equal(schemaAccepts(semanticVerificationSchema,base),true);
- base.members[0].evidence=Array.from({length:S.limits.evidence+1},()=>proof);assert.equal(schemaAccepts(semanticVerificationSchema,base),false);
+ assert.equal(schemaAccepts(semanticVerificationSchema,base),true);assert.throws(()=>validateSemanticVerificationEvidence(base.members[0],sources[0]));
+ base.members[0].verdict='inconclusive';assert.equal(schemaAccepts(semanticVerificationSchema,base),true);assert.doesNotThrow(()=>validateSemanticVerificationEvidence(base.members[0],sources[0]));
+ base.members[0].evidence=Array.from({length:S.limits.evidence+1},()=>proof);assert.equal(schemaAccepts(semanticVerificationSchema,base),true);assert.throws(()=>validateSemanticVerificationEvidence(base.members[0],sources[0]));
  const resolutions={version:1,resolutions:[{groupId:'g',decision:'keep',mergeInto:'',reason:'Preservar contexto.'}]};
  assert.equal(schemaAccepts(semanticConsolidationSchema,resolutions),true);resolutions.resolutions[0].decision='invent';assert.equal(schemaAccepts(semanticConsolidationSchema,resolutions),false);
 });

@@ -43,7 +43,11 @@ export async function rehearseSavedSemanticCatalogue(input,{sourceCommit='unknow
  }
  const job=(await curator.job(created.job.id)).job;
  assert.equal(job.status,'completed');assert.equal(job.processed,499);assert.equal(job.verificationProcessed,499);
- assert.equal(provider.calls.length,127);assert.equal(job.callsUsed,127);
+ assert.equal(provider.calls.length,64);assert.equal(job.callsUsed,64);assert.ok(job.callsUsed<=job.maxCalls);
+ const emptyRanges=[...store.docs.values()].map(row=>row.data).filter(row=>row.kind==='semantic_no_targets');
+ assert.equal(emptyRanges.length,63);assert.ok(emptyRanges.every(row=>row.reason==='NO_ELIGIBLE_VERIFICATION_TARGETS'&&row.providerCalls===0&&row.semanticVerified===false));
+ assert.deepEqual(emptyRanges.flatMap(row=>row.sourceIds).sort((a,b)=>a.localeCompare(b)),pins.map(pin=>pin.id));
+ assert.equal(job.verificationSkippedSources,499);assert.equal(job.verificationTargetDecisions,0);assert.equal(provider.calls.filter(call=>call.phase==='verify').length,0);
  const exactExtracted=provider.calls.filter(c=>c.phase==='extract').flatMap(c=>c.ids).sort((a,b)=>a.localeCompare(b));
  assert.deepEqual(exactExtracted,pins.map(p=>p.id));
  const beforeRead=provider.calls.length;
@@ -61,7 +65,7 @@ export async function rehearseSavedSemanticCatalogue(input,{sourceCommit='unknow
  return {
   schemaVersion:1,sourceCommit,sourceObservationSHA256:input.sourceObservationSHA256,cohortHash,
   semanticPromptHash,sourceDocuments:738,published:499,sourceKinds:sourcesByKind,
-  truncatedSources:truncated,syntheticContractCalls:127,actualProviderCalls:0,googleWrites:0,newReels:0,
+  truncatedSources:truncated,syntheticContractCalls:provider.calls.length,noTargetVerificationRanges:emptyRanges.length,verificationSkippedSources:job.verificationSkippedSources,verificationTargetDecisions:0,semanticRelationsVerified:0,actualProviderCalls:0,googleWrites:0,newReels:0,
   originalSourcesUnchanged:true,browserIndependentContinuation:true,
   unknownByDesign:499,semanticAccuracyMeasured:false,actualSemanticCurationExecuted:false,
   note:'This executes the real durable engine with an abstaining synthetic adapter. It is preservation/coverage/idempotency evidence, never semantic calibration or a paid-provider result.',

@@ -63,7 +63,7 @@ export class ReelsRepository{
  async contextualContributions(cachedItems=null){
   const [records,legacyRecords,manifestSnapshot,taxonomySnapshot]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS),this.store.get(catalogueManifestPath),this.store.get('settings/reels_v2_taxonomy')]);
   const legacy=new Map(legacyRecords.map(r=>[r.path.split('/')[1],r])),versions=new Map(),rawItems=[];
-  for(const r of records){const id=r.data.id??r.path.split('/')[1],old=legacy.get(id);versions.set(id,{video:r.updateTime,...(old?{legacy:old.updateTime}:{})});rawItems.push(withPreservedSummary(projectReel({...r.data,id}),old?.data));}
+  for(const r of records){const id=r.data.id??r.path.split('/')[1],old=legacy.get(id);versions.set(id,{video:r.updateTime,...(!publicationAvailable({...r.data,id})&&old?{legacy:old.updateTime}:{})});rawItems.push(withPreservedSummary(projectReel({...r.data,id}),old?.data));}
   const taxonomy=taxonomySnapshot?.data??{},items=categoryNavigation(rawItems,taxonomy).items.filter(i=>i.publication.available),inventoryIds=items.map(i=>i.id).sort(),byId=new Map(items.map(i=>[i.id,i]));
   const active=catalogueManifestActive(manifestSnapshot?.data),contributions=[];let sourceStale=false;
   if(active){

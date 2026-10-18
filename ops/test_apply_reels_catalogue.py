@@ -67,6 +67,47 @@ class FakeClient:
  def change_source(self,id):
   value=m.document_data(self.docs['videos/'+id]);value['analysis_generation']='2';self.docs['videos/'+id]=doc('videos/'+id,value,'2026-10-18T00:02:00.000000Z')
 
+class FakeClock:
+ def __init__(self):self.now=0.0
+ def monotonic(self):return self.now
+ def advance(self,seconds):self.now+=seconds
+class ScheduledProbePool:
+ """Deterministic network-wave model, without sleeping or actual threads."""
+ def __init__(self,clock,max_workers):self.clock=clock;self.max_workers=max_workers
+ def __enter__(self):return self
+ def __exit__(self,*args):pass
+ def map(self,fn,values):
+  lanes=[self.clock.now]*self.max_workers;results=[]
+  for value in values:
+   lane=min(range(len(lanes)),key=lanes.__getitem__);self.clock.now=lanes[lane]
+   results.append(fn(value));lanes[lane]=self.clock.now
+  self.clock.now=max(lanes);return iter(results)
+class LatencyClient(FakeClient):
+ def __init__(self,values,clock):
+  super().__init__(values);self.clock=clock;self.http=[];self.open_service=None
+ def probe_closed(self):
+  super().probe_closed();return m.GoogleClient.probe_closed(self)
+ def _request(self,method,url,payload=None,params=None):
+  self.clock.advance(1.1);self.http.append({'method':method,'url':url})
+  if '/tasks'in url:return {}
+  if 'cloudtasks.googleapis.com'in url:return {'state':'PAUSED'}
+  name=url.rsplit('/',1)[-1]
+  return {'reconciling':False,'terminalCondition':{'state':'CONDITION_SUCCEEDED'},'template':{'containers':[{'env':[{'name':'MEGABRAIN_REELS_CLOSED_RELEASE','value':'open'if name==self.open_service else'v2'}]}]}}
+ def begin(self):self.clock.advance(0.05);return super().begin()
+ def read(self,paths,tx=None,mask=None):self.clock.advance(0.45);return super().read(paths,tx,mask)
+ def commit(self,tx,writes):self.clock.advance(0.1);return super().commit(tx,writes)
+def staged_recovery_fixture():
+ _,plan,values=package(499,8)
+ # The saved499 inventory includes198 legacy primary sources:697 exact versions.
+ for binding in plan['sourceBindings'][-198:]:
+  id=binding['reelId'];identity={'kind':'legacy_preserved','recordHash':H,'sourceSnapshotHash':H}
+  binding['sourceIdentity']=identity;binding['sourceVersions']['legacy']=VERSION
+  contribution=next(w['data']for w in plan['contributionWrites']if w['data']['reelId']==id)
+  contribution['sourceIdentity']=identity;contribution['entry']['sourceIdentity']=identity
+  values['reels_legacy_content/'+id]={'provenance':{'recordHash':H,'sourceSnapshotHash':H}}
+ for write in plan['contributionWrites']+plan['reviewWrites']:values[write['path']]=copy.deepcopy(write['data'])
+ return plan,values
+
 class CatalogueOwnerGuards(unittest.TestCase):
  def test_large_bootstrap_exceeds_500_total_but_chunks_then_atomic_settings(self):
   before,plan,values=package(499,8);client=FakeClient(values)
@@ -208,6 +249,49 @@ class CatalogueOwnerGuards(unittest.TestCase):
   with mock.patch.object(m,'MAX_TX_SECONDS',-1):
    with self.assertRaisesRegex(m.GuardError,'TRANSACTION_TIME_BUDGET'):m.CatalogueBootstrap(plan,client,True).run()
   self.assertEqual(client.commits,[])
+ def test_realistic_sequential_probe_latency_stops_before_activation_send(self):
+  plan,values=staged_recovery_fixture();clock=FakeClock();client=LatencyClient(values,clock);runner=m.CatalogueBootstrap(plan,client,True)
+  with mock.patch.object(m.time,'monotonic',clock.monotonic),mock.patch.object(m,'READ_BATCH_SIZE',100),mock.patch.object(m,'PROBE_WORKERS',1),mock.patch.object(m,'ThreadPoolExecutor',side_effect=lambda max_workers:ScheduledProbePool(clock,max_workers)):
+   with self.assertRaisesRegex(m.GuardError,'TRANSACTION_TIME_BUDGET'):runner.run()
+  self.assertTrue(runner.activationPrepared);self.assertFalse(runner.activationCommitSent);self.assertFalse(runner.activationAttempted);self.assertFalse(runner.activationVerified);self.assertEqual(client.commits,[]);self.assertNotIn(m.SETTINGS[1],client.docs)
+  self.assertGreater(runner.timings[-1]['elapsedSeconds'],18);self.assertEqual(runner.timings[-1]['precommitProbeSeconds'],13.2);self.assertEqual(m.failure_status(m.GuardError('TRANSACTION_TIME_BUDGET'),runner),'activation_precommit_guarded_stop')
+ def test_bounded_parallel_probes_and_500_reads_recover507_with_only_settings_commit(self):
+  plan,values=staged_recovery_fixture();clock=FakeClock();client=LatencyClient(values,clock);runner=m.CatalogueBootstrap(plan,client,True);before={p:copy.deepcopy(v)for p,v in client.docs.items()if p.startswith('reels_index/')}
+  with mock.patch.object(m.time,'monotonic',clock.monotonic),mock.patch.object(m,'ThreadPoolExecutor',side_effect=lambda max_workers:ScheduledProbePool(clock,max_workers))as pools:
+   result=runner.run()
+  self.assertEqual(m.MAX_TX_SECONDS,18);self.assertEqual(m.MAX_TX_BYTES,8*1024*1024);self.assertEqual(m.READ_BATCH_SIZE,500);self.assertEqual(m.CHUNK_SIZE,100);self.assertEqual(m.PROBE_WORKERS,4)
+  self.assertEqual(result['status'],'applied_verified');self.assertEqual(result['writes'],2);self.assertEqual(len(client.commits),1);self.assertEqual([w['path']for w in client.commits[0]],m.SETTINGS)
+  self.assertTrue(all(chunk['newDocuments']==0 and chunk['status']=='identical_existing'for chunk in result['chunks']));self.assertEqual({p:v for p,v in client.docs.items()if p.startswith('reels_index/')},before)
+  final_reads=[r for r in client.reads if r['tx']=='tx7'];self.assertEqual(sum(len(r['paths'])for r in final_reads if r['paths'][0].startswith(('videos/','reels_legacy_content/'))),697);self.assertEqual(sum(len(r['paths'])for r in final_reads if r['paths'][0].startswith('reels_index/')),507);self.assertTrue(all(len(r['paths'])<=500 for r in client.reads));self.assertEqual(len(final_reads),6)
+  self.assertEqual(runner.timings[-1]['precommitProbeSeconds'],3.3);self.assertLess(runner.timings[-1]['elapsedSeconds'],18);self.assertEqual(runner.timings[-1]['readRequests'],6);self.assertLess(runner.timings[-1]['readBytes'],8*1024*1024);self.assertTrue(runner.activationCommitSent);self.assertTrue(runner.activationVerified);self.assertTrue(all(call.kwargs=={'max_workers':4}for call in pools.call_args_list))
+ def test_precommit_pool_guard_failure_propagates_without_sending_commit(self):
+  plan,values=staged_recovery_fixture();clock=FakeClock();client=LatencyClient(values,clock);runner=m.CatalogueBootstrap(plan,client,True);original_probe=client.probe_closed
+  def probe():
+   if runner.activationPrepared:client.open_service='megabrain-v0-analysis'
+   return original_probe()
+  client.probe_closed=probe
+  with mock.patch.object(m.time,'monotonic',clock.monotonic),mock.patch.object(m,'ThreadPoolExecutor',side_effect=lambda max_workers:ScheduledProbePool(clock,max_workers)):
+   with self.assertRaisesRegex(m.GuardError,'SERVICE_NOT_CLOSED'):runner.run()
+  self.assertFalse(runner.activationCommitSent);self.assertFalse(runner.activationAttempted);self.assertEqual(client.commits,[]);self.assertNotIn(m.SETTINGS[1],client.docs)
+ def test_sent_activation_with_unproven_ack_stays_uncertain_without_retry(self):
+  _,plan,values=package()
+  for write in plan['contributionWrites']+plan['reviewWrites']:values[write['path']]=copy.deepcopy(write['data'])
+  client=FakeClient(values);runner=m.CatalogueBootstrap(plan,client,True)
+  client.on_commit=lambda *args:(_ for _ in ()).throw(RuntimeError('ack unavailable'))
+  with self.assertRaises(m.AmbiguousCommit):runner.run()
+  self.assertTrue(runner.activationPrepared);self.assertTrue(runner.activationCommitSent);self.assertTrue(runner.activationAttempted);self.assertFalse(runner.activationVerified);self.assertEqual(client.commits,[]);self.assertNotIn(m.SETTINGS[1],client.docs);self.assertEqual(m.failure_status(m.AmbiguousCommit('COMMIT_NOT_PROVEN_DO_NOT_RETRY'),runner),'commit_uncertain_stop')
+ def test_recovery_staged507_rechecks_source_taxonomy_and_other_manifest(self):
+  for mismatch in ['source','taxonomy','manifest']:
+   plan,values=staged_recovery_fixture();client=FakeClient(values)
+   if mismatch=='source':client.change_source('reel00000')
+   elif mismatch=='taxonomy':client.docs[m.SETTINGS[0]]=doc(m.SETTINGS[0],values[m.SETTINGS[0]],'2026-10-18T00:03:00.000000Z')
+   else:client.docs[m.SETTINGS[1]]=doc(m.SETTINGS[1],{**plan['settingsWrites'][1]['data'],'operationId':'c'*64})
+   with self.assertRaises(m.GuardError):m.CatalogueBootstrap(plan,client,True).run()
+   self.assertEqual(client.commits,[])
+ def test_probe_pool_is_bounded_and_only_reads_allowlisted_metadata(self):
+  clock=FakeClock();client=LatencyClient({},clock)
+  with mock.patch.object(m,'ThreadPoolExecutor',side_effect=lambda max_workers:ScheduledProbePool(clock,max_workers))as pools:client.probe_closed()
+  self.assertEqual(len(client.http),12);self.assertTrue(all(row['method']=='GET'for row in client.http));self.assertEqual(len({row['url']for row in client.http}),12);self.assertEqual(pools.call_args.kwargs,{'max_workers':4});self.assertAlmostEqual(clock.now,3.3)
  def test_firestore_roundtrip_preserves_unknowns_not_fake_zeroes(self):
   value={'unknown':None,'count':499,'supported':False,'metrics':[1.0,0.2],'source':{'key':'source@generation'}}
   self.assertEqual(m.decode(m.encode(value)),value)

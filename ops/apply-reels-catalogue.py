@@ -4,6 +4,7 @@ Importing this module performs no I/O. Production execution is owner Cloud Shell
 only; preparation and tests belong exclusively to GitHub Actions.
 """
 import argparse, datetime, hashlib, json, pathlib, re, subprocess, sys, time
+from concurrent.futures import ThreadPoolExecutor
 from urllib import request as urlrequest, parse as urlparse, error as urlerror
 
 PROJECT = 'megabrain-v0-1017370021431'
@@ -19,6 +20,8 @@ MAX_BYTES = 24*1024*1024
 MAX_TX_BYTES = 8*1024*1024
 MAX_TX_SECONDS = 18
 CHUNK_SIZE = 100
+READ_BATCH_SIZE = 500
+PROBE_WORKERS = 4
 
 class GuardError(ValueError): pass
 class AmbiguousCommit(RuntimeError): pass
@@ -143,19 +146,28 @@ class CatalogueBootstrap:
  """All staged documents remain invisible until the final active manifest."""
  def __init__(self,plan,client,apply=False):
   self.plan=validate_plan(plan);self.client=client;self.apply=apply;self.chunks=[];self.started=None;self.read_bytes=0
-  self.activationAttempted=False;self.activationVerified=False
+  self.activationPrepared=False;self.activationAttempted=False;self.activationCommitSent=False;self.activationVerified=False
+  self.timings=[];self.current_timing=None;self.read_requests=0
   self.expected={w['path']:w['data']for w in plan['contributionWrites']+plan['reviewWrites']}
   self.settings={w['path']:w['data']for w in plan['settingsWrites']}
  def _read(self,paths,transaction=None,mask=None):
   out={}
-  for chunk in batches(list(paths)):
+  for chunk in batches(list(paths),READ_BATCH_SIZE):
    rows=self.client.read(chunk,transaction,mask);need(set(rows)==set(chunk),'INCOMPLETE_BATCH_READ')
-   self.read_bytes+=len(canonical(rows).encode());need(self.read_bytes<=MAX_TX_BYTES,'TRANSACTION_READ_BUDGET')
+   self.read_bytes+=len(canonical(rows).encode())
+   if transaction:self.read_requests+=1;self._record_timing()
+   need(self.read_bytes<=MAX_TX_BYTES,'TRANSACTION_READ_BUDGET')
    out.update(rows)
   return out
+ def _record_timing(self):
+  if self.current_timing is not None:
+   self.current_timing.update({'elapsedSeconds':round(time.monotonic()-self.started,3),'readRequests':self.read_requests,'readBytes':self.read_bytes})
  def _start(self):
-  self.client.probe_closed();self.started=time.monotonic();self.read_bytes=0;return self.client.begin()
- def _deadline(self):need(time.monotonic()-self.started<MAX_TX_SECONDS,'TRANSACTION_TIME_BUDGET')
+  before=time.monotonic();self.client.probe_closed();self.started=time.monotonic();self.read_bytes=0;self.read_requests=0
+  self.current_timing={'ordinal':len(self.timings)+1,'preflightSeconds':round(self.started-before,3),'precommitProbeSeconds':None,'commitSent':False}
+  self.timings.append(self.current_timing);return self.client.begin()
+ def _deadline(self):
+  self._record_timing();need(time.monotonic()-self.started<MAX_TX_SECONDS,'TRANSACTION_TIME_BUDGET')
  def _state(self,tx,allow_active=False):
   settings=self._read(SETTINGS,tx);controls=self._read(CONTROLS,tx,['enabled','paused','active']);verify_closed_documents(controls)
   tax=settings[SETTINGS[0]];manifest=settings[SETTINGS[1]]
@@ -170,9 +182,17 @@ class CatalogueBootstrap:
  def _sources(self,tx,bindings):
   docs=self._read(source_paths(bindings),tx,['id','reelId','analysis_key','analysis_generation','provenance.recordHash','provenance.sourceSnapshotHash'])
   verify_sources(docs,bindings)
- def _commit(self,tx,writes):
-  self.client.probe_closed();self._deadline()
-  try:self.client.commit(tx,writes);return 'committed'
+ def _commit(self,tx,writes,activation=False):
+  before=time.monotonic()
+  try:self.client.probe_closed()
+  finally:
+   self.current_timing['precommitProbeSeconds']=round(time.monotonic()-before,3);self._record_timing()
+  # All bounded probes must have completed successfully; never move this guard
+  # before them. A stop here has not sent a Firestore commit request.
+  self._deadline()
+  self.current_timing['commitSent']=True
+  if activation:self.activationAttempted=True;self.activationCommitSent=True
+  try:self.client.commit(tx,writes);self._record_timing();return 'committed'
   except Exception:
    # Never repeat an ambiguous commit. Only exact strong read-back can prove it.
    try:
@@ -220,7 +240,7 @@ class CatalogueBootstrap:
    if not self.apply:
     self.client.rollback(tx);return {'status':'dry_run_passed','stagedDocuments':len(self.expected)-len(missing),'missingDocuments':len(missing),'writes':0,'chunks':self.chunks}
    writes=[{'path':SETTINGS[0],'data':self.settings[SETTINGS[0]],'updateTime':state[SETTINGS[0]]['updateTime']},{'path':SETTINGS[1],'data':self.settings[SETTINGS[1]],'exists':False}]
-   self.activationAttempted=True;status=self._commit(tx,writes)
+   self.activationPrepared=True;status=self._commit(tx,writes,activation=True)
    self.read_bytes=0;after=self._read(SETTINGS);need(all(after[p]is not None and same(document_data(after[p]),v)for p,v in self.settings.items()),'ACTIVATION_NOT_PROVEN')
    self.activationVerified=True;self.client.probe_closed()
    return {'status':'applied_verified','activationCommit':status,'stagedDocuments':len(self.expected),'writes':sum(c['newDocuments']for c in self.chunks)+2,'chunks':self.chunks}
@@ -269,16 +289,24 @@ class GoogleClient:
   need(len(body)<=202,'WRITE_BUDGET')
   self._request('POST',BASE+':commit',{'transaction':tx,'writes':body})
  def probe_closed(self):
-  for stage in ['acquisition','transcription','analysis','processing']:
-   url='https://cloudtasks.googleapis.com/v2/projects/'+PROJECT+'/locations/us-central1/queues/v0-'+stage
-   queue=self._request('GET',url,params={'fields':'state'})
-   need(queue.get('state')=='PAUSED','QUEUE_NOT_PAUSED')
-   tasks=self._request('GET',url+'/tasks',params={'pageSize':1,'responseView':'BASIC','fields':'tasks.name,nextPageToken'})
-   need(not tasks.get('tasks')and not tasks.get('nextPageToken'),'QUEUE_OCCUPIED')
-  for service in ['web','acquisition','transcription','analysis']:
-   url='https://run.googleapis.com/v2/projects/'+PROJECT+'/locations/us-central1/services/megabrain-v0-'+service
-   view=self._request('GET',url,params={'fields':'template.containers.env,terminalCondition.state,reconciling'})
-   need(not view.get('reconciling')and view.get('terminalCondition',{}).get('state')=='CONDITION_SUCCEEDED'and any(e.get('name')=='MEGABRAIN_REELS_CLOSED_RELEASE'and e.get('value')=='v2'for e in view.get('template',{}).get('containers',[{}])[0].get('env',[])),'SERVICE_NOT_CLOSED')
+  # Each urllib call owns its Request/connection; this client holds only an
+  # immutable token. No shared HTTP session, cookies or mutable response cache.
+  targets=[('queue',s)for s in ['acquisition','transcription','analysis','processing']]+[('service',s)for s in ['web','acquisition','transcription','analysis']]
+  def probe(target):
+   kind,name=target
+   if kind=='queue':
+    url='https://cloudtasks.googleapis.com/v2/projects/'+PROJECT+'/locations/us-central1/queues/v0-'+name
+    queue=self._request('GET',url,params={'fields':'state'})
+    need(queue.get('state')=='PAUSED','QUEUE_NOT_PAUSED')
+    tasks=self._request('GET',url+'/tasks',params={'pageSize':1,'responseView':'BASIC','fields':'tasks.name,nextPageToken'})
+    need(not tasks.get('tasks')and not tasks.get('nextPageToken'),'QUEUE_OCCUPIED')
+   else:
+    url='https://run.googleapis.com/v2/projects/'+PROJECT+'/locations/us-central1/services/megabrain-v0-'+name
+    view=self._request('GET',url,params={'fields':'template.containers.env,terminalCondition.state,reconciling'})
+    need(not view.get('reconciling')and view.get('terminalCondition',{}).get('state')=='CONDITION_SUCCEEDED'and any(e.get('name')=='MEGABRAIN_REELS_CLOSED_RELEASE'and e.get('value')=='v2'for e in view.get('template',{}).get('containers',[{}])[0].get('env',[])),'SERVICE_NOT_CLOSED')
+  with ThreadPoolExecutor(max_workers=PROBE_WORKERS)as pool:
+   # Consume every result: a failed guard never becomes a successful preflight.
+   for result in pool.map(probe,targets):pass
 
 def owner_token():
  def capture(args):
@@ -294,6 +322,12 @@ def owner_token():
  need(bool(token)and '\n'not in token,'OWNER_TOKEN_UNAVAILABLE')
  return token
 
+def failure_status(error,runner):
+ if runner and runner.activationVerified:return 'activation_verified_runtime_guard_changed'
+ if isinstance(error,AmbiguousCommit)or runner and runner.activationCommitSent:return 'commit_uncertain_stop'
+ if runner and runner.activationPrepared:return 'activation_precommit_guarded_stop'
+ return 'guarded_stop'
+
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--plan',required=True);parser.add_argument('--review',required=True);parser.add_argument('--result',required=True);parser.add_argument('--apply',action='store_true');args=parser.parse_args()
  output=pathlib.Path(args.result);need(not output.exists(),'NEW_RESULT_PATH_REQUIRED')
@@ -306,8 +340,9 @@ def main():
   runner=CatalogueBootstrap(plan,GoogleClient(owner_token()),args.apply);result.update(runner.run())
  except Exception as error:
   failed=True
-  status='activation_verified_runtime_guard_changed'if runner and runner.activationVerified else'commit_uncertain_stop'if isinstance(error,AmbiguousCommit)or runner and runner.activationAttempted else'guarded_stop'
+  status=failure_status(error,runner)
   result.update({'status':status,'activationAttempted':runner.activationAttempted if runner else False,'activationVerified':runner.activationVerified if runner else False,'errorType':type(error).__name__,'reason':str(error)if isinstance(error,(GuardError,AmbiguousCommit))else'UNEXPECTED_ERROR_NO_RETRY','chunks':runner.chunks if runner else[]})
+ if runner:result.update({'activationPrepared':runner.activationPrepared,'activationAttempted':runner.activationAttempted,'activationCommitSent':runner.activationCommitSent,'activationVerified':runner.activationVerified,'transactionTimings':runner.timings})
  result['observedAt']=datetime.datetime.now(datetime.timezone.utc).isoformat()
  with output.open('x',encoding='utf8')as handle:json.dump(result,handle,ensure_ascii=False,indent=2)
  output.chmod(0o600);print(canonical(result))

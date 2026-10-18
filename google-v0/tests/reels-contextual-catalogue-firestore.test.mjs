@@ -48,8 +48,9 @@ test('Firestore emulator proves transactional source fencing and removal of obso
   const target=url.replace('https://firestore.googleapis.com','http://'+host),started=Date.now();
   const response=await fetch(target,{method:options.method??'GET',headers:{'content-type':'application/json'},...(options.json?{body:JSON.stringify(options.json)}:{}),signal:AbortSignal.timeout(15000)});
   requests.push({method:options.method??'GET',path:new URL(target).pathname,transaction:!!options.json?.transaction,status:response.status,elapsed:Date.now()-started});
-  if(!response.ok)throw Object.assign(Error('Emulator request failed: '+response.status),{status:response.status});
-  const text=await response.text();return text?JSON.parse(text):{};
+  const text=await response.text();let body;try{body=text?JSON.parse(text):{};}catch{throw Error('Emulator returned invalid JSON');}
+  if(!response.ok){const diagnostic={method:options.method??'GET',path:new URL(target).pathname,httpStatus:response.status,firestoreStatus:body.error?.status??null,message:String(body.error?.message??'').slice(0,1200)};console.error(JSON.stringify({syntheticEmulatorFailure:diagnostic}));throw Object.assign(Error('Emulator request failed: '+response.status+' '+diagnostic.firestoreStatus),{status:response.status});}
+  return body;
  }};
  const store=new Firestore(api),input=makeFullCatalogueFixture(),source=JSON.parse(input.records[2].sourceJson);source.video.id=ID;source.item.id=ID;
  await store.create('videos/'+ID,source.video);await store.create('settings/reels_v2_taxonomy',{revision:1,nodes:[],assignments:[],rules:[]});await store.create('settings/reels_v2_contextual_catalogue',{status:'active',policyVersion:'saved-publication-catalogue-v1'});

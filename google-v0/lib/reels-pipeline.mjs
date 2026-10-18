@@ -19,6 +19,7 @@ export class ReelsPipeline {
   if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
   const path='reels_executions/'+id;let snapshot=await this.store.get(path);if(!snapshot)throw fail('NOT_FOUND','Execução ausente.',404);let job=snapshot.data;
   if(job.status==='applying')return this.apply(job);
+  if(job.status==='completed'&&job.stage==='analysis'&&this.onPublished){try{const indexed=await this.onPublished(job);if(indexed?.pending!==true&&job.catalogueIndex?.status==='pending')await cas(this.store,path,current=>current.status==='completed'?{catalogueIndex:{eventId:job.id,status:'completed'}}:null);}catch{}}
   if(['running','submitting'].includes(job.status)){
    if(Number.isFinite(Date.parse(job.startedAt))&&this.clock()-Date.parse(job.startedAt)<this.claimTimeoutMs)return {status:job.status,reason:'EXECUTION_IN_PROGRESS',executionId:id};
    // A dead executor is not proof a paid operation did not happen. Keep its
@@ -130,7 +131,7 @@ export class ReelsPipeline {
     if(qualitySourceStateHash(current)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
    }
    const video=current;
-   return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}};
+   return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id,contextual_catalogue_event:{id:job.id,type:'publicationAccepted',reelId:job.reelId,status:'pending',analysisKey:changes.analysis_key??current.analysis_key??null,analysisGeneration:changes.analysis_generation??current.analysis_generation??null}}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}};
   });
   if(ownershipConflict)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
   if(publicationConflict)return this.rejectCandidate(job,result,{reason:'QUALITY_PUBLICATION_REVISION_CONFLICT',state:'inconclusive'});
@@ -138,9 +139,13 @@ export class ReelsPipeline {
   if(nextStage){const nextId=executionId(job.operationId,job.reelId,nextStage),queuedAt=nowISO(this.clock);await ensure(this.store,'reels_executions/'+nextId,{id:nextId,operationId:job.operationId,reelId:job.reelId,stage:nextStage,status:'queued',attempt:1,predecessorId:job.id,queuedAt,createdAt:queuedAt});
    await this.markVideo({...job,stage:nextStage,id:nextId},'queued',{},job.id);const next=await this.store.get('reels_executions/'+nextId);await queueOutbox(this.store,next.data,{onQueued:this.onQueued,clock:this.clock});}
   await this.repository.refresh?.(job.reelId);
-  if(job.stage==='analysis'&&this.onPublished)await this.onPublished(job);
+  let catalogueIndex=null;
+  if(job.stage==='analysis'&&this.onPublished){
+   try{const indexed=await this.onPublished(job);catalogueIndex={eventId:job.id,status:indexed?.pending===true?'pending':'completed'};}
+   catch{catalogueIndex={eventId:job.id,status:'pending'};}
+  }
   await this.release(job);await this.emit(job,'stage_completed');
-  await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock)});
+  await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock),...(catalogueIndex?{catalogueIndex}:{})});
   return {status:'completed',executionId:job.id,nextStage:nextStage??null};
  }
  async rejectCandidate(job,result,{reason='QUALITY_VALIDATION_FAILED',state='invalid'}={}){

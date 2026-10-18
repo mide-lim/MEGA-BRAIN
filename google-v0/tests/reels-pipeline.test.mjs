@@ -61,7 +61,7 @@ test('long-running adapter is visible as running before external result arrives'
 
 test('post-publication recurrence callback resumes saved result without another analysis',async()=>{
  let calls=0,checks=0;const x=await setup('analysis',{analyze:async()=>{calls++;return {valid:true,changes:{analysis:{summary:'published'},analysis_key:'saved',analysis_generation:'1',analysis_quality_status:'accepted'}};}},{onPublished:async job=>{assert.equal(job.id,x.id);checks++;if(checks===1)throw Error('index unavailable');}});
- assert.equal((await x.pipeline.run({executionId:x.id})).status,'applying');assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal(calls,1);assert.equal(checks,2);
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal((await x.store.get('reels_executions/'+x.id)).data.catalogueIndex.status,'pending');const published=await x.store.get('videos/Reel_001');assert.equal(published.data.contextual_catalogue_event.id,x.id);assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal((await x.store.get('reels_executions/'+x.id)).data.catalogueIndex.status,'completed');assert.equal((await x.store.get('videos/Reel_001')).updateTime,published.updateTime);assert.equal(calls,1);assert.equal(checks,2);
 });
 
 test('valid complement replaces automatic category baseline while preserving explicit manual choices',async()=>{

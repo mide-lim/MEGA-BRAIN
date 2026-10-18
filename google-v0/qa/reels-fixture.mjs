@@ -53,7 +53,8 @@ export function reelsFixture(now=new Date()) {
 
 export function memoryReelsStore(documents={}) {
  let revision=1;
- const docs=new Map(Object.entries(documents).map(([path,data])=>[path,{data:structuredClone(data),updateTime:String(revision++)}]));
+ const nextVersion=()=>new Date(Date.UTC(2026,9,17)+revision++).toISOString();
+ const docs=new Map(Object.entries(documents).map(([path,data])=>[path,{data:structuredClone(data),updateTime:nextVersion()}]));
  const reads=[];
  const project=(data,select)=>{if(!select)return structuredClone(data);const out={};for(const field of select){const parts=field.split('.');let value=data;for(const part of parts)value=value?.[part];if(value===undefined)continue;let target=out;for(const part of parts.slice(0,-1))target=target[part]??={};target[parts.at(-1)]=structuredClone(value);}return out;};
  const encode=path=>Buffer.from(JSON.stringify({path})).toString('base64url');
@@ -69,8 +70,14 @@ export function memoryReelsStore(documents={}) {
  };
  return {docs,reads,query,
   get:async path=>structuredClone(docs.get(path)??null),
-  create:async(path,data)=>{if(docs.has(path))return {created:false};const record={data:structuredClone(data),updateTime:String(revision++)};docs.set(path,record);return {created:true,...structuredClone(record)};},
-  patch:async(path,data,{updateTime}={})=>{const old=docs.get(path);if(!old||old.updateTime!==updateTime)throw Object.assign(Error('CAS conflict'),{status:412});const record={data:{...old.data,...structuredClone(data)},updateTime:String(revision++)};docs.set(path,record);return structuredClone(record);},
+  compareAndReplaceDerived:async({path,replacement,checks})=>{
+   if(replacement?.kind!=='contextual_contribution'||!/^[A-Za-z0-9_-]+$/.test(replacement?.reelId||'')||path!=='reels_index/contextual_'+replacement.reelId||!Array.isArray(checks)||!checks.length)throw Error('Invalid synthetic derived contribution transaction');
+   for(const check of checks){const actual=docs.get(check.path);if((actual?.updateTime??null)!==check.updateTime)return {applied:false,reason:'SOURCE_OR_CONTRIBUTION_CHANGED'};}
+   const record={data:structuredClone(replacement),updateTime:nextVersion()};docs.set(path,record);return {applied:true,updateTime:record.updateTime};
+  },
+
+  create:async(path,data)=>{if(docs.has(path))return {created:false};const record={data:structuredClone(data),updateTime:nextVersion()};docs.set(path,record);return {created:true,...structuredClone(record)};},
+  patch:async(path,data,{updateTime}={})=>{const old=docs.get(path);if(!old||old.updateTime!==updateTime)throw Object.assign(Error('CAS conflict'),{status:412});const record={data:{...old.data,...structuredClone(data)},updateTime:nextVersion()};docs.set(path,record);return structuredClone(record);},
   list:async(collection,{pageSize=100,pageToken}={})=>{const page=await query(collection,{limit:pageSize,cursor:pageToken});return {records:page.records,nextPageToken:page.nextCursor};}
  };
 }

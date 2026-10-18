@@ -31,7 +31,9 @@
     "ops/prepare-reels-catalogue.test.mjs",
     "ops/apply-reels-catalogue.py",
     "ops/test_apply_reels_catalogue.py",
-    ".github/workflows/reels-alignment-review.yml"
+    ".github/workflows/reels-alignment-review.yml",
+    "google-v0/Dockerfile.worker",
+    "ops/rehearse-reels-catalogue.py"
   ],
   "context": [
     {
@@ -115,7 +117,9 @@
       "backend": "contextual-catalogue projection/index/contributions modules and tests; alignment_backend",
       "frontend": "UI/QA; alignment_frontend",
       "root": "repository/API/model/store CAS/events/workflows/packet/bootstrap owner operator",
-      "review": "fresh review_full_catalogue read only"
+      "review": "fresh review_full_catalogue read only",
+      "contextual_backend": "contextual contributions/runtime/repository/API/storeTX/pipeline publication hooks and tests; alignment_backend",
+      "operator": "Bootstrap owner and Python tests; alignment_frontend separate branch"
     },
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",

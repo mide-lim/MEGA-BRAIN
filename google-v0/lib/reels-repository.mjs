@@ -1,4 +1,7 @@
 import {createHash} from 'node:crypto';
+import {validateContextualContribution,contextualCataloguePolicy} from './reels-contextual-catalogue.mjs';
+import {contextualHash} from './reels-contextual-projection.mjs';
+import {catalogueManifestActive,catalogueManifestPath,catalogueEditorialForItem} from './reels-contextual-catalogue-runtime.mjs';
 import {withFiniteContextualProofs} from './reels-contextual-calibration.mjs';
 import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
 import {parseReelLinks} from './links.mjs';
@@ -14,6 +17,12 @@ export class ReelsRepository{
  now(){return new Date(this.clock()).toISOString();}
  async raw(id){if(!reelIdPattern.test(id??''))throw invalid('Reel inválido.');return (await this.store.get(`videos/${id}`))?.data??null;}
  async navigation(items,saved){
+  if(this.catalogueEnabled){
+   const protectedIds=new Set((saved?.assignments??[]).filter(a=>a.manual===true).flatMap(a=>a.categoryIds??[]));
+   const historicalIds=new Set((saved?.rules??[]).filter(r=>r.kind==='calibrated_ingredient_any').map(r=>r.categoryId));
+   const view=saved?{...saved,nodes:(saved.nodes??[]).filter(n=>!historicalIds.has(n.id)||n.manual===true||protectedIds.has(n.id))}:saved;
+   return categoryNavigation(items,view);
+  }
   const proved=await withFiniteContextualProofs(items,saved,{loadSource:async id=>{
    const video=await this.raw(id);if(!video)return null;
    const legacy=publicationAvailable(video)?null:(await this.store.get('reels_legacy_content/'+id))?.data??null;
@@ -51,6 +60,40 @@ export class ReelsRepository{
   this.pending=(async()=>{try{const [records,legacyRecords]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS)]),legacy=new Map(legacyRecords.map(({data,path})=>[path.split('/')[1],data])),items=(await this.navigation(records.map(({data,path})=>{const id=data.id??path.split('/')[1];return withPreservedSummary(projectReel({...data,id}),legacy.get(id));}),(await this.store.get('settings/reels_v2_taxonomy'))?.data)).items;const now=this.clock();this.snapshot={items,observedAt:new Date(now).toISOString(),expiresAt:epoch===this.cacheEpoch?now+this.cacheTtlMs:0,stale:false};return items;}catch(error){if(!this.snapshot)throw error;this.snapshot.stale=true;return this.snapshot.items;}finally{this.pending=null;}})();
   return this.pending;
  }
+ async contextualContributions(cachedItems=null){
+  const [records,legacyRecords,manifestSnapshot,taxonomySnapshot]=await Promise.all([this.scan('videos',REEL_LIST_FIELDS),this.scan('reels_legacy_content',LEGACY_LIST_FIELDS),this.store.get(catalogueManifestPath),this.store.get('settings/reels_v2_taxonomy')]);
+  const legacy=new Map(legacyRecords.map(r=>[r.path.split('/')[1],r])),versions=new Map(),rawItems=[];
+  for(const r of records){const id=r.data.id??r.path.split('/')[1],old=legacy.get(id);versions.set(id,{video:r.updateTime,...(!publicationAvailable({...r.data,id})&&old?{legacy:old.updateTime}:{})});rawItems.push(withPreservedSummary(projectReel({...r.data,id}),old?.data));}
+  const taxonomy=taxonomySnapshot?.data??{},items=categoryNavigation(rawItems,taxonomy).items.filter(i=>i.publication.available),inventoryIds=items.map(i=>i.id).sort(),byId=new Map(items.map(i=>[i.id,i]));
+  const active=catalogueManifestActive(manifestSnapshot?.data),contributions=[];let sourceStale=false;
+  if(active){
+   const [rows,reviewRows]=await Promise.all([this.scanContextualIndex(),this.scanContextualReviews()]);
+   const reviews=new Map(reviewRows.map(r=>[r.data.reelId,r.data.reviewHash]));
+   for(const {data:c} of rows){
+    if(c.status!=='active'||!byId.has(c.reelId))continue;
+    validateContextualContribution(c);
+    const current=versions.get(c.reelId),item=byId.get(c.reelId),ed=catalogueEditorialForItem(item,taxonomy);
+    if(c.entry.formatReview&&reviews.get(c.reelId)!==c.entry.formatReview.reviewHash){sourceStale=true;continue;}
+    if(!current?.video||c.sourceVersions.video!==current.video||(c.sourceVersions.legacy??null)!==(current.legacy??null)||c.editorialHash!==contextualHash(ed)){sourceStale=true;continue;}
+    contributions.push(c);
+   }
+  }
+  if(taxonomy.pendingOperationId)sourceStale=true;
+  const dataAsOf=contributions.length?contributions.map(c=>c.observedAt).filter(Boolean).sort()[0]:manifestSnapshot?.data?.dataAsOf??this.now();
+  return {active,contributions,inventoryIds,items,sourceStale,dataAsOf,versionHash:contextualHash({active,contributions:contributions.map(c=>[c.reelId,c.idempotencyKey]),inventoryIds,sourceStale}),sourceVersions:versions};
+ }
+ async scanContextualReviews(){
+  const records=[];let cursor;const seen=new Set();
+  do{const page=await this.store.query('reels_index',{select:['kind','reelId','reviewHash'],filters:[{field:'kind',op:'eq',value:'contextual_review'}],limit:500,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Revisões contextuais não avançaram.');if(cursor)seen.add(cursor);}while(cursor);
+  return records;
+ }
+
+ async scanContextualIndex(){
+  const records=[];let cursor;const seen=new Set();
+  do{const page=await this.store.query('reels_index',{select:['schemaVersion','kind','policyVersion','status','reelId','sourceIdentity','sourceProofHash','ruleHash','editorialHash','sourceVersions','editorial','entry','observedAt','processingStarted','providerCalls','contentHash','idempotencyKey'],filters:[{field:'kind',op:'eq',value:'contextual_contribution'}],limit:500,cursor});records.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Índice contextual não avançou.');if(cursor)seen.add(cursor);}while(cursor);
+  return records;
+ }
+
  validateQuery(q){
   for(const [field,allowed]of Object.entries({workspace:['all','library','ready','attention'],attentionKind:['confirmed','uncertain'],sort:['newest','oldest','title'],status:['registered','queued','running','waiting','completed','failed','uncertain'],stage:['acquisition','transcription','analysis']}))if(q[field]&&(field==='status'?!String(q[field]).split(',').every(v=>allowed.includes(v)):!allowed.includes(q[field])))throw invalid('Filtro inválido.');
   for(const field of ['q','category','language','tag','worker','destination','context','dimension','value'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
@@ -59,6 +102,10 @@ export class ReelsRepository{
  }
  async matching(query={}){
   this.validateQuery(query);
+  if(this.catalogueRuntime&&/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
+   const matched=await this.catalogueRuntime.matchingIds(query),selected=new Set(matched.ids),{category,...rest}=query;
+   return (await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
+  }
   const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
   const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items;
   if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
@@ -119,7 +166,11 @@ export class ReelsRepository{
   const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
   const memberships=new Map(nodes.map(n=>[n.id,new Set()])),direct=new Map(nodes.map(n=>[n.id,new Set()]));
   for(const item of items)for(const cid of item.categoryIds){direct.get(cid)?.add(item.id);let id=cid;const seen=new Set();while(byId.has(id)&&!seen.has(id)){seen.add(id);memberships.get(id).add(item.id);id=byId.get(id).parentId;}}
-  return {nodes:nodes.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false})),total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
+  const catalogue=this.catalogueRuntime?await this.catalogueRuntime.overview():null;
+  const ordinary=nodes.filter(n=>!/^ctx_format_(single_recipe|recipe_collection)$/.test(n.id));
+  const mapped=ordinary.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false}));
+  for(const f of catalogue?.formats??[]){const saved=nodes.find(n=>n.id===f.categoryId);mapped.push({...saved,id:f.categoryId,name:saved?.manual?saved.name:f.label,parentId:saved?.manual?saved.parentId:'receitas',manual:saved?.manual??false,count:f.count,directCount:f.count,patterns:[],format:f.value,filter:f.filter});}
+  return {nodes:mapped,total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
  }
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}
 }

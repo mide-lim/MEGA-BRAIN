@@ -1,10 +1,11 @@
+import {semanticPromptHash} from '../lib/reels-semantic-provider.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {evaluateSemanticCalibration,semanticDefinitionHash,semanticCalibrationReceiptValid} from '../lib/reels-semantic-calibration.mjs';
 import {automaticSemanticPromotion} from '../lib/reels-semantic-contract.mjs';
 import {semanticHash,semanticPolicyVersion} from '../lib/reels-semantic-source.mjs';
 function fixture(){
- const promptHash='a'.repeat(64),job={id:'b'.repeat(64),status:'completed',phase:'complete',cohortHash:'c'.repeat(64),promptHash,policy:{model:'gemini-author',verifierModel:'gemini-verifier'}},group={id:'d'.repeat(64),key:'contexto-revisado',context:'recipe',kind:'segment',dimension:null,definition:'Um preparo culinário como assunto desenvolvido.',positiveCriteria:['Preparo demonstrado.'],negativeCriteria:['Tecnologia sem preparo.'],jobIds:[job.id],members:[],negativeExamples:[{id:'negative'}],verification:{status:'supported',independentPhase:true,promptHash,members:[]}},sources=[],labels=[];
+ const promptHash=semanticPromptHash,job={id:'b'.repeat(64),status:'completed',phase:'complete',cohortHash:'c'.repeat(64),promptHash,policy:{model:'gemini-author',verifierModel:'gemini-verifier'}},group={id:'d'.repeat(64),key:'contexto-revisado',context:'recipe',kind:'segment',dimension:null,definition:'Um preparo culinário como assunto desenvolvido.',positiveCriteria:['Preparo demonstrado.'],negativeCriteria:['Tecnologia sem preparo.'],jobIds:[job.id],members:[],negativeExamples:[{id:'negative'}],verification:{status:'supported',independentPhase:true,promptHash,members:[]}},sources=[],labels=[];
  for(let i=0;i<24;i++){const id='QaCal_'+String(i).padStart(3,'0'),sourceIdentity={kind:'native',reelId:id,analysisKey:id,analysisGeneration:'1'},semanticProofHash=semanticHash({id,sourceIdentity}),s={id,sourceIdentity,semanticProofHash,fields:[{fieldPath:'caption',text:i%2?'Uma explicação de computador.':'Uma receita completa de arroz.'}]},label=i%2===0; sources.push(s);
  if(label){group.members.push({id,role:'central',semanticProofHash});group.verification.members.push({reelId:id,verdict:'supported',semanticProofHash});}
  labels.push({groupId:group.id,reelId:id,split:i<4?'train':'holdout',label,definitionHash:semanticDefinitionHash(group),sourceIdentity,semanticProofHash,reviewSourceHash:semanticHash({id,sourceIdentity,semanticProofHash}),reason:'Independent synthetic source review.',evidence:[{fieldPath:'caption',excerpt:s.fields[0].text}]});}

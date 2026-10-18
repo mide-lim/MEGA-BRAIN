@@ -7,13 +7,14 @@ import {ReelsSemanticDomains} from '../lib/reels-semantic-domain-service.mjs';
 import {reelsAPI} from '../lib/reels-api.mjs';
 import {semanticHash,semanticPolicy} from '../lib/reels-semantic-source.mjs';
 import {semanticDomainProfiles,routeExistingSemanticDomain,validateSemanticDomainDestinations} from '../lib/reels-semantic-domain-contract.mjs';
-import {prepareSemanticDomainManifest,semanticDomainManifestValid,domainSourcePin,measureSemanticDomainRequest,semanticDomainRecordFromSaved} from '../lib/reels-semantic-domain-planner.mjs';
-import {prepareOwnerDomainQuarantine,domainQuarantineReviewScope,domainBudgetPath,domainQuarantinePath} from '../lib/reels-semantic-domain-authority.mjs';
+import {prepareSemanticDomainManifest,semanticDomainManifestValid,measureSemanticDomainManifestStorage,domainSourcePin,measureSemanticDomainRequest,semanticDomainRecordFromSaved} from '../lib/reels-semantic-domain-planner.mjs';
+import {prepareOwnerDomainQuarantine,domainQuarantineReviewScope,domainBudgetPath,domainQuarantinePath,uniqueDomainAuthorityChecks} from '../lib/reels-semantic-domain-authority.mjs';
 import {prepareSemanticProviderRequest,semanticExecutionPromptHash,semanticPromptHash,ReelsSemanticProvider} from '../lib/reels-semantic-provider.mjs';
 import {makeSemanticDomainFixture,seedSemanticDomainManifest,seedSyntheticDomainOwner} from './reels-semantic-domain-fixture.mjs';
+import {Firestore} from '../lib/firestore.mjs';
 import {semanticEnvelope} from './reels-semantic-fixture.mjs';
 const clone=v=>structuredClone(v),equal=(a,b)=>assert.equal(semanticHash(a),semanticHash(b));
-function setup(){const fixture=makeSemanticDomainFixture(),store=memoryReelsStore();for(const r of fixture.documents)store.docs.set(r.path,{data:clone(r.data),updateTime:r.updateTime});const now=new Date(Date.parse(fixture.at)+120000).toISOString(),repository=new ReelsRepository({store,cacheTtlMs:0}),deliveries=[],curator=new ReelsSemanticCurator({repository,provider:fixture.provider,clock:()=>Date.parse(now),enqueue:async j=>{deliveries.push(clone(j));return {status:'sent'};}}),domains=new ReelsSemanticDomains({repository,semantic:curator,clock:()=>Date.parse(now)});return {fixture,store,repository,curator,domains,now,deliveries};}
+function setup({count=20}={}){const fixture=makeSemanticDomainFixture({count}),store=memoryReelsStore();for(const r of fixture.documents)store.docs.set(r.path,{data:clone(r.data),updateTime:r.updateTime});const now=new Date(Date.parse(fixture.at)+120000).toISOString(),repository=new ReelsRepository({store,cacheTtlMs:0}),deliveries=[],curator=new ReelsSemanticCurator({repository,provider:fixture.provider,clock:()=>Date.parse(now),enqueue:async j=>{deliveries.push(clone(j));return {status:'sent'};}}),domains=new ReelsSemanticDomains({repository,semantic:curator,clock:()=>Date.parse(now)});return {fixture,store,repository,curator,domains,now,deliveries};}
 async function records(s){const i=await s.curator.inventory(),rows=[];for(const item of i.items)rows.push(semanticDomainRecordFromSaved(await s.curator.catalogue.loadSource(item.id)));return rows;}
 test('domain routing is operational, exact-ID based and can abstain across unrelated ancestors',()=>{
  assert.equal(routeExistingSemanticDomain(['receitas']).domainId,'food');assert.equal(routeExistingSemanticDomain(['nutricao']).domainId,'food');
@@ -192,4 +193,32 @@ test('invalid configured call limits cannot normalize to the enabled authorized 
  assert.equal(valid.enabled,true);assert.equal(valid.maxCalls,127);equal(semanticPolicy(valid),valid);
  for(const maxCalls of [128,160,0,-1,1.5,'127',null]){const invalid=semanticPolicy({...value,maxCalls});assert.equal(invalid.enabled,false);assert.notEqual(semanticHash(invalid),semanticHash(valid));}
  assert.equal(semanticPolicy({...value,maxCalls:undefined}).maxCalls,127);
+});
+
+test('submitted identity and epoch protect eight uncertain sources despite changed projection proofs without asserting equivalence',async()=>{
+ const s=setup({count:499}),seed=await seedSyntheticDomainOwner({curator:s.curator,activate:false}),origin=clone(seed.originJob),b=origin.data.batch;
+ for(const pin of b.binding.pins){pin.semanticProofHash=semanticHash('synthetic historical v1 '+pin.id);pin.editorialHash=semanticHash('synthetic historical editorial '+pin.id);pin.sourceProjectionVersion='synthetic-historical-v1';}b.bindingHash=semanticHash(b.binding);
+ const r=await records(s),taxonomy=(await s.store.get('settings/reels_v2_taxonomy')).data,first=(await s.curator.scan('semantic_result')).find(row=>row.data.binding.jobId===origin.data.id),histories=[{job:origin,results:[first],recoveries:[]}];
+ const prepare=histories=>prepareSemanticDomainManifest({records:r,taxonomy,histories,historyCoverageConfirmed:true,prepareRequest:prepareSemanticProviderRequest,observedAt:s.now}),manifest=prepare(histories);
+ assert.equal(manifest.sources.filter(r=>r.state==='retained_applied').length,8);assert.equal(manifest.sources.filter(r=>r.state==='protected_uncertain').length,8);assert.equal(manifest.sources.filter(r=>r.state==='eligible').length,483);
+ for(const row of manifest.sources.filter(r=>r.state==='protected_uncertain')){const ref=row.historicalRefs.find(r=>r.state==='protected_attempt');assert.equal(ref.basis,'submitted_identity_and_source_epoch');assert.equal(ref.equivalenceUnproven,true);assert.notEqual(ref.submittedSemanticProofHash,ref.currentSemanticProofHash);}
+ assert.ok(manifest.domains.every(d=>d.measurementBatches.every(b=>b.pins===undefined&&typeof b.pinsHash==='string')));assert.equal(semanticDomainManifestValid(manifest),true);
+ const size=measureSemanticDomainManifestStorage(manifest);assert.equal(size.withinLimit,true);assert.ok(size.nativeDocumentBytes<900000);assert.equal(size.compactJsonUtf8Bytes,Buffer.byteLength(JSON.stringify(manifest),'utf8'));
+ for(const mutation of ['broken_hash','other_job','other_cursor','source_epoch']){
+  const changed=clone(histories);if(mutation==='broken_hash')changed[0].job.data.batch.bindingHash=semanticHash('broken');else if(mutation==='source_epoch')changed[0].job.data.batch.binding.pins[0].sourceVersions.video='2026-10-18T00:00:01.000Z';else if(mutation==='other_job')changed[0].job.data.batch.binding.jobId=semanticHash('other-job');else changed[0].job.data.batch.binding.cursor=0;
+  if(mutation!=='broken_hash')changed[0].job.data.batch.bindingHash=semanticHash(changed[0].job.data.batch.binding);
+  const blocked=prepare(changed);assert.equal(blocked.sources.filter(r=>r.state==='protected_uncertain').length,0);assert.equal(blocked.sources.filter(r=>r.state==='historical_coverage_unconfirmed').length,8);assert.equal(blocked.sources.filter(r=>r.state==='eligible').length,483);
+ }
+ const oversized=clone(manifest);oversized.limits.push('x'.repeat(950000));delete oversized.manifestHash;oversized.manifestHash=semanticHash(oversized);assert.equal(measureSemanticDomainManifestStorage(oversized).withinLimit,false);assert.equal(semanticDomainManifestValid(oversized),false);assert.equal(s.fixture.calls.length,0);
+});
+test('the complete owner quarantine plan uses unique epoch checks through the real Firestore transaction adapter',async()=>{
+ const s=setup(),seed=await seedSyntheticDomainOwner({curator:s.curator,activate:false}),plan=seed.plan,project='megabrain-v0-1017370021431',prefix='projects/'+project+'/databases/(default)/documents/',root='https://firestore.googleapis.com/v1/'+prefix.slice(0,-1),calls=[];
+ assert.equal(new Set(plan.checks.map(c=>c.path)).size,plan.checks.length);assert.ok(plan.checks.some(c=>c.path==='settings/reels_v2_semantic_domain_plan')===false);
+ // The actual create/intent adds the manifest epoch to the same adapter checks.
+ const checks=[...plan.checks,{path:'settings/reels_v2_semantic_domain_plan',updateTime:s.fixture.at}],expected=new Map(checks.map(c=>[prefix+c.path,c.updateTime]));
+ const api={project,async request(url,o={}){calls.push({url,input:clone(o)});if(url===root+':beginTransaction')return {transaction:'synthetic-domain-owner-tx'};if(url===root+':batchGet'){assert.equal(o.json.transaction,'synthetic-domain-owner-tx');return o.json.documents.map(name=>expected.get(name)===null?{missing:name}:{found:{name,updateTime:expected.get(name)}});}if(url===root+':commit'){assert.equal(o.json.transaction,'synthetic-domain-owner-tx');assert.deepEqual(o.json.writes.map(w=>w.update.name),plan.writes.map(w=>prefix+w.path));return {writeResults:plan.writes.map(()=>({updateTime:'synthetic-new-version'}))};}if(url===root+':rollback')return {};throw Error('Unexpected fake endpoint');}},store=new Firestore(api);store.metadataWrite=(url,o)=>api.request(url,o);
+ assert.equal((await store.commitSemantic({checks,writes:plan.writes})).applied,true);assert.equal(calls.filter(c=>c.url.endsWith(':commit')).length,1);assert.equal(s.fixture.calls.length,0);
+ assert.deepEqual(uniqueDomainAuthorityChecks([{path:'videos/QaEpoch',updateTime:'same'},{path:'videos/QaEpoch',updateTime:'same'}]),[{path:'videos/QaEpoch',updateTime:'same'}]);
+ assert.throws(()=>uniqueDomainAuthorityChecks([{path:'videos/QaEpoch',updateTime:'old'},{path:'videos/QaEpoch',updateTime:'new'}]),{code:'DOMAIN_QUARANTINE_CONFLICTING_EPOCHS'});
+ const blocked={checks:[...checks,{path:'settings/not_a_domain_plan',updateTime:null}],writes:plan.writes},before=calls.length;await assert.rejects(()=>store.commitSemantic(blocked));assert.equal(calls.length,before);
 });

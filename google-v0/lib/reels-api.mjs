@@ -1,3 +1,4 @@
+import {ReelsCatalogueRuntime} from './reels-contextual-catalogue-runtime.mjs';
 import {ReelsService} from './reels-service.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ReelsFinance} from './reels-finance.mjs';
@@ -11,6 +12,8 @@ async function body(request){const length=request.headers.get('content-length');
 function query(url){const result=Object.fromEntries(url.searchParams);if(result.limit!==undefined){if(!/^\d+$/.test(result.limit)||Number(result.limit)<1||Number(result.limit)>100)throw fail('INVALID_LIMIT','Limite inválido.');result.limit=Number(result.limit);}for(const [k,v]of Object.entries(result)){if(typeof v==='string'&&v.length>(k==='cursor'?8192:k==='facets'?4096:500))throw fail('INVALID_INPUT','Filtro muito longo.');}return result;}
 export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=false,clock=Date.now,onQueued,onCommandQueued,contextual,service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued}),reconciliation=new ReelsReconciliation({repository,processingEnabled,clock})}){
  const taxonomy=new ReelsTaxonomy({repository,clock}),finance=new ReelsFinance({repository,clock});
+ let catalogue;
+ const getCatalogue=()=>catalogue??=new ReelsCatalogueRuntime({repository,clock});
  let contextualCurator=contextual;
  const getContextual=()=>contextualCurator??=new ReelsContextualCurator({repository,clock});
  repository.contextualMatchingIds=async filters=>getContextual().matchingIds(filters);
@@ -20,6 +23,7 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
  return async function handle(request){
   try{
    if(!await authorize(request))return response({error:'Não autorizado.',code:'UNAUTHORIZED'},401);
+   if(typeof repository.contextualContributions==='function')getCatalogue();
    const url=new URL(request.url);if(!url.pathname.startsWith('/api/reels/'))throw fail('NOT_FOUND','Rota não encontrada.',404);const path=url.pathname.slice('/api/reels/'.length),parts=path.split('/');
    if(!['GET','POST'].includes(request.method))throw fail('METHOD_NOT_ALLOWED','Método não permitido.',405);
    if(request.method==='POST'&&!await sameOrigin(request))throw fail('ORIGIN_REJECTED','Origem não autorizada.',403);
@@ -29,6 +33,7 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='items')return response(await repository.list(q));
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}
     if(path==='queues')return response({...await repository.queues(),...controls});
+     if(path==='curation/catalogue')return response(await getCatalogue().overview());
      if(path==='curation/calibration')return response(await getCalibration().overview());
      if(path==='quality/saved')return response(await getCalibration().savedQuality(q));
      if(path==='quality')return response({...await repository.quality(q),...controls});
@@ -46,7 +51,11 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='preview')return response(await service.preview(input.selection,input.type));
     if(path==='commands')return response(await service.command(input));
     if(path==='reconciliations')return response(await reconciliation.command(input));
-    if(path==='categories')return response(await taxonomy.mutate(input));
+    if(path==='categories'){
+     const changed=await taxonomy.mutate(input);
+     if(input.preview!==true&&input.action==='reclassify'&&Array.isArray(input.reelIds))for(const id of [...new Set(input.reelIds)]){try{await getCatalogue().project(id,{type:'editorialChanged',eventId:'taxonomy-'+(changed.operationId??input.idempotencyKey)+'-'+id});}catch{}}
+     return response(changed);
+    }
     if(path==='finance')return response(await finance.update(input));
    }
    throw fail('NOT_FOUND','Rota não encontrada.',404);

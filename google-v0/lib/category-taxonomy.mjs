@@ -42,7 +42,10 @@ export function categoryLabel(value){
 }
 const topicTerms=new Set(['paes','cafe da manha','inovacao','esportes','pratos principais','petiscos']);
 const broadGroups=new Map([['casa','Casa e estilo'],['negocios','Trabalho e negócios'],['saude','Saúde e bem-estar']]);
-const termsById=new Map(categoryDefinitions.map(c=>[c.id,new Set([categoryKey(c.name),...c.terms.map(categoryKey)])]));
+// A display label can be broader than its destination's scope. Keep those
+// labels unresolved unless an explicit alias supplies the missing context.
+const ambiguousDisplayNames=new Set(['sustentabilidade']);
+const termsById=new Map(categoryDefinitions.map(c=>[c.id,new Set([...(ambiguousDisplayNames.has(categoryKey(c.name))?[]:[categoryKey(c.name)]),...c.terms.map(categoryKey)])]));
 export function resolveCategories(values=[]){
  const terms=values.map(value=>({value,key:categoryKey(categoryLabel(value)??'')}));
  const ordered=[];

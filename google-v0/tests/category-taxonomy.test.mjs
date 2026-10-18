@@ -106,8 +106,14 @@ test('generation bounds additional categories and keeps general destinations exc
  assert.ok(categoryOptions().every(c=>c.scope));
 });
 
-test('official display names and unambiguous personal-style labels avoid false fallback',()=>{
- for(const c of categoryDefinitions)assert.deepEqual(resolveCategories([c.name]).ids,[c.id],c.name);
+test('unambiguous official display names and personal-style labels avoid false fallback',()=>{
+ for(const c of categoryDefinitions.filter(c=>c.id!=='sustentabilidade-alimentar'))assert.deepEqual(resolveCategories([c.name]).ids,[c.id],c.name);
+ // The visible short name must not turn broad environmental content into Food.
+ const broad=resolveCategories(['Sustentabilidade']);
+ assert.deepEqual(broad.ids,['a-organizar']);assert.deepEqual(broad.unresolved,['Sustentabilidade']);
+ assert.deepEqual(resolveCategories(['Alimentação sustentável']).ids,['sustentabilidade-alimentar']);
+ assert.deepEqual(resolveCategories(['sustentabilidade-alimentar']).ids,['sustentabilidade-alimentar']);
+ assert.deepEqual(resolveCategories(['Sustentabilidade','Moda']).ids,['moda-acessorios']);
  for(const term of ['Moda e estilo','Estilo pessoal','Beleza e cuidados pessoais','Cuidados pessoais','Cabelo e barba','Cortes de cabelo','Barbearia']){
   assert.deepEqual(resolveCategories([term]).ids,['moda-acessorios'],term);
  }

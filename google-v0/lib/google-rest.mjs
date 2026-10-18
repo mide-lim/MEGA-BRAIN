@@ -37,26 +37,31 @@ export class GoogleREST {
     if(parsed.hostname==='us-speech.googleapis.com'&&!parsed.pathname.startsWith(`/v2/projects/${this.project}/locations/us/`)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname))throw new Error('Endpoint STT regional deve usar a região us.');
     if(json!==undefined&&body!==undefined)throw new Error('Corpo ambíguo.');
     if(Object.keys(headers).some(h=>['authorization','x-goog-user-project'].includes(h.toLowerCase())))throw new Error('Cabeçalhos de identidade não podem ser substituídos.');
-    const started=performance.now();let response;
-    const diagnostic=error=>({operation_step:['submit_analysis','submit_stt'].includes(operationStep)?operationStep:null,elapsed_ms:Math.max(0,Math.round(performance.now()-started)),error_name:safeErrorName(error?.name),error_code:safeErrorCode(error?.code),http_status:Number.isInteger(response?.status)?response.status:null,request_id:safeRequestId(response?.headers?.get('x-request-id')),model:typeof model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(model)?model:null,attempt:Number.isSafeInteger(attempt)&&attempt>0&&attempt<=3?attempt:null,timeout_ms:timeoutMs});
+    const started=performance.now();let response,requestStage='credential',dispatchAttempted=false,responseBodyComplete=false;
+    const apiService=({'aiplatform.googleapis.com':'vertex_ai','firestore.googleapis.com':'firestore','cloudtasks.googleapis.com':'cloud_tasks','storage.googleapis.com':'storage','speech.googleapis.com':'speech','us-speech.googleapis.com':'speech'})[parsed.hostname];
+    const diagnostic=error=>({api_service:apiService,request_stage:requestStage,dispatch_attempted:dispatchAttempted,response_received:Boolean(response),response_body_complete:responseBodyComplete,operation_step:['submit_analysis','submit_stt'].includes(operationStep)?operationStep:null,elapsed_ms:Math.max(0,Math.round(performance.now()-started)),error_name:safeErrorName(error?.name),error_code:safeErrorCode(error?.code),http_status:Number.isInteger(response?.status)?response.status:null,request_id:safeRequestId(response?.headers?.get('x-request-id')),model:typeof model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(model)?model:null,attempt:Number.isSafeInteger(attempt)&&attempt>0&&attempt<=3?attempt:null,timeout_ms:timeoutMs});
     let completed=false;
     try{
       const token=await this.tokenProvider();
       if(typeof token!=='string'||!token)throw new Error('Credencial indisponível.');
-      response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:json!==undefined?JSON.stringify(json):body,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
+      requestStage='request_preparation';const requestBody=json!==undefined?JSON.stringify(json):body;
+      requestStage='fetch_started';dispatchAttempted=true;
+      response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:requestBody,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
+      requestStage='http_response_received';
       if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;error.provider_diagnostic=await providerDiagnostic(response);throw error;}
+      requestStage='response_body_read';
       if(responseMode==='bytes'){
         if(!Number.isSafeInteger(maxResponseBytes)||maxResponseBytes<1)throw new Error('Limite de resposta inválido.');
         if(Number(response.headers.get('content-length'))>maxResponseBytes){await response.body?.cancel();throw new Error('Objeto acima do limite de leitura.');}
-        if(!response.body){completed=true;await onDiagnostic?.(diagnostic());return Buffer.alloc(0);}
+        if(!response.body){responseBodyComplete=true;requestStage='response_complete';completed=true;await onDiagnostic?.(diagnostic());return Buffer.alloc(0);}
         const reader=response.body.getReader();const chunks=[];let total=0;
         try{while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;
           if(total>maxResponseBytes){await reader.cancel();throw new Error('Objeto acima do limite de leitura.');}chunks.push(Buffer.from(value));}}
         finally{reader.releaseLock();}
-        const result=Buffer.concat(chunks,total);completed=true;await onDiagnostic?.(diagnostic());return result;
+        const result=Buffer.concat(chunks,total);responseBodyComplete=true;requestStage='response_complete';completed=true;await onDiagnostic?.(diagnostic());return result;
       }
       const result=responseMode==='raw'?response:response.status===204?null:await response.json();
-      completed=true;await onDiagnostic?.(diagnostic());return result;
+      responseBodyComplete=responseMode!=='raw';requestStage=responseMode==='raw'?'http_response_received':'response_complete';completed=true;await onDiagnostic?.(diagnostic());return result;
     }catch(error){
       error.google_diagnostic=diagnostic(error);
       if(response)error.status=response.status;

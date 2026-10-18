@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {ReelsCatalogueRuntime,catalogueEditorialForItem} from './reels-contextual-catalogue-runtime.mjs';
 import {semanticHash,semanticPolicy,semanticPolicyPath,semanticPolicyVersion,semanticSourceFromSaved,semanticEditorial,prepareSemanticPlan} from './reels-semantic-source.mjs';
 import {validateSemanticOutput,validateSemanticVerificationEvidence,automaticSemanticPromotion,semanticContractVersion} from './reels-semantic-contract.mjs';
-import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-provider.mjs';
+import {parseSavedSemanticResponse,semanticPromptHash,semanticFailureDiagnostic} from './reels-semantic-provider.mjs';
 const list=v=>Array.isArray(v)?v:[];
 const clone=v=>structuredClone(v);
 const problem=(code,message,status=409)=>Object.assign(Error(message),{code,status});
@@ -21,7 +21,7 @@ const sourceCurrent=(a,b)=>semanticHash(a??{})===semanticHash(b??{});
 const checkpointResultMatches=(job,s)=>{
  const cp=job.alignmentCheckpoint;return job.batch===null&&job.phase==='extract'&&job.callsUsed===2&&job.cursor===16&&cp?.version==='semantic-alignment-checkpoint-v1'&&cp.status==='pending_review'&&cp.resultId===semanticHash({jobId:job.id,phase:'extract',cursor:8})&&s?.kind==='semantic_result'&&s.id===cp.resultId&&s.processed===true&&s.phase==='extract'&&s.bindingHash===cp.bindingHash&&s.bindingHash===semanticHash(s.binding??{})&&s.rawHash===cp.rawHash&&s.binding?.jobId===job.id&&s.binding.phase==='extract'&&s.binding.cursor===8&&s.binding.policyHash===job.policyHash&&s.binding.promptHash===semanticPromptHash&&s.binding.promptTransitionHash===cp.transitionHash&&sourceCurrent(s.binding.pins,cp.pins)&&sourceCurrent(cp.pins?.map(p=>({id:p.id,sourceVersions:p.sourceVersions})),job.pins?.slice(8,16));
 };
-const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0,proposalOverflowCount:list(j.proposalOverflow).length,coverageLimit:j.coverageLimit??null});
+const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0,proposalOverflowCount:list(j.proposalOverflow).length,coverageLimit:j.coverageLimit??null,providerDiagnostic:j.providerDiagnostic??null});
 export class ReelsSemanticCurator{
  constructor({repository,provider=null,enqueue=null,clock=Date.now,leaseMs=180000}){
   if(!repository?.store)throw Error('Curador semântico exige repositório.');
@@ -149,18 +149,39 @@ export class ReelsSemanticCurator{
    const checks=this.uniqueChecks([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path:semanticPolicyPath,updateTime:p.snapshot?.updateTime??null},...loaded.checks,...promptAuth.checks,...groups.map(g=>({path:g.path,updateTime:g.updateTime}))]);
    const intent={...job,status:'running',batch,callsUsed:job.callsUsed+1,updatedAt:this.now()};
    try{await this.commit(checks,[{path:jobPath(job.id),data:intent}]);}catch{break;}
-   const live=await this.store.get(jobPath(job.id));
+   const live=await this.store.get(jobPath(job.id));let failureStage='provider';
    try{
     if(!this.provider)throw Error('Provider semântico não configurado.');
     let envelope;
     if(job.phase==='extract')envelope=await this.provider.infer({...phasePayload,requestId:batchId,model:job.policy.model});
     else if(job.phase==='consolidate')envelope=await this.provider.consolidate({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
     else envelope=await this.provider.verify({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
-    const saved=await this.envelopeSave(batchId,envelope,binding);await this.applySaved(live,saved);
-   }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.stop(latest,error.requiresReconciliation?'uncertain':error.status===409?'paused':known?'failed':'uncertain',error.code??(known?'SAVED_RESPONSE_REQUIRES_REVIEW':'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN'));};break;}
+    failureStage='raw_persistence';const saved=await this.envelopeSave(batchId,envelope,binding);failureStage='saved_application';await this.applySaved(live,saved);
+   }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.recordFailure(latest,error,{stage:failureStage,envelopePresent:Boolean(known)});}break;}
   }
   const final=(await this.store.get(jobPath(jobId))).data;await this.dispatch(final);return {job:publicJob((await this.store.get(jobPath(jobId))).data)};
  }
+
+ async recordFailure(snapshot,error,{stage,envelopePresent}){
+  const job=snapshot.data,batch=job.batch,path='reels_index/semantic_attempt_'+batch.id,prior=await this.store.get(path);
+  // Preserve a previous immutable observation; never overwrite it after an ACK
+  // loss or use diagnostic persistence as permission to repeat provider work.
+  if(prior){if(prior.data.jobId!==job.id||prior.data.bindingHash!==batch.bindingHash)throw problem('SEMANTIC_ATTEMPT_CONFLICT','Diagnóstico pertence a outro envio.');return;}
+  const diagnostic=semanticFailureDiagnostic(error,{stage,phase:batch.phase,envelopePresent}),now=this.now();
+  const status=!envelopePresent||error.requiresReconciliation?'uncertain':stage==='saved_application'&&error.status===409?'paused':'failed';
+  const reason=envelopePresent?'SAVED_RESPONSE_REQUIRES_REVIEW':'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN';
+  const attempt={kind:'semantic_attempt',schemaVersion:1,id:batch.id,jobId:job.id,bindingHash:batch.bindingHash,phase:batch.phase,cursor:batch.offset,callsUsed:job.callsUsed,diagnostic,recordedAt:now};
+  const next={...job,status,reason,providerDiagnostic:{attemptId:batch.id,...diagnostic},updatedAt:now};
+  try{await this.commit([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path,updateTime:null}],[{path,data:attempt},{path:jobPath(job.id),data:next}]);}
+  catch(cause){
+   const [a,j]=await Promise.all([this.store.get(path),this.store.get(jobPath(job.id))]);
+   if(a&&j&&semanticHash(a.data)===semanticHash(attempt)&&semanticHash(j.data)===semanticHash(next))return;
+   // A failed diagnostic CAS leaves the original submitting intent untouched.
+   // It cannot release a lease, subtract a counted call or enqueue a replay.
+   throw cause;
+  }
+ }
+
  async stop(snapshot,status,reason){await this.commit([{path:jobPath(snapshot.data.id),updateTime:snapshot.updateTime}],[{path:jobPath(snapshot.data.id),data:{...snapshot.data,status,reason,updatedAt:this.now()}}]);}
  async applySaved(snapshot,saved,{commandReceipt=null,deferContinuation=false}={}){
   const job=snapshot.data,batch=job.batch,currentPolicy=await this.policy();
@@ -252,7 +273,7 @@ export class ReelsSemanticCurator{
  }
  async publicJob(j,{inventory=null}={}){return {...publicJob(j),canReconcileSaved:await this.reconciliationMetadata(j),canContinueAlignmentCheckpoint:await this.alignmentCheckpointMetadata(j,{inventory})};}
  async overview(){
-  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit','batch','promptHash','policyHash','policyVersion','pins','alignmentCheckpoint']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
+  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit','batch','promptHash','policyHash','policyVersion','pins','alignmentCheckpoint','providerDiagnostic']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
   const current=profiles.filter(p=>sourceCurrent(p.data.sourceVersions,state.inventory.sourceVersions.get(p.data.reelId))),unknown=current.filter(p=>p.data.state!=='proposed').length;
   let preview;try{preview=await this.preview({all:true});}catch{preview={preview:{blockingReasons:['SAVED_INVENTORY_UNAVAILABLE']}};}
   const view=g=>({...g,members:undefined,negativeExamples:undefined,verification:g.verification?{status:g.verification.status,authorModel:g.verification.authorModel,verifierModel:g.verification.verifierModel}:null});

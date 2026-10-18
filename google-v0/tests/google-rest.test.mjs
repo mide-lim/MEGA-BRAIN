@@ -47,3 +47,13 @@ test('oversized or malformed Google error body preserves HTTPstatus without diag
   await assert.rejects(()=>client.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test'),e=>e.status===429&&e.provider_diagnostic===null);
  }
 });
+
+test('request stages prove credential failure before fetch and distinguish HTTP200 body failure',async()=>{
+ let calls=0;
+ const before=new GoogleREST({project:'megabrain-v0-test',tokenProvider:async()=>{throw Error('private credential failure');},fetchImpl:async()=>{calls++;}});
+ await assert.rejects(()=>before.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test'),e=>e.google_diagnostic.request_stage==='credential'&&e.google_diagnostic.dispatch_attempted===false&&e.google_diagnostic.response_received===false);
+ assert.equal(calls,0);
+ const body=new GoogleREST({project:'megabrain-v0-test',tokenProvider:()=> 'synthetic',fetchImpl:async()=>{calls++;return new Response('{incomplete',{status:200});}});
+ await assert.rejects(()=>body.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test'),e=>e.status===200&&e.google_diagnostic.request_stage==='response_body_read'&&e.google_diagnostic.dispatch_attempted===true&&e.google_diagnostic.response_received===true&&e.google_diagnostic.response_body_complete===false&&e.google_diagnostic.api_service==='vertex_ai');
+ assert.equal(calls,1);
+});

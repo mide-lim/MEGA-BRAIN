@@ -66,19 +66,36 @@ export function semanticSchemaForPhase(phase,payload){
  }else throw Error('Fase semântica inválida.');
  return schema;
 }
+
+// Persist only fixed enums/scalars. Google error messages can echo source text;
+// even an already-redacted message must never enter semantic attempt metadata.
+const safeStage=value=>['provider_preflight','credential','request_preparation','fetch_started','http_response_received','response_body_read','response_complete'].includes(value)?value:null;
+const safeStatus=value=>Number.isInteger(value)&&value>=100&&value<=599?value:null;
+const safeCode=value=>typeof value==='string'&&/^(?:ERR_[A-Z_]{1,48}|E[A-Z]{2,24}|UND_ERR_[A-Z_]{1,48})$/.test(value)?value:null;
+const providerStatuses=new Set(['CANCELLED','UNKNOWN','INVALID_ARGUMENT','DEADLINE_EXCEEDED','NOT_FOUND','ALREADY_EXISTS','PERMISSION_DENIED','RESOURCE_EXHAUSTED','FAILED_PRECONDITION','ABORTED','OUT_OF_RANGE','UNIMPLEMENTED','INTERNAL','UNAVAILABLE','DATA_LOSS','UNAUTHENTICATED']);
+export function semanticFailureDiagnostic(error,{stage='provider',phase=null,envelopePresent=false}={}){
+ const provider=stage==='provider',g=error?.google_diagnostic,local=provider&&error?.semantic_preflight===true;
+ const requestStage=local?'provider_preflight':safeStage(g?.request_stage);
+ const dispatched=local?false:typeof g?.dispatch_attempted==='boolean'?g.dispatch_attempted:null;
+ const received=typeof g?.response_received==='boolean'?g.response_received:null;
+ const status=safeStatus(provider?(g?.http_status??error?.status):error?.google_diagnostic?.http_status);
+ const outcome=!provider?(envelopePresent?'saved_response_requires_review':'response_received_persistence_uncertain'):dispatched===false?'not_submitted':g?.api_service==='vertex_ai'&&received===true&&status!==null&&status>=400?(status<500?'http_rejection_received':'http_error_received'):'submission_uncertain';
+ return {version:'semantic-provider-diagnostic-v1',origin:provider?'semantic_provider':stage==='saved_application'?'saved_application':'semantic_persistence',phase:['extract','consolidate','verify'].includes(phase)?phase:null,operationStage:['provider','raw_persistence','saved_application'].includes(stage)?stage:null,apiService:['vertex_ai','firestore','cloud_tasks','storage','speech'].includes(g?.api_service)?g.api_service:null,outcome,requestStage,httpStatus:status,providerStatus:provider&&providerStatuses.has(error?.provider_diagnostic?.status)?error.provider_diagnostic.status:null,dispatchAttempted:dispatched,responseReceived:received,responseBodyComplete:typeof g?.response_body_complete==='boolean'?g.response_body_complete:null,errorName:['Error','TypeError','SyntaxError','AbortError','TimeoutError','RangeError'].includes(error?.name)?error.name:null,errorCode:safeCode(error?.code)??safeCode(error?.cause?.code),elapsedMs:Number.isSafeInteger(g?.elapsed_ms)&&g.elapsed_ms>=0?g.elapsed_ms:null,timeoutMs:Number.isSafeInteger(g?.timeout_ms)&&g.timeout_ms>0&&g.timeout_ms<=840000?g.timeout_ms:null,attempt:Number.isSafeInteger(g?.attempt)&&g.attempt>0&&g.attempt<=3?g.attempt:null,model:provider&&typeof g?.model==='string'&&/^gemini-[a-z0-9.-]{1,80}$/.test(g.model)?g.model:null,requestId:provider&&typeof g?.request_id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(g.request_id)?g.request_id:null,providerEnvelopeReturned:!provider,envelopePresent:envelopePresent===true,billingOutcome:'not_determined',retryAllowed:false};
+}
+
 export class ReelsSemanticProvider{
  constructor({api}){if(!api?.request||api.project!=='megabrain-v0-1017370021431')throw Error('Provider semântico exige projeto isolado.');this.api=api;}
  async call({phase,payload,requestId,model}){
-  if(!/^gemini-[a-z0-9.-]{1,80}$/.test(model??'')||JSON.stringify(payload).length>320000||!/^[a-f0-9]{64}$/.test(requestId??''))throw Error('Chamada semântica fora do pacote finito.');
+  if(!/^gemini-[a-z0-9.-]{1,80}$/.test(model??'')||JSON.stringify(payload).length>320000||!/^[a-f0-9]{64}$/.test(requestId??''))throw Object.assign(Error('Chamada semântica fora do pacote finito.'),{semantic_preflight:true});
   const instruction=phase==='extract'?semanticInstruction:phase==='consolidate'?semanticConsolidationInstruction:phase==='verify'?semanticVerificationInstruction:null,schema=instruction?semanticSchemaForPhase(phase,payload):null;
-  if(!instruction)throw Error('Fase semântica inválida.');
+  if(!instruction)throw Object.assign(Error('Fase semântica inválida.'),{semantic_preflight:true});
   const request={systemInstruction:{parts:[{text:instruction}]},contents:[{role:'user',parts:[{text:JSON.stringify({task:'curate_saved_published_knowledge',phase,requestId,...payload})}]}],generationConfig:{temperature:0.1,maxOutputTokens:16384,responseMimeType:'application/json',responseSchema:schema}};
   const response=await this.api.request('https://aiplatform.googleapis.com/v1/projects/'+this.api.project+'/locations/global/publishers/google/models/'+model+':generateContent',{method:'POST',json:request,timeoutMs:90000,operationStep:'submit_analysis',model,attempt:1});
   // Return the received paid envelope even when incomplete/invalid. The caller
   // persists it before parsing or validating and never regenerates it.
   return {rawResponse:response,usage:response?.usageMetadata??null,providerResponseId:typeof response?.responseId==='string'?response.responseId:null,requestHash:semanticHash(request),model,phase};
  }
- async infer({sources,catalogue,requestId,model}){if(!Array.isArray(sources)||!sources.length||sources.length>12)throw Error('Lote semântico inválido.');return this.call({phase:'extract',payload:{sources,catalogue},requestId,model});}
+ async infer({sources,catalogue,requestId,model}){if(!Array.isArray(sources)||!sources.length||sources.length>12)throw Object.assign(Error('Lote semântico inválido.'),{semantic_preflight:true});return this.call({phase:'extract',payload:{sources,catalogue},requestId,model});}
  async consolidate(input){return this.call({...input,phase:'consolidate',payload:{groups:input.groups}});}
  async verify(input){return this.call({...input,phase:'verify',payload:{sources:input.sources,groups:input.groups,members:input.members,negativeExamples:input.negativeExamples,profiles:input.profiles??[]}});}
 }

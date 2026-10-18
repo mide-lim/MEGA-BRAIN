@@ -1,7 +1,8 @@
 import {createHash} from 'node:crypto';
+import {projectContextualPublication} from '../lib/reels-contextual-projection.mjs';
 // Complete synthetic accepted-source inventory; no I/O and no real Reel data.
 export function makeFullCatalogueFixture(){
- const observedAt='2026-10-18T00:20:00.000Z',version='2026-10-18T00:15:00.000Z',catalog=[],records=[];
+ const observedAt='2026-10-18T00:20:00.000Z',version='2026-10-18T00:15:00.000Z',catalog=[],records=[],formatReviews=[];
  const make=(id,context,units=[])=>{
   const transcript=units.map(u=>u.excerpt).join(' '),fields=[];
   if(units.length)fields.push({kind:'ingredient',name:'Frango',value:'Frango',unitIds:['u1'],evidence:[{source:'caption',excerpt:units[0].excerpt}]});
@@ -22,6 +23,10 @@ export function makeFullCatalogueFixture(){
   const sourceJson=JSON.stringify(source),sourceSnapshotHash=createHash('sha256').update(sourceJson).digest('hex'),identity=source.legacy?{kind:'legacy_preserved',recordHash:source.legacy.provenance.recordHash,sourceSnapshotHash:source.legacy.provenance.sourceSnapshotHash}:{kind:'native',analysisKey:source.video.analysis_key,analysisGeneration:source.video.analysis_generation};
   catalog.push({id:source.item.id,publicationAvailable:true,categoryIds:source.item.categoryIds,manual:false,sourceIdentity:identity,updateTime:version});
   records.push({sourceJson,sourceSnapshotHash});
+  if(source.item.id==='QaFull_single'||source.item.id==='QaFull_many'){
+   const entry=projectContextualPublication(source),units=source.video.analysis.taxonomySignals.units;
+   formatReviews.push({schemaVersion:1,kind:'independent_format_review',reelId:source.item.id,value:source.item.id==='QaFull_single'?'single_recipe':'recipe_collection',state:'supported',sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash,sourceSnapshotHash,reviewId:'fixture-independent-'+source.item.id,reviewer:{identity:'fixture:independent-source-reviewer',kind:'independent_source_review'},reviewedAt:observedAt,evidence:units.map((u,i)=>({id:'review-proof-'+i,sourceKind:'caption',sourceIdentity:source.video.source_caption.capture_id,excerpt:u.evidence[0].excerpt})),units:units.map((u,i)=>({unitId:u.id,evidenceRefs:['review-proof-'+i]}))});
+  }
  }
- return {schemaVersion:1,observedAt,dataAsOf:version,catalog,records,taxonomy:{nodes:[{id:'group-alimentacao',name:'Alimentação',parentId:null},{id:'receitas',name:'Receitas',parentId:'group-alimentacao'}]}};
+ return {schemaVersion:1,observedAt,dataAsOf:version,catalog,records,formatReviews,taxonomy:{nodes:[{id:'group-alimentacao',name:'Alimentação',parentId:null},{id:'receitas',name:'Receitas',parentId:'group-alimentacao'}]}};
 }

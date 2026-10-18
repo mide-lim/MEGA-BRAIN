@@ -44,7 +44,7 @@ export async function rehearseSavedSemanticCatalogue(input,{sourceCommit='unknow
  const job=(await curator.job(created.job.id)).job;
  assert.equal(job.status,'completed');assert.equal(job.processed,499);assert.equal(job.verificationProcessed,499);
  assert.equal(provider.calls.length,127);assert.equal(job.callsUsed,127);
- const exactExtracted=provider.calls.filter(c=>c.phase==='extract').flatMap(c=>c.ids).sort();
+ const exactExtracted=provider.calls.filter(c=>c.phase==='extract').flatMap(c=>c.ids).sort((a,b)=>a.localeCompare(b));
  assert.deepEqual(exactExtracted,pins.map(p=>p.id));
  const beforeRead=provider.calls.length;
  const overview=await curator.overview(),catalogue=await loadLiveContextCatalogue(repository);

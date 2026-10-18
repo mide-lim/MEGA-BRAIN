@@ -5,7 +5,7 @@ import {ReelsRepository} from '../google-v0/lib/reels-repository.mjs';
 import {ReelsSemanticCurator} from '../google-v0/lib/reels-semantic-curator.mjs';
 import {semanticHash} from '../google-v0/lib/reels-semantic-source.mjs';
 import {prepareSemanticProviderRequest} from '../google-v0/lib/reels-semantic-provider.mjs';
-import {prepareSemanticDomainManifest} from '../google-v0/lib/reels-semantic-domain-planner.mjs';
+import {prepareSemanticDomainManifest,semanticDomainManifestValid,measureSemanticDomainManifestStorage} from '../google-v0/lib/reels-semantic-domain-planner.mjs';
 import {semanticDomainRecordFromSaved} from '../google-v0/lib/reels-semantic-domain-service.mjs';
 import {memoryReelsStore} from '../google-v0/qa/reels-fixture.mjs';
 
@@ -38,8 +38,13 @@ export async function rehearseSavedDomainPlanning(input,{sourceCommit='unknown'}
  }}));
  const manifest=prepareSemanticDomainManifest({records,taxonomy:documents['settings/reels_v2_taxonomy'],histories:[],historyCoverageConfirmed:false,catalogue:{groups:[]},prepareRequest:prepareSemanticProviderRequest,observedAt:observation.observedEnd??observation.observedStart??null});
  metadataOnly(manifest);
+ assert.equal(semanticDomainManifestValid(manifest),true,'Historical read-only manifest must fit the native document bound.');
+ const measuredStorage=measureSemanticDomainManifestStorage(manifest);
+ const stress=prepareSemanticDomainManifest({records,taxonomy:documents['settings/reels_v2_taxonomy'],histories:[],historyCoverageConfirmed:true,catalogue:{groups:[]},prepareRequest:prepareSemanticProviderRequest,observedAt:observation.observedEnd??observation.observedStart??null});
+ const storageEnvelope={kind:'assembled_storage_capacity_simulation_not_live_history',allSavedSourcesEligibleHypothesis:true,sourceCount:499,authorizesNoExecution:true,...measureSemanticDomainManifestStorage(stress)};
+ assert.equal(storageEnvelope.withinLimit,true,'Full saved-source metadata must fit the conservative native storage bound before an owner installation can be proposed.');
  for(const [path,hash] of before)assert.equal(semanticHash(store.docs.get(path)),hash,'Saved source changed: '+path);
- return {schemaVersion:1,kind:'saved499_domain_planning_rehearsal',sourceCommit,sourceObservationSHA256:sourceSHA,sourceDocuments:738,published:499,sourceObservationDate:observation.observedEnd??observation.observedStart??null,actualGoogleObservations:false,historicalExecutionCoverageConfirmed:false,scope:'Existing saved analysis routing, presence and full-request size measurements only; historical inputs do not prove the current retained/protected sets.',manifest,actualProviderCalls:0,networkRequests:0,googleWrites:0,newReels:0,paidReplays:0,originalSourcesUnchanged:true,semanticAccuracyMeasured:false,sourceBodiesIncluded:false,executionAuthorized:false};
+ return {schemaVersion:1,kind:'saved499_domain_planning_rehearsal',sourceCommit,sourceObservationSHA256:sourceSHA,sourceDocuments:738,published:499,sourceObservationDate:observation.observedEnd??observation.observedStart??null,actualGoogleObservations:false,historicalExecutionCoverageConfirmed:false,measuredStorage,storageEnvelope,scope:'Existing saved analysis routing, presence and full-request size measurements only; historical inputs do not prove the current retained/protected sets.',manifest,actualProviderCalls:0,networkRequests:0,googleWrites:0,newReels:0,paidReplays:0,originalSourcesUnchanged:true,semanticAccuracyMeasured:false,sourceBodiesIncluded:false,executionAuthorized:false};
 }
 async function main(){
  if(process.env.GITHUB_ACTIONS!=='true'||process.env.GITHUB_REPOSITORY!=='mide-lim/MEGA-BRAIN')throw Error('Central GitHub Actions required.');

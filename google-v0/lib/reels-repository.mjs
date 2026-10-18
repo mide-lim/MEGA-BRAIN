@@ -96,14 +96,16 @@ export class ReelsRepository{
 
  validateQuery(q){
   for(const [field,allowed]of Object.entries({workspace:['all','library','ready','attention'],attentionKind:['confirmed','uncertain'],sort:['newest','oldest','title'],status:['registered','queued','running','waiting','completed','failed','uncertain'],stage:['acquisition','transcription','analysis']}))if(q[field]&&(field==='status'?!String(q[field]).split(',').every(v=>allowed.includes(v)):!allowed.includes(q[field])))throw invalid('Filtro inválido.');
-  for(const field of ['q','category','language','tag','worker','destination','context','dimension','value'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
+  for(const field of ['q','category','language','tag','worker','destination','context','dimension','value','semanticFacet'])if(q[field]!==undefined&&(typeof q[field]!=='string'||q[field].length>500))throw invalid('Filtro inválido.');
   if(q.facets!==undefined&&(typeof q.facets!=='string'||q.facets.length>4096))throw invalid('Facetas inválidas.');
   if(hasContextualFilters(q)&&q.workspace!=='library')throw invalid('Facetas contextuais pertencem ao acervo publicado.');
  }
  async matching(query={}){
   this.validateQuery(query);
+  const semanticId=query.semanticFacet??(/^semantic_[a-f0-9]{64}$/.test(query.category??'')?query.category.slice(9):null);
+  if(semanticId){if(query.workspace!=='library'||!this.semanticCurator||!/^[a-f0-9]{64}$/.test(semanticId))throw invalid('Filtro semântico inválido.');const ids=new Set(await this.semanticCurator.matchingIds(semanticId,{facet:!!query.semanticFacet})),{semanticFacet,category,...rest}=query;return (await this.matching({...rest,...(category&&!category.startsWith('semantic_')?{category}:{})})).filter(i=>ids.has(i.id));}
   if(this.catalogueRuntime&&/^ctx_format_(single_recipe|recipe_collection)$/.test(query.category??'')){
-   const matched=await this.catalogueRuntime.matchingIds(query),selected=new Set(matched.ids),{category,...rest}=query;
+   const matched=await this.catalogueRuntime.matchingIds(query),{category,...rest}=query,extra=this.semanticCurator?await this.semanticCurator.formatIds(category.slice(11)):[],eligible=hasContextualFilters(rest)?new Set((await this.catalogueRuntime.matchingIds(rest)).ids):null,selected=new Set([...matched.ids,...extra.filter(id=>!eligible||eligible.has(id))]);
    return (await this.items()).filter(item=>item.publication.available&&selected.has(item.id)&&matchesReel(item,rest));
   }
   const refine=async rows=>{if(!hasContextualFilters(query))return rows;if(typeof this.contextualMatchingIds!=='function')throw Object.assign(Error('Índice contextual indisponível.'),{status:503,code:'CONTEXT_UNAVAILABLE'});const matched=await this.contextualMatchingIds(query),ids=Array.isArray(matched)?matched:matched?.ids;if(!Array.isArray(ids))throw Error('Resposta contextual inválida.');const selected=new Set(ids);return rows.filter(item=>item.publication.available&&selected.has(item.id));};
@@ -111,7 +113,7 @@ export class ReelsRepository{
   if(!query.category)return refine(items.filter(x=>matchesReel(x,query)));
   const {taxonomy}=navigation,ids=new Set([query.category]);let added=true;
   while(added){added=false;for(const node of taxonomy.nodes??[])if(ids.has(node.parentId)&&!ids.has(node.id)){ids.add(node.id);added=true;}}
-  const {category,...rest}=query;return refine(items.filter(x=>matchesReel(x,rest)&&x.categoryIds.some(id=>ids.has(id))));
+  const {category,...rest}=query,semanticMembers=this.semanticCurator?new Set(await this.semanticCurator.categoryIds(category)):new Set();return refine(items.filter(x=>matchesReel(x,rest)&&(x.categoryIds.some(id=>ids.has(id))||semanticMembers.has(x.id))));
  }
  async list(query={}){
   this.validateQuery(query);const limit=Number(query.limit??50);if(!Number.isInteger(limit)||limit<1||limit>100)throw invalid('Limite inválido.');
@@ -166,10 +168,11 @@ export class ReelsRepository{
   const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
   const memberships=new Map(nodes.map(n=>[n.id,new Set()])),direct=new Map(nodes.map(n=>[n.id,new Set()]));
   for(const item of items)for(const cid of item.categoryIds){direct.get(cid)?.add(item.id);let id=cid;const seen=new Set();while(byId.has(id)&&!seen.has(id)){seen.add(id);memberships.get(id).add(item.id);id=byId.get(id).parentId;}}
-  const catalogue=this.catalogueRuntime?await this.catalogueRuntime.overview():null;
+  const catalogue=this.catalogueRuntime?await this.catalogueRuntime.overview():null,semanticState=this.semanticCurator?await this.semanticCurator.freshGroups():null;
   const ordinary=nodes.filter(n=>!/^ctx_format_(single_recipe|recipe_collection)$/.test(n.id));
   const mapped=ordinary.map(n=>({...n,patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false}));
-  for(const f of catalogue?.formats??[]){const saved=nodes.find(n=>n.id===f.categoryId);mapped.push({...saved,id:f.categoryId,name:saved?.manual?saved.name:f.label,parentId:saved?.manual?saved.parentId:'receitas',manual:saved?.manual??false,count:f.count,directCount:f.count,patterns:[],format:f.value,filter:f.filter});}
+  for(const f of catalogue?.formats??[]){const saved=nodes.find(n=>n.id===f.categoryId);mapped.push({...saved,id:f.categoryId,name:saved?.manual?saved.name:f.label,parentId:saved?.manual?saved.parentId:'receitas',manual:saved?.manual??false,count:new Set([...f.matchingIds,...(this.semanticCurator?await this.semanticCurator.formatIds(f.value,semanticState):[])]).size,directCount:new Set([...f.matchingIds,...(this.semanticCurator?await this.semanticCurator.formatIds(f.value,semanticState):[])]).size,patterns:[],format:f.value,filter:f.filter});}
+  if(this.semanticCurator){for(const n of await this.semanticCurator.nodes(semanticState)){const old=mapped.find(x=>x.id===n.id);if(!old)mapped.push(n);}for(const n of mapped.filter(n=>!n.semantic&&!n.format)){const ids=await this.semanticCurator.categoryIds(n.id,semanticState);n.count=new Set([...(memberships.get(n.id)??[]),...ids]).size;}}
   return {nodes:mapped,total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
  }
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}

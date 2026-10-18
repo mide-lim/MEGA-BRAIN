@@ -26,6 +26,7 @@ COPY --chown=node:node lib/fixed-stage-runtime.mjs lib/reels-runtime-policy.mjs 
 COPY --chown=node:node scripts/serve-reels-stage-worker.mjs /app/scripts/
 COPY --chown=node:node config/release-source-manifest.json /app/release-source-manifest.json
 RUN node -e 'const m=require("./release-source-manifest.json"); if (!/^[a-f0-9]{40}$/.test(m.commit) || m.commit !== process.env.MEGABRAIN_SOURCE_COMMIT) process.exit(1)'
+COPY --chown=node:node lib/reels-semantic-source.mjs lib/reels-semantic-contract.mjs lib/reels-semantic-curator.mjs lib/reels-semantic-provider.mjs lib/reels-semantic-store.mjs lib/reels-semantic-dispatcher.mjs lib/reels-semantic-calibration.mjs /app/lib/
 USER node
 EXPOSE 8080
 CMD ["node","scripts/serve-worker.mjs"]

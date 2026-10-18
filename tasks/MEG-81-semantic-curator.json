@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "id": "MEG-81",
+  "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "9798b3648726a09b1d36619775d31929481fb37e",
+  "objective": "Implementar curador semântico real sobre análises publicadas salvas499, com propostas/evidências/promoção por critérios e controle manual; ligar snapshot vivo versionado ao worker final. Entrega web integrada, CI GitHub exclusivo, preservação de fontes/publicações/49incertos; sem novos Reels ou repetição de vídeo/STT/inferência paga incerta.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Real structured semantic inference adapter consumes saved accepted knowledge only; no keyword/count-only substitute labeled semantic, no Codex manual labels as production engine.",
+    "Exact499 inventory/source/version pinned; native+legacy preserved; stale source/manual versions invalidate old proposals; useful published knowledge and source/media unchanged.",
+    "Context/format/entities with evidence and unit associations; unknown abstains without processing-error labels. Stable contextual proposals across domains, synonyms/aliases/coherence/negative examples and configurable unique-member thresholds.",
+    "Global curator and publication-owned incremental catalogue isolated from acquisition/STT/video pipeline; finite durable jobs, idempotency, recoverable operations and no automatic paid retry after uncertain acknowledgment.",
+    "Worker final loads relevant compact current catalogue through repository at execution, source/version bound, rather than static config snapshot only; existing final analysis call reused.",
+    "Owner web can inspect coverage, candidate reasons/members/evidence, create/rename/merge/reject/protect manual groups and safely run/observe saved-only curation. GET never starts inference.",
+    "Tests/preparation/calibration/build exclusively GitHubActions; real saved499 offline rehearsal, adversarial semantic contract cases and authenticated browser journey through real API synthetics; semantic real inference separately evidenced.",
+    "Reviewed finite metadata and necessary closed product publication, actual source/control preservation and authenticated real web acceptance before delivered. No newReels, video/STT reanalysis,49cleanup,IAM changes, queue resume or unbounded provider work inferred."
+  ],
+  "allowed_paths": [
+    "tasks/MEG-81-semantic-curator.json",
+    "google-v0/lib/",
+    "google-v0/tests/",
+    "google-v0/scripts/",
+    "google-v0/web-google/app/reels/",
+    "google-v0/web-google/app/api/reels/",
+    "google-v0/web-google/tests/",
+    "google-v0/Dockerfile.worker",
+    "google-v0/config/",
+    "google-v0/docs/semantic-curator.md",
+    "ops/prepare-semantic-curator.mjs",
+    "ops/apply-semantic-curator.py",
+    "ops/test_apply_semantic_curator.py",
+    ".github/workflows/reels-semantic-curator.yml",
+    ".github/workflows/google-v0.yml",
+    ".github/workflows/google-deploy.yml",
+    "google-v0/web-google/lib/server.mjs",
+    "google-v0/qa/"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-contextual-catalogue-runtime.mjs",
+      "reason": "Durable source-bound projection and outbox",
+      "sections": [
+        "runtime",
+        "transaction"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/lib/reels-contextual-curation.mjs",
+      "reason": "Context attributes and current candidates",
+      "sections": [
+        "curation"
+      ],
+      "max_chars": 1600
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Existing Vertex request boundary/current static catalogue input",
+      "sections": [
+        "analysis",
+        "catalogue snapshot"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Evidence,units,attributes",
+      "sections": [
+        "contextualSignalsSchema"
+      ],
+      "max_chars": 1600
+    },
+    {
+      "path": "google-v0/web-google/app/reels/curation.jsx",
+      "reason": "Actual category UI",
+      "sections": [
+        "catalogue",
+        "curation"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-api.mjs",
+      "reason": "Authenticated API and repository integration",
+      "sections": [
+        "curation"
+      ],
+      "max_chars": 1600
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 9798b3648726a09b1d36619775d31929481fb37e --diff-head HEAD",
+    "GitHub Actions Google v0 integration",
+    "GitHub Actions saved499 semantic curator rehearsal and browser journeys; no local product tests"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high",
+    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Revisor nativo fresco e versão exata/CI/manifesto; usuário autorizou implementar e conferir web sem processamento. Correções delimitadas e publicação fechada necessária incluídas; nenhuma expansão de IAM ou processamento."
+  },
+  "native_coordination": {
+    "authorized_by": "Pedido humano atual category calibration/quality + AGENTS persistente v2",
+    "executor": "codex-native",
+    "max_concurrent_slots": 4,
+    "processing": false,
+    "real_deletion": false,
+    "live_google_mutations": "Reviewed finite derived saved-catalogue curation and necessary closed web/three-stage images only. New IAM/resource creation requires exact review/authorization if necessary.",
+    "merge_deploy": "Necessary coherent reviewed product publication within human implement-and-verify-web instruction; no newReels/queue resume.",
+    "ci_authorization": "Only GitHubActions tests/build/preparation/rehearsal. Real runtime semantic operation over saved499 distinct from testing, under finite reviewed package. No raw video/STT/provider replay.",
+    "ownership": {
+      "developer_backend": "alignment_backend: semantic service/provider/store/API/live worker catalogue/tests",
+      "developer_frontend": "alignment_frontend: category UX/library navigation/browser tests only",
+      "root": "single integration branch/CI/saved source fixture transport/ops/packet/docs/deploy/rootstate",
+      "review": "fresh native independent reviewer, no implementation"
+    },
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
+    "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies.",
+    "canonical_revision": 320,
+    "paid_scope": "Implement semantic provider over existing saved text; no provider execution by developers. Root will seal precise finite source/model/call limits and check current authorization before any inference. Existing blanket provider prohibition otherwise preserved."
+  }
+}

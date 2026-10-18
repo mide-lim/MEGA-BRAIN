@@ -76,6 +76,14 @@ export function memoryReelsStore(documents={}) {
    const record={data:structuredClone(replacement),updateTime:nextVersion()};docs.set(path,record);return {applied:true,updateTime:record.updateTime};
   },
 
+  commitSemantic:async({checks,writes})=>{
+   if(!Array.isArray(checks)||!Array.isArray(writes)||writes.length>500||new Set(writes.map(write=>write.path)).size!==writes.length||writes.some(write=>!/^reels_index\/semantic_[A-Za-z0-9_-]+$/.test(write.path)||!write.data||typeof write.data!=='object'||Array.isArray(write.data)))throw Error('Invalid synthetic semantic transaction');
+   for(const check of checks)if((docs.get(check.path)?.updateTime??null)!==check.updateTime)return {applied:false};
+   const staged=writes.map(write=>({path:write.path,data:structuredClone(write.data)})),updateTimes={};
+   for(const write of staged){const record={data:write.data,updateTime:nextVersion()};docs.set(write.path,record);updateTimes[write.path]=record.updateTime;}
+   return {applied:true,updateTimes};
+  },
+
   create:async(path,data)=>{if(docs.has(path))return {created:false};const record={data:structuredClone(data),updateTime:nextVersion()};docs.set(path,record);return {created:true,...structuredClone(record)};},
   patch:async(path,data,{updateTime}={})=>{const old=docs.get(path);if(!old||old.updateTime!==updateTime)throw Object.assign(Error('CAS conflict'),{status:412});const record={data:{...old.data,...structuredClone(data)},updateTime:nextVersion()};docs.set(path,record);return structuredClone(record);},
   list:async(collection,{pageSize=100,pageToken}={})=>{const page=await query(collection,{limit:pageSize,cursor:pageToken});return {records:page.records,nextPageToken:page.nextCursor};}

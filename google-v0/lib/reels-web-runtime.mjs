@@ -2,7 +2,9 @@ import {ReelsService} from './reels-service.mjs';
 import {ReelsPipeline} from './reels-pipeline.mjs';
 import {ReelsDispatcher} from './reels-dispatcher.mjs';
 import {ReelsReconciliation} from './reels-reconciliation.mjs';
-import {ReelsTaxonomy} from './reels-taxonomy.mjs';
+import {ReelsCatalogueRuntime} from './reels-contextual-catalogue-runtime.mjs';
+import {ReelsSemanticCurator} from './reels-semantic-curator.mjs';
+import {ReelsSemanticDispatcher} from './reels-semantic-dispatcher.mjs';
 import {reelsProcessingEnabled} from './reels-runtime-policy.mjs';
 import {fail} from './reels-runtime.mjs';
 const PROJECT='megabrain-v0-1017370021431';
@@ -24,10 +26,10 @@ export function reelsWebRuntime({repository,api,config={},clock=Date.now}){
  const onQueued=job=>confirm(dispatcher.enqueue(job));
  const onCommandQueued=(operation,options)=>confirm(dispatcher.enqueueControl(operation,options));
  const service=new ReelsService({repository,processingEnabled,clock,onQueued,onCommandQueued});
- const taxonomy=new ReelsTaxonomy({repository,clock});
+ const catalogue=new ReelsCatalogueRuntime({repository,clock}),semanticDispatcher=new ReelsSemanticDispatcher({api,workerOrigin:config.stage_routes?.analysis?.workerOrigin}),semantic=new ReelsSemanticCurator({repository,clock,enqueue:job=>semanticDispatcher.enqueue(job)});
  // Deliberately no provider adapters in the web. Recovering an external
  // operation creates a poll outbox for its worker, never a new submission.
- const pipeline=new ReelsPipeline({repository,store,operations:{},processingEnabled,clock,onQueued,onPublished:job=>taxonomy.discover({automatic:true,sourceReelId:job.reelId,sourceExecutionId:job.id})});
+ const pipeline=new ReelsPipeline({repository,store,operations:{},processingEnabled,clock,onQueued,onPublished:job=>catalogue.project(job.reelId,{type:'publicationAccepted',eventId:job.id})});
  const reconciliation=new ReelsReconciliation({repository,store,pipeline,processingEnabled,clock});
- return {service,pipeline,reconciliation,dispatcher,processingEnabled};
+ return {service,pipeline,reconciliation,dispatcher,processingEnabled,semantic};
 }

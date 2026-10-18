@@ -141,4 +141,9 @@ test('inactive catalogue retains explicit legacy discovery compatibility',async(
  assert.equal(response.status,200,await response.clone().text());assert.notEqual((await response.json()).code,'LEGACY_DISCOVERY_DISABLED');
  assert.ok([...x.store.docs.keys()].some(p=>p.startsWith('reels_index/taxonomy_')),'legacy preview remains the historical explicit index operation only before catalogue activation');
  assert.equal(x.store.docs.has(catalogueManifestPath),false);
+ const command={action:'discover',preview:false,revision:13,id:'receitas',minSupport:2,idempotencyKey:'legacy-before-activation'};
+ assert.equal((await x.api(request('categories',command))).status,200);
+ x.store.put(catalogueManifestPath,{status:'active',policyVersion:contextualCataloguePolicy.version});
+ const before=clone([...x.store.docs]),writes=x.store.writes,replay=await x.api(request('categories',command));
+ assert.equal(replay.status,409);assert.equal((await replay.json()).code,'LEGACY_DISCOVERY_DISABLED');assert.equal(x.store.writes,writes);assert.deepEqual([...x.store.docs],before);
 });

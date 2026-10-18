@@ -1,7 +1,7 @@
 import {projectContextualPublication,contextualHash,contextualRuleHash} from './reels-contextual-projection.mjs';
 import {buildContextualIndex,filterContextualEntries,parseContextualQuery,contextualListItem} from './reels-contextual-index.mjs';
 import {verifyPublicationQualityReceipt,qualityReceiptIdPattern} from './reels-quality-gate.mjs';
-import {catalogueEntries} from './reels-contextual-catalogue.mjs';
+import {catalogueEntries,normalizeCatalogueQuery} from './reels-contextual-catalogue.mjs';
 import {publicationAvailable,reelIdPattern} from './reels-model.mjs';
 const listContributions=value=>Array.isArray(value)?value:Array.isArray(value?.contributions)?value.contributions:[];
 const bad=()=>Object.assign(Error('Consulta contextual inválida.'),{status:400,code:'INVALID_CONTEXTUAL_QUERY'});
@@ -54,13 +54,13 @@ export class ReelsContextualCurator{
   try{return await this.pending;}finally{this.pending=null;}
  }
  async matchingIds(query={}){
-  const snapshot=await this.snapshotData();
-  return {ids:filterContextualEntries(snapshot.entries,query,snapshot.nodes).map(e=>e.id),observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,stale:snapshot.sourceStale};
+  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),entries=normalized.impossible?[]:snapshot.entries.filter(e=>!normalized.virtual||!e.curation?.manual);
+  return {ids:filterContextualEntries(entries,normalized.query,snapshot.nodes).map(e=>e.id),observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,stale:snapshot.sourceStale};
  }
  async overview(input={}){
   const query=parseContextualQuery(input),limit=Number(input.limit??40);
   if(!Number.isInteger(limit)||limit<1||limit>100)throw bad();
-  const snapshot=await this.snapshotData(),index=buildContextualIndex(snapshot.entries,{nodes:snapshot.nodes,query}),entries=index.entries.slice().sort((a,b)=>a.id.localeCompare(b.id)),queryHash=contextualHash(query);
+  const snapshot=await this.snapshotData(),normalized=normalizeCatalogueQuery(query),eligible=normalized.impossible?[]:snapshot.entries.filter(e=>!normalized.virtual||!e.curation?.manual),index=buildContextualIndex(eligible,{nodes:snapshot.nodes,query:normalized.query}),entries=index.entries.slice().sort((a,b)=>a.id.localeCompare(b.id)),queryHash=contextualHash(query);
   let offset=0;
   if(input.cursor){
    let c;try{c=JSON.parse(Buffer.from(input.cursor,'base64url').toString());}catch{throw bad();}
@@ -73,7 +73,17 @@ export class ReelsContextualCurator{
  async detail(id){
   if(!reelIdPattern.test(id??''))throw bad();
   const snapshot=await this.snapshotData(),entry=snapshot.entries.find(e=>e.id===id);if(!entry)return null;
-  const {searchText:privateSearchText,...detail}=entry;
+  let hydrated=entry;
+  if(snapshot.durableContributions){
+   let raw=await this.repository.raw(id)??{},legacy=null;
+   if(!publicationAvailable(raw))legacy=(await this.repository.store.get('reels_legacy_content/'+id))?.data??null;
+   const full=projectContextualPublication({video:raw,legacy,item:{id,title:entry.title,categoryIds:entry.categoryIds,publication:{available:true}}});
+   if(full&&full.sourceProofHash===entry.sourceProofHash){
+    const proofs=new Map(full.attributes.flatMap(a=>a.evidence).concat(full.units.flatMap(u=>u.evidence)).map(p=>[p.id,p]));
+    hydrated={...entry,attributes:entry.attributes.map(a=>({...a,evidence:a.evidence.map(p=>proofs.get(p.id)??p)})),units:entry.units.map(u=>({...u,evidence:u.evidence.map(p=>proofs.get(p.id)??p)}))};
+   }
+  }
+  const {searchText:privateSearchText,...detail}=hydrated;
   return {...detail,observedAt:snapshot.observedAt,dataAsOf:snapshot.dataAsOf,versionHash:snapshot.versionHash,sourceStale:snapshot.sourceStale,processingStarted:false};
  }
 }

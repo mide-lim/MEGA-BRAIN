@@ -10,14 +10,19 @@ const definitions=[
  ['business','Trabalho e negócios',['Trabalho e negócios'],['business','technology'],'Distinguir comunicação, marketing e carreira; citar uma ferramenta não altera a finalidade.'],
  ['home','Casa e estilo',['Casa e estilo'],['home'],'Distinguir decoração, fabricação/reparo e moda pela aplicação e finalidade.'],
  ['travel','Viagens e lugares',['Viagens e lugares'],['travel'],'Distinguir destinos, experiências e onde comer de ensinar o preparo de uma receita.'],
+ ['culture','Cultura e conhecimento',['Cultura e conhecimento'],['general'],'Distinguir cultura, artes e conhecimento geral pela finalidade já organizada; não certificar alegações nem forçar outro contexto.'],
  ['unassigned','Destino pendente',['Outros temas'],['recipe','technology','health','travel','business','home','general'],'Examinar o significado salvo e sugerir um destino com prova literal, ou abster. Outros não é erro nem evidência de que uma categoria específica se aplica.']
 ];
 export const semanticDomainProfiles=freeze(definitions.map(([id,label,groups,contexts,instruction])=>({id,label,version:semanticDomainVersion,categoryIds:categoryDefinitions.filter(c=>groups.includes(c.group)).map(c=>c.id),contexts,instruction,manualWins:true,semanticCertification:false})));
 export const semanticDomainProfile=id=>semanticDomainProfiles.find(p=>p.id===id)??null;
 export const semanticDomainPromptHash=(base,id)=>{const profile=semanticDomainProfile(id);if(!profile)throw Error('DOMAIN_PROFILE_INVALID');return semanticHash({basePromptHash:base,domainVersion:semanticDomainVersion,profile,destinationContract:'literal-candidate-only-v1'});};
+// The navigation tree also permits direct editorial children of broad roots.
+// Routing is an operational hint; exact root names never certify source meaning.
+const rootDomainIds=new Map([['group-alimentacao','food'],['group-tecnologia','technology'],['group-saude','health'],['group-trabalho','business'],['group-casa','home'],['group-viagens','travel']]);
+const rootDomainNames=new Map(definitions.filter(([id])=>id!=='unassigned').flatMap(([id,,groups])=>groups.map(name=>[name,id])));
 export function routeExistingSemanticDomain(categoryIds=[],nodes=[]){
  const byId=new Map(nodes.map(n=>[n.id,n])),found=new Set(),roots=new Set();
- for(const original of categoryIds){let id=original;const seen=new Set();while(id&&!seen.has(id)){seen.add(id);const p=semanticDomainProfiles.find(d=>d.id!=='unassigned'&&d.categoryIds.includes(id));if(p){found.add(p.id);roots.add(id);break;}id=byId.get(id)?.parentId;}}
+ for(const original of categoryIds){let id=original;const seen=new Set();while(id&&!seen.has(id)){seen.add(id);const node=byId.get(id),p=semanticDomainProfiles.find(d=>d.id!=='unassigned'&&d.categoryIds.includes(id)),rootId=(!node||node.parentId===null)?rootDomainIds.get(id):null,rootName=node?.parentId===null?rootDomainNames.get(node.name):null,domainId=p?.id??rootId??rootName;if(domainId){found.add(domainId);roots.add(id);break;}id=node?.parentId;}}
  if(found.size!==1)return {domainId:'unassigned',routedByExistingCategory:false,semanticCertified:false,reason:found.size?'CROSS_DOMAIN_DESTINATION_PENDING':'DESTINATION_EVIDENCE_REQUIRED',candidateDomainIds:[...found].sort(),categoryIds:[...new Set(categoryIds)].sort()};
  return {domainId:[...found][0],routedByExistingCategory:true,semanticCertified:false,reason:'EXISTING_CATEGORY_OPERATIONAL_HINT',categoryIds:[...roots].sort(),candidateDomainIds:[]};
 }
@@ -44,3 +49,4 @@ export function validateSemanticDomainDestinations(output,sources,domainId){
  for(const g of output.groups??[])if(!profile.contexts.includes(g.context))throw Object.assign(Error('DOMAIN_GROUP_CONTEXT_OUTSIDE_PROFILE'),{code:'DOMAIN_GROUP_CONTEXT_OUTSIDE_PROFILE'});
  return valid;
 }
+

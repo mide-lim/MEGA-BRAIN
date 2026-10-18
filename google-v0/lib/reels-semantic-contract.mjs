@@ -35,6 +35,7 @@ export function validateSemanticOutput(output,sources,catalogue={groups:[]}){
   const existing=g.existingGroupId?known.get(g.existingGroupId):null;
   if(g.existingGroupId&&(!existing||existing.context!==g.context||existing.kind!==g.kind||(existing.dimension??null)!==(g.dimension??null)))fail('SEMANTIC_EXISTING_GROUP_INCOMPATIBLE');
   const id=existing?.id??semanticHash({version:semanticContractVersion,context:g.context,kind:g.kind,dimension:g.dimension??null,key:g.key});
+  if(known.has(id)&&!existing)fail('SEMANTIC_EXISTING_GROUP_EXPLICIT_REUSE_REQUIRED');
   if(seen.has(id))fail('SEMANTIC_DUPLICATE_GROUP');seen.add(id);
   const memberIds=new Set(),members=g.members.map(m=>{
    const source=sourceById.get(m?.reelId),profile=byId.get(m?.reelId);

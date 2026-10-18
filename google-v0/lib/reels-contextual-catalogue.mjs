@@ -18,20 +18,55 @@ function editorialMetadata(item,editorial={}){
  const manual=item?.categoryOverride?.manual===true||item?.categoryResolution?.mode==='manual'||editorial.manual===true;
  return {manual,revision:editorial.revision??item?.categoryOverride?.revision??null,suppressedDimensions:[...new Set(list(editorial.suppressedDimensions).filter(x=>typeof x==='string'))].sort(),suppressedValues:list(editorial.suppressedValues).filter(x=>obj(x)&&typeof x.dimension==='string'&&typeof x.value==='string').map(x=>({dimension:x.dimension,value:x.value})).sort((a,b)=>(a.dimension+':'+a.value).localeCompare(b.dimension+':'+b.value)),categoryIds:[...new Set(list(item?.categoryIds))].sort()};
 }
+function reviewedFormat(entry,{video,legacy,formatReview,previousContribution}){
+ const preserved=previousContribution?.data??previousContribution;
+ if(!formatReview&&preserved?.entry?.formatReview&&preserved.sourceProofHash===entry.sourceProofHash&&sameIdentity(preserved.sourceIdentity,entry.sourceIdentity)){
+  catalogueEntries([preserved]);
+  return {...entry,format:preserved.entry.format,units:preserved.entry.units,independentUnitCount:preserved.entry.independentUnitCount,attributes:[...entry.attributes.filter(a=>a.dimensionId!=='format').map(a=>({...a,unitIds:[]})),...preserved.entry.attributes.filter(a=>a.dimensionId==='format')],formatReview:preserved.entry.formatReview,coverage:entry.coverage.map(c=>c.dimensionId==='format'?preserved.entry.format:c)};
+ }
+ const candidate=entry.format.state==='supported',v2=entry.sourceIdentity.qualityPolicyVersion==='gate_v2'&&entry.format.reason==='EXACT_FORMAT_AND_INDEPENDENT_UNITS_REVIEWED';
+ let result={...entry,attributes:entry.attributes.map(a=>a.dimensionId==='format'&&candidate&&!v2?{...a,state:'present_unverified',role:'unknown',reason:'COMPLETE_RECIPE_PROPOSITION_NOT_INDEPENDENTLY_REVIEWED'}:a)};
+ if(candidate&&!v2){result.format={...entry.format,state:'present_unverified',reason:'TEMPORAL_UNITS_ONLY_NOT_SEMANTIC_COMPLETENESS'};result.independentUnitCount=null;result.units=entry.units.map(u=>({...u,state:'present_unverified',complete:false}));result.attributes=result.attributes.map(a=>({...a,unitIds:[]}));}
+ if(!formatReview)return {...result,coverage:entry.coverage.map(c=>c.dimensionId==='format'?result.format:c)};
+ const review=formatReview;
+ if(review.state!=='supported')return {...result,coverage:entry.coverage.map(c=>c.dimensionId==='format'?result.format:c)};
+ const reviewer=review.reviewer;
+ if(review.schemaVersion!==1||review.kind!=='independent_format_review'||review.reelId!==entry.id||review.sourceProofHash!==entry.sourceProofHash||!sameIdentity(review.sourceIdentity,entry.sourceIdentity)||!/^[a-f0-9]{64}$/.test(review.sourceSnapshotHash??'')||typeof review.reviewId!=='string'||!review.reviewId||!time(review.reviewedAt)||!['independent_source_review','human_source_review'].includes(reviewer?.kind)||typeof reviewer?.identity!=='string'||!reviewer.identity||reviewer.identity==='/root/alignment_backend')failure('CATALOGUE_FORMAT_REVIEW_BINDING_MISMATCH');
+ if(entry.context.value!=='recipe'||!formatDefinitions.some(f=>f.value===review.value)||!Array.isArray(review.evidence)||!review.evidence.length||review.evidence.length>64||!Array.isArray(review.units)||!review.units.length||review.units.length>64)failure('CATALOGUE_FORMAT_REVIEW_INVALID');
+ const proofs=new Map(),quotes=new Set();
+ for(const e of review.evidence){
+  const text=e.sourceKind==='caption'?video.source_caption?.text:e.sourceKind==='transcript'?video.transcript??legacy?.transcript:null;
+  const identity=e.sourceKind==='caption'?video.source_caption?.capture_id:e.sourceKind==='transcript'?video.transcript_key&&video.transcript_generation?video.transcript_key+'@'+video.transcript_generation:legacy?.provenance?.recordHash?'legacy:'+legacy.provenance.recordHash:null:null;
+  if(typeof e.id!=='string'||!e.id||proofs.has(e.id)||!identity||e.sourceIdentity!==identity||typeof e.excerpt!=='string'||!e.excerpt||e.excerpt.length>2000||typeof text!=='string'||!text.includes(e.excerpt)||quotes.has(e.excerpt))failure('CATALOGUE_FORMAT_REVIEW_ANCHOR_INVALID');
+  quotes.add(e.excerpt);proofs.set(e.id,{id:e.id,source:e.sourceKind,state:'supported',excerptHash:contextualHash(e.excerpt)});
+ }
+ const seenUnits=new Set(),usedProofs=new Set(),units=[];
+ for(const unit of review.units){
+  if(typeof unit.unitId!=='string'||!unit.unitId||seenUnits.has(unit.unitId)||!Array.isArray(unit.evidenceRefs)||!unit.evidenceRefs.length||new Set(unit.evidenceRefs).size!==unit.evidenceRefs.length||unit.evidenceRefs.some(id=>!proofs.has(id)||usedProofs.has(id)))failure('CATALOGUE_FORMAT_REVIEW_UNIT_INVALID');
+  seenUnits.add(unit.unitId);for(const id of unit.evidenceRefs)usedProofs.add(id);
+  units.push({id:unit.unitId,kind:'recipe',state:'supported',complete:true,semanticReview:true,temporalVerified:false,evidence:unit.evidenceRefs.map(id=>proofs.get(id))});
+ }
+ if(review.value==='single_recipe'&&units.length!==1||review.value==='recipe_collection'&&units.length<2)failure('CATALOGUE_FORMAT_REVIEW_COUNT_MISMATCH');
+ const format={dimensionId:'format',value:review.value,label:formatDefinitions.find(f=>f.value===review.value).label,state:'supported',reason:'INDEPENDENT_SAVED_SOURCE_FORMAT_REVIEW'};
+ const reviewHash=contextualHash(review),attribute={id:contextualHash({reviewHash,value:review.value}),dimension:'format',dimensionId:'format',valueId:review.value,label:format.label,state:'supported',role:'central',polarity:'positive',unitIds:units.map(u=>u.id),evidence:[...proofs.values()]};
+ return {...entry,format,units,independentUnitCount:units.length,attributes:[...entry.attributes.filter(a=>a.dimensionId!=='format').map(a=>({...a,unitIds:[]})),attribute],formatReview:{reviewId:review.reviewId,reviewHash,sourceSnapshotHash:review.sourceSnapshotHash,sourceProofHash:review.sourceProofHash,reviewer,reviewedAt:review.reviewedAt,basis:'independent_saved_source_review_not_video_accuracy_measurement',evidence:[...proofs.values()]},coverage:entry.coverage.map(c=>c.dimensionId==='format'?format:c)};
+}
+
 function compactEntry(entry,editorial){
  const suppressed=a=>editorial.suppressedDimensions.includes(a.dimensionId)||editorial.suppressedValues.some(v=>v.dimension===a.dimensionId&&v.value===a.valueId);
  const attributes=entry.attributes.filter(a=>!suppressed(a)).map(({evidence,...a})=>({...a,evidence:list(evidence).map(metadataProof)}));
  const format={...entry.format,label:formatDefinitions.find(f=>f.value===entry.format.value)?.label??entry.format.label};
  if(editorial.suppressedDimensions.includes('format'))Object.assign(format,{value:null,label:null,state:'unknown',reason:'EDITORIAL_FORMAT_SUPPRESSED'});
- return {id:entry.id,title:entry.title,searchText:entry.searchText,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,sourceManifestHash:entry.sourceManifestHash,sourceProofHash:entry.sourceProofHash,context:entry.context,format,units:entry.units.map(({evidence,...u})=>({...u,evidence:list(evidence).map(metadataProof)})),independentUnitCount:entry.independentUnitCount,attributes,coverage:entry.coverage.map(c=>editorial.suppressedDimensions.includes(c.dimensionId)?{dimensionId:c.dimensionId,state:'unknown',reason:'EDITORIAL_DIMENSION_SUPPRESSED'}:c),curation:{manual:editorial.manual,revision:editorial.revision},indexVersion:entry.indexVersion,ruleHash:entry.ruleHash};
+ return {id:entry.id,title:entry.title,searchText:entry.searchText,categoryIds:entry.categoryIds,sourceIdentity:entry.sourceIdentity,sourceManifestHash:entry.sourceManifestHash,sourceProofHash:entry.sourceProofHash,context:entry.context,format,units:entry.units.map(({evidence,...u})=>({...u,evidence:list(evidence).map(metadataProof)})),independentUnitCount:entry.independentUnitCount,attributes,coverage:entry.coverage.map(c=>editorial.suppressedDimensions.includes(c.dimensionId)?{dimensionId:c.dimensionId,state:'unknown',reason:'EDITORIAL_DIMENSION_SUPPRESSED'}:c),curation:{manual:editorial.manual,revision:editorial.revision},formatReview:entry.formatReview??null,indexVersion:entry.indexVersion,ruleHash:entry.ruleHash};
 }
-export function projectContextualContribution({item,video={},legacy=null,qualityVerification=null,editorial={},sourceVersions,observedAt}={}){
+export function projectContextualContribution({item,video={},legacy=null,qualityVerification=null,editorial={},sourceVersions,formatReview=null,previousContribution=null,observedAt}={}){
  if(!item||!reelIdPattern.test(item.id??'')||!time(observedAt)||!sourceVersionsValid(sourceVersions))failure('CATALOGUE_SOURCE_VERSION_INVALID');
  if(video.id&&video.id!==item.id||legacy?.reelId&&legacy.reelId!==item.id)failure('CATALOGUE_SOURCE_ID_MISMATCH');
  const accepted=publicationAvailable(video)||preservedContentAvailable(legacy,item.id);
  if(accepted&&item.publication?.available===false)failure('CATALOGUE_ITEM_PUBLICATION_MISMATCH');
  const projected=projectContextualPublication({item,video,legacy,qualityVerification});if(!projected)return null;
- const ed=editorialMetadata({...item,categoryOverride:{...item.categoryOverride,manual:item.categoryOverride?.manual===true||video.taxonomy_override?.manual===true}},editorial),editorialHash=contextualHash(ed),entry=compactEntry(projected,ed);
+ const supported=reviewedFormat(projected,{video,legacy,formatReview,previousContribution});
+ const ed=editorialMetadata({...item,categoryOverride:{...item.categoryOverride,manual:item.categoryOverride?.manual===true||video.taxonomy_override?.manual===true}},editorial),editorialHash=contextualHash(ed),entry=compactEntry(supported,ed);
  const identity={reelId:item.id,sourceIdentity:entry.sourceIdentity,sourceProofHash:entry.sourceProofHash,ruleHash:contextualRuleHash,editorialHash,sourceVersions};
  const contribution={schemaVersion:1,kind:'contextual_contribution',policyVersion:contextualCataloguePolicy.version,status:'active',reelId:item.id,...identity,editorial:ed,entry,observedAt,processingStarted:false,providerCalls:0};
  contribution.contentHash=contextualHash({identity,entry});
@@ -81,7 +116,7 @@ export function reconcileContextualContribution({event,currentSource,previousCon
  const id=event.reelId,path=contextualContributionPath(id),previous=previousContribution?.data??previousContribution;
  if(previous&&previous.reelId!==id)failure('CATALOGUE_PREVIOUS_ID_MISMATCH');
  if(!currentSource||currentSource.item?.id!==id||!sourceVersionsValid(currentSource.sourceVersions))failure('CATALOGUE_FRESH_SOURCE_REQUIRED');
- const next=projectContextualContribution({...currentSource,observedAt});
+ const next=projectContextualContribution({...currentSource,previousContribution:previous,observedAt});
  if(event.sourceIdentity&&next&&!sameIdentity(event.sourceIdentity,next.sourceIdentity)||event.sourceProofHash&&next&&event.sourceProofHash!==next.sourceProofHash)return {action:'noop',reason:'STALE_PUBLICATION_EVENT',path};
  if(event.type==='publicationWithdrawn'&&next)return {action:'noop',reason:'PUBLICATION_STILL_ACCEPTED',path};
  if(!next&&!['publicationWithdrawn','sourceCorrected','editorialChanged'].includes(event.type))return {action:'deferred',reason:'CURRENT_PUBLICATION_NOT_ACCEPTED',path};
@@ -114,7 +149,7 @@ export function prepareContextualCatalogue(input={}){
   let source;try{source=JSON.parse(record.sourceJson);}catch{failure('CATALOGUE_CAPTURE_JSON_INVALID');}
   const id=source.item?.id,row=catalog.get(id);if(!row||seen.has(id))failure('CATALOGUE_CAPTURE_INVENTORY_MISMATCH');seen.add(id);
   const item={...source.item,categoryIds:row.categoryIds??source.item.categoryIds,publication:{...source.item.publication,available:true},categoryOverride:{...source.item.categoryOverride,manual:row.manual===true}};
-  const sourceVersions=source.sourceUpdateTime,contribution=projectContextualContribution({...source,item,sourceVersions,editorial:row.editorial??{},observedAt:input.observedAt});
+  const sourceVersions=source.sourceUpdateTime,contribution=projectContextualContribution({...source,item,sourceVersions,editorial:row.editorial??{},formatReview:input.formatReviews?.find(r=>r.reelId===id)??null,observedAt:input.observedAt});
   if(!contribution||row.sourceIdentity&&!sameIdentity(row.sourceIdentity,contribution.sourceIdentity))failure('CATALOGUE_CAPTURE_PUBLICATION_MISMATCH');
   contributions.push({path:contextualContributionPath(id),data:contribution});bindings.push({reelId:id,sourceSnapshotHash:record.sourceSnapshotHash,sourceIdentity:contribution.sourceIdentity,sourceProofHash:contribution.sourceProofHash,sourceVersions});
  }

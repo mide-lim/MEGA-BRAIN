@@ -3,100 +3,94 @@
   "id": "MEG-81",
   "paperclip_issue_id": "c0758763-b340-4ee5-84a4-dee863667836",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "2a72023574638cfec0dcb3ba1be913e7ec5d0de4",
-  "objective": "Entregar os grupos de Alimentação navegáveis no acervo atual e corrigir a lentidão comprovada sem outra arquitetura: uma leitura consistente do acervo por GET Categorias e reuso do cache de consultas web existente por15s. Sem inferências, novos Reels ou mudanças de filas/serviços/IAM.",
+  "base_commit": "8d731f06725685de919563ca905734d177e82dac",
+  "objective": "Organizar os110 publicados de Outros temas com fontes já salvas e alinhar o worker final ao catálogo editorial existente, sem nova arquitetura, novos Reels ou chamadas pagas.",
   "risk": "medium",
   "acceptance_criteria": [
-    "GET categories reuses one fresh request-local metadata/taxonomy/source-version snapshot for ordinary tree, contextual overview and semantic groups; one videos+legacy scan pair on both cold and warm reads, not repeated inventory passes.",
-    "Contribution/review/content hashes, current sourceVersions and editorial revisions remain checked. A following GET observes changed sources/manual revisions; failures do not present stale proof as fresh. Provider/execution paths retain fresh inventory defaults.",
-    "Tree totals, memberships, manual nodes and response revision remain equivalent. An empty virtual recipe format is hidden only when a populated manual sibling has the same normalized name and parent; populated virtual formats and empty manual categories remain, and direct virtual filters are unchanged.",
-    "Resource client reuses successful data only for same URL and revision within15s. Manual refresh and post-command revision changes force GET. Expiry/errors/aborts/out-of-order responses retain existing correctness.",
-    "GitHub Actions is the only test/build location. Focused synthetic request counts, freshness/preservation and existing integration/browser checks pass on final head. No raw private corpus committed, provider calls or cloud writes from CI.",
-    "Independent fresh-context read-only reviewer accepts exact final head. Root publishes only the web for this bounded necessary delivery; workers/queues/configuration/IAM and uncertain paid work remain unchanged."
+    "Moda encompasses demonstrated personal style, haircut, beard and aesthetic care, keeping health and marketing distinctions.",
+    "Existing loadLiveContextCatalogue supplies current bounded editorial taxonomy with source revision separately from verified semantic groups; no invented semantic proof, lost source checks or growth beyond existing transport limits.",
+    "Finalworker prompt evaluates video, caption and STT together; irrelevant musical STT does not override explicit visual/caption theme. Fixed category IDs remain valid and contextual editorial nodes use current catalogue IDs.",
+    "Existing publication, Food tree, saved analyses, provider response reconciliation and closed processing gates remain unchanged.",
+    "GitHub Actions is the sole test and build environment. Synthetic category-selection, catalogue freshness and integration/browser checks pass on exact final head; CI has no provider/cloud mutation access for these tests.",
+    "Independent fresh reviewer accepts final head. Root organizes actual110 using saved evidence and existing web taxonomy commands, verifies production categories and preserved499; no provider calls, new Reel processing, deletions, IAM or queue activation."
   ],
   "allowed_paths": [
     "tasks/MEG-81-semantic-curator.json",
-    "google-v0/lib/reels-repository.mjs",
-    "google-v0/lib/reels-contextual-catalogue-runtime.mjs",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/category-taxonomy.mjs",
+    "google-v0/lib/reels-analysis-contract.mjs",
     "google-v0/lib/reels-semantic-curator.mjs",
-    "google-v0/tests/reels-categories-snapshot.test.mjs",
-    "google-v0/web-google/lib/reels-query-state.mjs",
-    "google-v0/tests/reels-query-state.test.mjs",
-    "google-v0/qa/reels-browser-check.mjs"
+    "google-v0/tests/category-selection.test.mjs",
+    "google-v0/tests/category-taxonomy.test.mjs",
+    "google-v0/tests/reels-live-catalogue.test.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/reels-repository.mjs",
-      "reason": "categories and contextualContributions repeated whole-inventory reads",
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
       "sections": [
-        "categories",
-        "contextualContributions",
-        "items"
+        "classification",
+        "catalogue"
       ],
-      "max_chars": 3000
+      "max_chars": 6000
     },
     {
-      "path": "google-v0/lib/reels-contextual-catalogue-runtime.mjs",
-      "reason": "request-local contextual overview with existing proof checks",
+      "path": "google-v0/lib/category-taxonomy.mjs",
+      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
       "sections": [
-        "overview"
+        "classification",
+        "catalogue"
       ],
-      "max_chars": 2000
+      "max_chars": 6000
+    },
+    {
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
+      "sections": [
+        "classification",
+        "catalogue"
+      ],
+      "max_chars": 6000
     },
     {
       "path": "google-v0/lib/reels-semantic-curator.mjs",
-      "reason": "freshGroups and inventory defaults remain fresh for provider paths",
+      "reason": "Existing classifier/catalogue dependency in bounded Other themes delivery",
       "sections": [
-        "freshGroups",
-        "inventory"
+        "classification",
+        "catalogue"
       ],
-      "max_chars": 3500
-    },
-    {
-      "path": "google-v0/web-google/lib/reels-query-state.mjs",
-      "reason": "reuse existing updatedAt and revision without a new cache layer",
-      "sections": [
-        "createResourceClient"
-      ],
-      "max_chars": 3000
+      "max_chars": 6000
     }
   ],
   "validation_commands": [
-    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 2a72023574638cfec0dcb3ba1be913e7ec5d0de4 --diff-head HEAD",
+    "python3 scripts/check_task_packets.py --packet tasks/MEG-81-semantic-curator.json --diff-base 8d731f06725685de919563ca905734d177e82dac --diff-head HEAD",
     "GitHub Actions Google v0 integration, Semantic curator, Frontend browser QA and documentation CI; no local application/test/build execution"
   ],
   "execution_budget": {
-    "worker_runs": 1,
+    "worker_runs": 3,
     "reviewer_runs": 1,
-    "fix_runs": 0,
-    "timeout_minutes": 15,
+    "fix_runs": 1,
+    "timeout_minutes": 30,
     "reasoning": "high",
-    "note": "Campos de compatibilidade do launcher antigo; runtime nativo usa slots reais autorizados, sem scheduler e sem limites inferidos de pacote legado."
+    "note": "Native demand-driven slots explicitly authorized; no scheduler. Editorial audit over saved sources, no paid calls."
   },
   "review": {
     "mode": "independent_agent_and_human",
     "status": "pending",
-    "reason": "Independent reviewer examines exact integrated latency fix and GitHub tests; actual production response times require separate observation."
+    "reason": "Independent review of exact code and finite110 assignments, with GitHub-only tests and real web verification."
   },
   "native_coordination": {
-    "authorized_by": "Direct human Food groups delivery request and current complaint about unusable slow web; bounded necessary fix within same delivery.",
+    "authorized_by": "Current human request to organize110Other themes with saved analyses and align existing Google worker; persistent native agent authorization.",
     "executor": "codex-native",
     "max_concurrent_slots": 4,
     "processing": false,
     "real_deletion": false,
-    "live_google_mutations": "None for developers/reviewer or this implementation packet. Only root separately approved exact PR77 closed publication; no new provider/job/policy/IAM/queue operation inferred.",
-    "merge_deploy": "Root integrates and publishes only the web after exact-head independent review and GitHub checks; no new permissions, service settings or worker/queue operations.",
-    "ci_authorization": "Only GitHubActions tests/build/preparation/rehearsal. Real runtime semantic operation over saved499 distinct from testing, under finite reviewed package. No raw video/STT/provider replay.",
-    "ownership": {
-      "developer_backend": "alignment_backend: new domain/size planning modules, semantic runtime opt-in newjobs, source/provider/API integration and pure backend tests",
-      "developer_frontend": "alignment_frontend: app/reels category/semantic/library UX, web tests and browser QA; communicate fixture contracts with backend",
-      "root": "single integration branch, packet/docs/Dockerfile/workflow, saved private artifact wiring, deployment and official state",
-      "review": "read-only independent exact code/tests/proof review"
-    },
+    "live_google_mutations": "Root only: finite taxonomy metadata edits through existing approved application; preserve saved analyses and all publications. No provider calls, IAM, queue/config changes or uncertain paid recovery.",
+    "merge_deploy": "Root may integrate necessary existing-classifier fix after independent review and GitHub checks; existing closed web/stage workers only, processing remains off.",
+    "ci_authorization": "All tests/builds in GitHub Actions only. No raw corpus committed.",
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "plan": "/srv/paperclip/data/megabrain-operations/v2/execution-plan.json",
-    "ci_source_transport": "Bounded encrypted-at-rest repository artifacts staged through existing manual workflow in exact task branch; no credentials or provider access; Actions-only source assembly/calibration/preparation. Frozen source fragments and independent labels remain private artifacts, not committed corpus bodies.",
-    "canonical_revision": 369,
-    "paid_scope": "Zero provider calls. Old uncertain request and paid results remain untouched."
+    "canonical_revision": 397,
+    "paid_scope": "Zero provider calls; old uncertain paid job untouched."
   }
 }

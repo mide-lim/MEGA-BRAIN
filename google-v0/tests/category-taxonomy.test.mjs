@@ -105,3 +105,15 @@ test('generation bounds additional categories and keeps general destinations exc
  assert.equal(Math.max(...req.generationConfig.responseSchema.properties.categories.anyOf.map(branch=>branch.maxItems)),2);
  assert.ok(categoryOptions().every(c=>c.scope));
 });
+
+test('official display names and unambiguous personal-style labels avoid false fallback',()=>{
+ for(const c of categoryDefinitions)assert.deepEqual(resolveCategories([c.name]).ids,[c.id],c.name);
+ for(const term of ['Moda e estilo','Estilo pessoal','Beleza e cuidados pessoais','Cuidados pessoais','Cabelo e barba','Cortes de cabelo','Barbearia']){
+  assert.deepEqual(resolveCategories([term]).ids,['moda-acessorios'],term);
+ }
+ // Broad roots and medical subjects cannot silently become style destinations.
+ for(const term of ['Casa e estilo','Trabalho e negócios','Tratamento de alopecia'])assert.deepEqual(resolveCategories([term]).ids,['a-organizar']);
+ const option=categoryOptions().find(c=>c.id==='moda-acessorios');
+ assert.match(option.scope,/estilo pessoal/);assert.match(option.scope,/cabelo, barba/);assert.match(option.scope,/Diagnóstico e tratamento/);
+});
+

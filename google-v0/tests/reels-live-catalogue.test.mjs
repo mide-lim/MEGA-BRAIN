@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {googleOperations,createMediaInspectionReceipt,readAnalysisContextCatalogue} from '../lib/google-operations.mjs';
 import {qualityDigest,qualitySourceManifest} from '../lib/reels-quality-gate.mjs';
 import {sha256} from '../lib/storage.mjs';
+import {loadLiveContextCatalogue} from '../lib/reels-semantic-curator.mjs';
 function qualitySource(){
  const bytes=Buffer.from('verified-video'),audio=Buffer.from('verified-audio'),id='Reel_001',job='a'.repeat(64);
  const record={id,video_key:'originals/instagram/'+id+'/video.mp4',video_generation:'1',video_bytes:bytes.length,video_sha256:sha256(bytes),media_verified:true,audio_status:'present',duration_seconds:20,audio_key:'results/instagram/'+id+'/'+job+'/audio.flac',audio_generation:'2',audio_bytes:audio.length,audio_sha256:sha256(audio),audio_source_key:'originals/instagram/'+id+'/video.mp4',audio_source_generation:'1',transcript:'Frango no forno. Use 200 g de frango.',transcript_key:'results/instagram/'+id+'/'+job+'/transcription.json',transcript_generation:'3',source_caption:{text:'Frango no forno. Use 200 g de frango.',capture_id:'capture_fixture'}};
@@ -38,3 +39,29 @@ test('returned live catalogue is isolated and stale state is preserved',async()=
  const snapshot={...catalogue(1),state:'stale'},r=await readAnalysisContextCatalogue(async()=>snapshot,{});
  r.groups[0].name='changed';assert.equal(snapshot.groups[0].name,'Group 1');assert.equal(r.state,'stale');
 });
+
+function editorialRepository({nodes=[{id:'group-casa',name:'Casa e estilo',parentId:null},{id:'moda-acessorios',name:'Moda e acessórios',parentId:'group-casa'},{id:'manual_style',name:'Estilo pessoal',parentId:'moda-acessorios',manual:true}],revision=1,sourceStale=false,groups=[]}={}){
+ const state={groups,sourceStale,inventory:{sourceVersions:new Map([['Reel_001',{video:'v1'}]])},taxonomySnapshot:{updateTime:'taxonomy-'+revision,data:{taxonomyVersion:'categories-v2',revision,nodes}},dataAsOf:'2026-10-18T00:00:00Z'};
+ return {state,repository:{semanticCurator:{freshGroups:async()=>state,policy:async()=>({snapshot:{updateTime:'policy-1'}})}}};
+}
+test('live catalogue includes current editorial hierarchy separately and binds manual edits to snapshot',async()=>{
+ const source=editorialRepository(),before=structuredClone(source.state),first=await loadLiveContextCatalogue(source.repository);
+ assert.equal(first.state,'available');assert.deepEqual(first.groups,[]);assert.equal(first.editorial_taxonomy.authority,'editorial_reference_only');
+ assert.equal(first.editorial_taxonomy.nodes[2].id,'manual_style');assert.equal(first.editorial_taxonomy.nodes[2].parentId,'moda-acessorios');assert.equal(first.editorial_taxonomy.nodes[2].manual,true);assert.equal(first.noProviders,true);
+ const secondSource=editorialRepository({revision:2});secondSource.state.taxonomySnapshot.data.nodes[2].name='Aparência pessoal';
+ const second=await loadLiveContextCatalogue(secondSource.repository);
+ assert.notEqual(first.snapshotHash,second.snapshotHash);assert.equal(second.editorial_taxonomy.revision,2);assert.equal(second.editorial_taxonomy.nodes[2].name,'Aparência pessoal');
+ assert.deepEqual(source.state,before); // A read cannot rewrite sources/editorial state.
+});
+test('editorial catalogue preserves semantic groups, stale status and existing size guards',async()=>{
+ const group={id:'a'.repeat(64),status:'active',name:'Receita única',context:'recipe',kind:'format',parentId:'receitas',definition:'Uma receita.',members:[],revision:3,protected:true};
+ const source=editorialRepository({sourceStale:true,groups:[group]}),snapshot=await loadLiveContextCatalogue(source.repository);
+ assert.equal(snapshot.state,'stale');assert.equal(snapshot.complete,false);assert.equal(snapshot.groups[0].id,group.id);assert.equal(snapshot.groups[0].name,group.name);assert.equal(snapshot.groups[0].protected,true);
+ const overflow=await loadLiveContextCatalogue(editorialRepository({nodes:Array.from({length:65},(_,i)=>({id:'manual_'+i,name:'Nó '+i}))}).repository);
+ assert.equal(overflow.state,'unavailable');assert.equal(overflow.reason,'COMPACT_CATALOGUE_EDITORIAL_LIMIT');assert.deepEqual(overflow.groups,[]);
+ const large=await loadLiveContextCatalogue(editorialRepository({nodes:[{id:'manual_large',name:'x'.repeat(30000)}]}).repository);
+ assert.equal(large.state,'unavailable');assert.equal(large.reason,'COMPACT_CATALOGUE_BYTE_LIMIT');
+ const semanticOverflow=await loadLiveContextCatalogue(editorialRepository({groups:Array.from({length:65},()=>group)}).repository);
+ assert.equal(semanticOverflow.reason,'COMPACT_CATALOGUE_GROUP_LIMIT');
+});
+

@@ -17,7 +17,7 @@ export const categoryDefinitions=Object.freeze([
  ['carreira','Trabalho e negócios','Carreira',['carreira'],'Orientar decisões de carreira e busca de trabalho; projetos técnicos permanecem em Desenvolvimento de software.'],
  ['casa-decoracao','Casa e estilo','Casa e decoração',['arquitetura e decoracao','decoracao','utilidades domesticas','casa e arquitetura'],'Apresentar soluções para espaços, arquitetura e decoração.'],
  ['faca-voce-mesmo','Casa e estilo','Faça você mesmo',['faca voce mesmo'],'Ensinar a fabricar ou reparar objetos; a aplicação decorativa pode ser assunto secundário.'],
- ['moda-acessorios','Casa e estilo','Moda e acessórios',['moda','estilo','acessorios'],'Ensinar uso, combinação ou escolha de roupas e acessórios; estratégia de marca pertence a Marketing.'],
+ ['moda-acessorios','Casa e estilo','Moda e acessórios',['moda','estilo','acessorios','moda e estilo','estilo pessoal','beleza e cuidados pessoais','cuidados pessoais','cabelo e barba','cortes de cabelo','barbearia'],'Ensinar estilo pessoal e aparência: uso, combinação ou escolha de roupas e acessórios, cabelo, barba e cuidados pessoais estéticos. Diagnóstico e tratamento de saúde pertencem a Bem-estar; estratégia de marca pertence a Marketing.'],
  ['destinos-experiencias','Viagens e lugares','Destinos e experiências',['dicas de viagem','rio de janeiro','viagens e turismo'],'Recomendar destinos, passeios e experiências; estabelecimentos para comer têm destino próprio.'],
  ['onde-comer','Viagens e lugares','Onde comer',['dicas de restaurantes','restaurantes','onde comer'],'Recomendar restaurantes, cafés e estabelecimentos; preparo de pratos pertence a Receitas e preparo.'],
  ['a-organizar','Outros temas','A organizar',[],'Usar sozinho e somente quando nenhum destino servir.']
@@ -42,7 +42,7 @@ export function categoryLabel(value){
 }
 const topicTerms=new Set(['paes','cafe da manha','inovacao','esportes','pratos principais','petiscos']);
 const broadGroups=new Map([['casa','Casa e estilo'],['negocios','Trabalho e negócios'],['saude','Saúde e bem-estar']]);
-const termsById=new Map(categoryDefinitions.map(c=>[c.id,new Set(c.id==='a-organizar'?[categoryKey(c.name)]:c.terms)]));
+const termsById=new Map(categoryDefinitions.map(c=>[c.id,new Set([categoryKey(c.name),...c.terms.map(categoryKey)])]));
 export function resolveCategories(values=[]){
  const terms=values.map(value=>({value,key:categoryKey(categoryLabel(value)??'')}));
  const ordered=[];
@@ -82,3 +82,4 @@ export function normalizedCategoryIds(values){
  }
  return values;
 }
+

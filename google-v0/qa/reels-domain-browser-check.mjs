@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {chromium} from 'playwright';
 import {startReelsFixtureServer} from './reels-server.mjs';
 import {makeSemanticFixture} from '../tests/reels-semantic-fixture.mjs';
+import {contextualHash} from '../lib/reels-contextual-projection.mjs';
 
 const output=process.env.MEGABRAIN_REELS_DOMAIN_QA_OUTPUT??join(tmpdir(),'megabrain-reels-domain-qa'),checks=[],failures=[];
 await mkdir(output,{recursive:true});
@@ -99,6 +100,38 @@ try{
    const categoryDetail=state.page.locator('.category-layout > .category-detail').filter({has:state.page.getByRole('heading',{name:group.name,exact:true})});await categoryDetail.getByRole('button',{name:'Gerenciar contexto',exact:true}).click();
    const editor=state.page.getByRole('region',{name:'Detalhes do contexto semântico'});await editor.getByRole('heading',{name:group.name,exact:true}).waitFor();await editor.getByRole('button',{name:'Organizar publicações',exact:true}).waitFor();
    assert.equal(state.server.calls.some(call=>call.path==='/api/reels/categories'&&call.method==='POST'),false,'Semantic tree editing must not call the legacy taxonomy writer');assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
+  }finally{await state.close();}
+ });
+ await record('catalogue_format_nodes_are_browsable_but_never_offer_legacy_writers',async()=>{
+  const state=await start();
+  try{
+   const ids=state.fixture.documents.filter(row=>row.path.startsWith('videos/')).map(row=>row.data.id);
+   await state.server.store.create('settings/reels_v2_contextual_catalogue',{schemaVersion:1,status:'active',policyVersion:'saved-publication-catalogue-v1',operationId:'0'.repeat(64),sourceObservationSHA256:'0'.repeat(64),sourceHash:'0'.repeat(64),inventoryIds:ids,inventoryCount:ids.length,evaluatedCount:ids.length,observedAt:state.fixture.saved.observedAt,activatedBy:'synthetic_fixture_bootstrap',incremental:{enabled:true,eventDriven:true,noProviders:true}});
+   for(const review of state.fixture.saved.formatReviews)await state.server.store.create('reels_index/contextual_review_'+review.reelId,{kind:'contextual_review',reelId:review.reelId,reviewHash:contextualHash(review),review});
+   await state.server.seedSavedContributions(ids);const taxonomy=await read(state,'/categories'),node=taxonomy.nodes.find(node=>node.id==='ctx_format_single_recipe');assert.ok(node);assert.equal(node.editorialOwner,'catalogue');assert.equal(node.actionCapabilities.rename,false);
+   await navigate(state.page,'Categorias');await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();
+   const ancestors=[];let parent=taxonomy.nodes.find(value=>value.id===node.parentId);while(parent){ancestors.unshift(parent);parent=taxonomy.nodes.find(value=>value.id===parent.parentId);}
+   for(const parent of ancestors)await state.page.getByRole('button',{name:'Expandir '+parent.name,exact:true}).click();
+   await state.page.locator('.category-tree .tree-name').filter({hasText:node.name}).click();const detail=state.page.locator('.category-layout > .category-detail').filter({has:state.page.getByRole('heading',{name:node.name,exact:true})});
+   await detail.getByRole('button',{name:'Explorar na Biblioteca ↗',exact:true}).waitFor();
+   for(const name of ['Editar nome','Mover categoria','Unir categorias','Segmentar por evidências','+ Criar subcategoria'])assert.equal(await detail.getByRole('button',{name,exact:true}).count(),0,'Derived format must not expose '+name);
+   await state.page.getByRole('button',{name:'+ Criar categoria',exact:true}).click();const createDialog=state.page.getByRole('dialog',{name:'Criar categoria'}),parentSelect=createDialog.getByLabel('Categoria acima',{exact:true});assert.equal(await parentSelect.inputValue(),'','Global creation must not inherit the selected virtual format');const parentIds=await parentSelect.locator('option').evaluateAll(options=>options.map(option=>option.value));assert.ok(parentIds.includes('receitas'));assert.equal(parentIds.some(id=>id.startsWith('ctx_format_')||id.startsWith('semantic_')),false,'Legacy parent selector must exclude virtual owners');await createDialog.getByRole('button',{name:'Fechar painel',exact:true}).click();await createDialog.waitFor({state:'hidden'});
+   await state.page.setViewportSize({width:390,height:844});assert.equal(await state.page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Catalogue and domain panels must fit the mobile viewport');
+   await state.page.screenshot({path:join(output,'categories-mobile-tools.png'),fullPage:true});assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
+  }finally{await state.close();}
+ });
+ await record('missing_editorial_capabilities_never_enable_legacy_mutations_presentation_only',async()=>{
+  const state=await start();
+  try{
+   // Contract presentation fixture only: the real read API still runs; omit one
+   // optional capability field to exercise an older/partial server response.
+   await state.page.route(state.server.origin+'/api/reels/categories',async route=>{assert.equal(route.request().method(),'GET');const response=await route.fetch(),data=await response.json(),node=data.nodes.find(node=>node.id==='receitas');assert.ok(node);delete node.actionCapabilities;await route.fulfill({response,json:data});});
+   await navigate(state.page,'Categorias');await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();
+   await state.page.getByRole('button',{name:'Expandir Alimentação',exact:true}).click();await state.page.getByRole('button',{name:/^Receitas\s*\d+$/}).click();
+   const detail=state.page.locator('.category-layout > .category-detail').filter({has:state.page.getByRole('heading',{name:'Receitas',exact:true})});
+   await detail.getByRole('button',{name:'Explorar na Biblioteca ↗',exact:true}).waitFor();for(const name of ['Editar nome','Mover categoria','Unir categorias','+ Criar subcategoria'])assert.equal(await detail.getByRole('button',{name,exact:true}).count(),0,'Missing capability must not offer '+name);
+   await state.page.getByRole('button',{name:'+ Criar categoria',exact:true}).click();const dialog=state.page.getByRole('dialog',{name:'Criar categoria'}),parents=await dialog.getByLabel('Categoria acima',{exact:true}).locator('option').evaluateAll(options=>options.map(option=>option.value));assert.equal(parents.includes('receitas'),false);
+   assert.equal(state.server.calls.some(call=>call.path==='/api/reels/categories'&&call.method==='POST'),false);assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
   }finally{await state.close();}
  });
  await record('domain_navigation_filters_before_pagination_and_preserves_search_and_area_on_return',async()=>{

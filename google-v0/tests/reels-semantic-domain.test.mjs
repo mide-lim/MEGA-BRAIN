@@ -186,3 +186,10 @@ test('the root policy cannot be replaced by its exact child or rewritten at a ne
   const outcome=await s.curator.runDelivery({jobId:job.id,sequence:job.dispatch.sequence,outboxId:job.dispatch.outboxId,maxBatches:3});assert.equal(outcome.job.status,'paused');assert.equal(outcome.job.reason,'SEMANTIC_AUTHORIZATION_CHANGED');assert.equal(outcome.job.callsUsed,0);assert.equal(s.fixture.calls.length,0);assert.equal((await s.store.get(path)).data.batch,null);
  }
 });
+
+test('invalid configured call limits cannot normalize to the enabled authorized 127-call policy',()=>{
+ const value={enabled:true,maxCalls:127,model:'gemini-domain-synthetic',verifierModel:'gemini-domain-verifier',authorizationId:'synthetic-existing-policy',expiresAt:'2099-01-01T00:00:00.000Z'},valid=semanticPolicy(value);
+ assert.equal(valid.enabled,true);assert.equal(valid.maxCalls,127);equal(semanticPolicy(valid),valid);
+ for(const maxCalls of [128,160,0,-1,1.5,'127',null]){const invalid=semanticPolicy({...value,maxCalls});assert.equal(invalid.enabled,false);assert.notEqual(semanticHash(invalid),semanticHash(valid));}
+ assert.equal(semanticPolicy({...value,maxCalls:undefined}).maxCalls,127);
+});

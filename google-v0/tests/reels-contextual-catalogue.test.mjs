@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {makeFullCatalogueFixture} from './reels-contextual-catalogue-fixture.mjs';
 import {projectContextualContribution,prepareContextualCatalogue,buildContextualCatalogue,catalogueMatchingIds,reconcileContextualContribution,ReelsContextualCatalogueProjector} from '../lib/reels-contextual-catalogue.mjs';
 const fixture=()=>makeFullCatalogueFixture();
-const sourceOf=(input,index=0)=>{const s=JSON.parse(input.records[index].sourceJson);return {...s,sourceVersions:s.sourceUpdateTime};};
+const sourceOf=(input,index=0)=>{const s=JSON.parse(input.records[index].sourceJson);return {...s,sourceVersions:s.sourceUpdateTime,formatReview:input.formatReviews?.find(r=>r.reelId===s.item.id)??null};};
 const contributionOf=(input,index=0)=>projectContextualContribution({...sourceOf(input,index),observedAt:input.observedAt});
 const event=(type='publicationAccepted')=>({id:'event-fixture-001',type,reelId:'QaFull_single'});
 test('all accepted sources are evaluated, unknown and non-recipe rows remain distinct, formats are proved independent preparations',()=>{
@@ -47,11 +47,11 @@ test('same publication replay is idempotent, saved source revision replaces one 
  const input=fixture(),source=sourceOf(input),previous=contributionOf(input),other=contributionOf(input,1),otherBefore=structuredClone(other);
  const unchanged=reconcileContextualContribution({event:event(),currentSource:source,previousContribution:previous,observedAt:'2026-10-18T00:25:00.000Z'});
  assert.equal(unchanged.action,'noop');
- source.video.source_caption.capture_id='new-capture';source.sourceVersions.video='2026-10-18T00:26:00.000Z';
+ source.video.source_caption.capture_id='new-capture';source.sourceVersions.video='2026-10-18T00:26:00.000Z';source.formatReview=null;
  const next=reconcileContextualContribution({event:event('sourceCorrected'),currentSource:source,previousContribution:previous,observedAt:'2026-10-18T00:27:00.000Z'});
  assert.equal(next.action,'upsert');assert.notEqual(next.replacement.idempotencyKey,previous.idempotencyKey);assert.equal(next.expectedPreviousHash,previous.contentHash);
  const view=buildContextualCatalogue([next.replacement,other],{inventoryIds:[previous.reelId,other.reelId],observedAt:input.observedAt});
- assert.equal(view.projectionCoverage.evaluatedCount,2);assert.equal(view.formats.find(f=>f.value==='single_recipe').count,1);assert.deepEqual(other,otherBefore);
+ assert.equal(view.projectionCoverage.evaluatedCount,2);assert.equal(view.formats.find(f=>f.value==='single_recipe').count,0);assert.deepEqual(other,otherBefore);
 });
 test('withdrawal only removes derived data when current saved publication is truly unavailable; stale acceptance cannot regress',()=>{
  const input=fixture(),source=sourceOf(input),previous=contributionOf(input);
@@ -84,4 +84,17 @@ test('a rejected CAS remains pending without changing provider/publication state
  const input=fixture(),source=sourceOf(input),before=structuredClone(source);let writes=0;
  const projector=new ReelsContextualCatalogueProjector({loadSource:async()=>source,loadContribution:async()=>null,commitCAS:async()=>{writes++;return {applied:false};},clock:()=>Date.parse(input.observedAt)});
  const result=await projector.handle(event());assert.equal(result.pending,true);assert.equal(result.committed,false);assert.equal(result.providerCalls,0);assert.equal(writes,1);assert.deepEqual(source,before);
+});
+
+test('V1 timing and a model complete flag alone remain candidates; independent review is not a broad future rule',()=>{
+ const input=fixture();input.formatReviews=[];
+ const p=prepareContextualCatalogue(input);assert.ok(p.catalogue.formats.every(f=>f.count===0));
+ const candidate=p.contributions.find(c=>c.data.reelId==='QaFull_many').data;
+ assert.equal(candidate.entry.format.state,'present_unverified');assert.equal(candidate.entry.independentUnitCount,null);
+ assert.ok(candidate.entry.attributes.every(a=>!a.unitIds.length));
+});
+test('wrong source review binding, duplicated unit proof and self-reviewed format cannot certify a recipe count',()=>{
+ const wrong=fixture();wrong.formatReviews[0].sourceProofHash='0'.repeat(64);assert.throws(()=>prepareContextualCatalogue(wrong),e=>e.code==='CATALOGUE_FORMAT_REVIEW_BINDING_MISMATCH');
+ const self=fixture();self.formatReviews[0].reviewer.identity='/root/alignment_backend';assert.throws(()=>prepareContextualCatalogue(self),e=>e.code==='CATALOGUE_FORMAT_REVIEW_BINDING_MISMATCH');
+ const shared=fixture();shared.formatReviews[1].units[1].evidenceRefs=shared.formatReviews[1].units[0].evidenceRefs;assert.throws(()=>prepareContextualCatalogue(shared),e=>e.code==='CATALOGUE_FORMAT_REVIEW_UNIT_INVALID');
 });

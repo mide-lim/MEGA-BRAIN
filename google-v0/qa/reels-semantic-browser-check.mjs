@@ -8,7 +8,7 @@ import {makeSemanticFixture} from '../tests/reels-semantic-fixture.mjs';
 
 const output=process.env.MEGABRAIN_REELS_SEMANTIC_QA_OUTPUT??join(tmpdir(),'megabrain-reels-semantic-qa');
 await mkdir(output,{recursive:true});
-const fixture=makeSemanticFixture(),server=await startReelsFixtureServer({semanticFixture:fixture}),checks=[],failures=[];
+const fixture=makeSemanticFixture({navigationGroups:true}),server=await startReelsFixtureServer({semanticFixture:fixture}),checks=[],failures=[];
 const sourceSnapshot=()=>JSON.stringify([...server.store.docs].filter(([path])=>path.startsWith('videos/')||path.startsWith('reels_legacy_content/')).sort(([a],[b])=>a.localeCompare(b)));
 const originalSources=sourceSnapshot(),semanticPath='/api/reels/curation/semantic';
 let browser,page,context,jobId,manualId;
@@ -103,6 +103,25 @@ try{
   hold.release();await refresh;assert.equal(await page.getByLabel('Buscar contextos semânticos').evaluate(element=>document.activeElement===element),true);
   await navigate('Financeiro');await navigate('Categorias');assert.equal(await page.getByLabel('Buscar contextos semânticos').inputValue(),'Preparos');
   assert.equal(await page.getByRole('button',{name:'Ver contexto '+fixture.expected.groupName,exact:true}).getAttribute('aria-pressed'),'true');await page.getByLabel('Buscar contextos semânticos').fill('');
+ });
+ await record('approved_format_uses_canonical_tree_and_ingredient_is_member_filter_without_node',async()=>{
+  await selectGroup('Receita única');await page.getByRole('region',{name:'Detalhes do contexto semântico'}).getByRole('button',{name:'Aprovar proposta',exact:true}).click();await confirm('group_approve');
+  const overview=await read('/curation/semantic'),format=overview.groups.find(group=>group.kind==='format'&&group.status==='active');
+  assert.ok(format);assert.equal(format.filter.category,'ctx_format_single_recipe');const categories=await read('/categories'),formatNodes=categories.nodes.filter(node=>node.id==='ctx_format_single_recipe');
+  assert.equal(formatNodes.length,1,'Semantic and documentary readers share one canonical format node');assert.equal(formatNodes[0].parentId,'receitas');assert.equal(formatNodes[0].count,1);
+  let library=responseFor('/api/reels/items',response=>new URL(response.url()).searchParams.get('category')==='ctx_format_single_recipe');
+  await page.getByRole('button',{name:'Explorar contexto na Biblioteca →',exact:true}).click();await library;assert.deepEqual(await libraryIds(),['QaFull_single']);
+  await page.locator('.library-navigation .tree-name').filter({hasText:'Receita única'}).waitFor();assert.equal(await page.locator('.library-navigation .tree-name').filter({hasText:'Receita única'}).getAttribute('aria-pressed'),'true');
+  await navigate('Categorias');await selectGroup('Frango');await page.getByRole('region',{name:'Detalhes do contexto semântico'}).getByRole('button',{name:'Aprovar proposta',exact:true}).click();await confirm('group_approve');
+  const approved=await read('/curation/semantic'),facet=approved.groups.find(group=>group.kind==='facet'&&group.status==='active');assert.ok(facet);assert.equal(facet.filter.semanticFacet,facet.id);assert.equal(facet.categoryId??null,null);
+  const tree=await read('/categories');assert.equal(tree.nodes.some(node=>node.id==='semantic_'+facet.id||node.groupId===facet.id||node.name==='Frango'),false,'Ingredient is a contextual filter, never another branch');
+  library=responseFor('/api/reels/items',response=>{const q=new URL(response.url()).searchParams;return q.get('semanticFacet')===facet.id&&!q.get('category');});
+  await page.getByRole('button',{name:'Explorar contexto na Biblioteca →',exact:true}).click();await library;assert.deepEqual(await libraryIds(),fixture.expected.memberIds);
+  await page.getByRole('button',{name:'Remover filtro do contexto',exact:true}).waitFor();await navigate('Financeiro');await navigate('Biblioteca');
+  assert.equal(await page.getByRole('button',{name:'Remover filtro do contexto',exact:true}).count(),1);assert.deepEqual(await libraryIds(),fixture.expected.memberIds);
+  library=responseFor('/api/reels/items',response=>{const q=new URL(response.url()).searchParams;return q.get('workspace')==='library'&&!q.get('semanticFacet')&&!q.get('category');});
+  await page.getByRole('button',{name:'Limpar filtros',exact:true}).click();await library;assert.equal((await libraryIds()).length,5,'Clear restores the full saved corpus');
+  assert.equal(fixture.calls.length,paidFixtureCalls);await navigate('Categorias');await selectGroup(fixture.expected.groupName);
  });
  await record('manual_create_assign_rename_protect_merge_reject_use_real_cas_commands',async()=>{
   await page.getByRole('button',{name:'+ Criar contexto',exact:true}).click();let dialog=page.getByRole('dialog');

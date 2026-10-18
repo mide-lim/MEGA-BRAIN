@@ -60,6 +60,20 @@ export class ReelsCatalogueRuntime{
    return {committed:false,pending:true,eventId:event.id,eventPath,reason:'CATALOGUE_EVENT_PENDING',providerCalls:0};
   }
  }
+ async reconcileEditorialOperation(operationId){
+  if(!/^[a-f0-9]{64}$/.test(operationId??''))throw Error('Operação editorial inválida.');
+  const receipt=await this.store.get('reels_command_items/taxonomy_'+operationId);
+  if(receipt?.data.kind!=='taxonomy_manual'||receipt.data.status!=='completed')return {pending:true,reason:'EDITORIAL_OPERATION_NOT_COMPLETED',evaluatedCount:0,providerCalls:0};
+  const ids=new Set(),seen=new Set();let cursor;
+  do{
+   const page=await this.store.query('reels_command_items',{filters:[{field:'operationId',op:'eq',value:operationId}],select:['kind','operationId','status','assignment.reelId'],limit:500,cursor});
+   for(const row of page.records)if(row.data.kind==='taxonomy_manual_assignment'&&row.data.operationId===operationId&&row.data.status==='completed'&&reelIdPattern.test(row.data.assignment?.reelId??''))ids.add(row.data.assignment.reelId);
+   cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Recibos editoriais não avançaram.');if(cursor)seen.add(cursor);
+  }while(cursor);
+  let pending=false,evaluatedCount=0;
+  for(const id of ids){const outcome=await this.project(id,{type:'editorialChanged',eventId:'taxonomy-'+operationId+'-'+id});pending||=outcome.pending===true;evaluatedCount++;}
+  return {pending,evaluatedCount,providerCalls:0,operationId};
+ }
  async resumePublicationIndex(id){
   const source=await this.loadSource(id),marker=source?.video?.contextual_catalogue_event;
   if(!marker||marker.type!=='publicationAccepted'||marker.reelId!==id||typeof marker.id!=='string')return {pending:false,committed:false,reason:'NO_PUBLISHED_INDEX_INTENT',providerCalls:0};

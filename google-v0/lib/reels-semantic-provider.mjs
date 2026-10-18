@@ -28,7 +28,7 @@ export class ReelsSemanticProvider{
  }
  async infer({sources,catalogue,requestId,model}){if(!Array.isArray(sources)||!sources.length||sources.length>12)throw Error('Lote semântico inválido.');return this.call({phase:'extract',payload:{sources,catalogue},requestId,model});}
  async consolidate(input){return this.call({...input,phase:'consolidate',payload:{groups:input.groups}});}
- async verify(input){return this.call({...input,phase:'verify',payload:{sources:input.sources,groups:input.groups,members:input.members,negativeExamples:input.negativeExamples}});}
+ async verify(input){return this.call({...input,phase:'verify',payload:{sources:input.sources,groups:input.groups,members:input.members,negativeExamples:input.negativeExamples,profiles:input.profiles??[]}});}
 }
 export function parseSavedSemanticResponse(envelope){
  const candidate=envelope?.rawResponse?.candidates?.[0];

@@ -1,4 +1,4 @@
-import {ReelsCatalogueRuntime} from './reels-contextual-catalogue-runtime.mjs';
+import {ReelsCatalogueRuntime,catalogueManifestActive,catalogueManifestPath} from './reels-contextual-catalogue-runtime.mjs';
 import {ReelsService} from './reels-service.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ReelsFinance} from './reels-finance.mjs';
@@ -57,6 +57,9 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='commands')return response(await service.command(input));
     if(path==='reconciliations')return response(await reconciliation.command(input));
     if(path==='categories'){
+     // A legacy V1 discovery can write its signal index even during preview.
+     // The active catalogue accepts only its source-bound reviewed formats.
+     if(input.action==='discover'&&catalogueManifestActive((await repository.store.get(catalogueManifestPath))?.data))throw fail('LEGACY_DISCOVERY_DISABLED','A descoberta antiga foi substituída pelo catálogo contextual. Consulte Categorias para revisar os padrões salvos.',409);
      const changed=await taxonomy.mutate(input);
      let catalogueIndex=null;
      if(input.preview!==true&&/^[a-f0-9]{64}$/.test(changed.operationId??'')){try{catalogueIndex=await getCatalogue().reconcileEditorialOperation(changed.operationId);}catch{catalogueIndex={pending:true,reason:'EDITORIAL_INDEX_PENDING',providerCalls:0};}}

@@ -1,3 +1,4 @@
+import {semanticContractSpec} from './reels-semantic-contract-definition.mjs';
 import {createHash} from 'node:crypto';
 import {publicationAvailable,projectReel} from './reels-model.mjs';
 import {preservedContentAvailable,withPreservedSummary} from './reels-preserved-content.mjs';
@@ -5,9 +6,9 @@ const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Obje
 export const semanticHash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
 export const semanticSourceProjectionVersion='saved-text-projection-v2';
 export const semanticPolicyVersion='semantic-curator-v1';
-export const semanticContexts=['recipe','technology','health','travel','business','home','general'];
+export const semanticContexts=semanticContractSpec.contexts;
 export const semanticStatuses=['prepared','running','paused','completed','uncertain','failed','cancelled'];
-export const semanticGroupKinds=['context','format','facet','segment'];
+export const semanticGroupKinds=semanticContractSpec.groupKinds;
 export const semanticPolicyPath='settings/reels_v2_semantic_policy';
 export function semanticPolicy(value={}){
  const n=(v,d,min,max)=>Number.isSafeInteger(v)&&v>=min&&v<=max?v:d;

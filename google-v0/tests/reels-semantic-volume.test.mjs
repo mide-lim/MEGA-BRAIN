@@ -23,7 +23,7 @@ function boundedMemoryStore(){
 }
 function longClaim(id,index){
  const prefix='Fonte '+id+' · evidência '+index+': ';
- return (prefix+'ação, gestão, organização, decisão e avaliação econômica documentadas. '.repeat(40)).slice(0,1600);
+ return (prefix+'ação, gestão, organização, decisão e avaliação econômica documentadas. '.repeat(40)).slice(0,1599)+'.';
 }
 function proofsFor(source){
  const fields=source.fields.filter(field=>/^analysis\.claims\.\d+$/.test(field.fieldPath));

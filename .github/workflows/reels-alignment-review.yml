@@ -26,7 +26,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: reels-confirmed-failure-preparation
+  group: reels-confirmed-failure-preparation-${{ startsWith(inputs.expected_candidates, 'catalogue-part-') && inputs.expected_candidates || 'global' }}
   cancel-in-progress: false
 jobs:
   firestore_contract:

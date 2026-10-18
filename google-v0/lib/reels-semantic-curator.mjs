@@ -1,3 +1,4 @@
+import {semanticCorrectiveCapabilityVersion,validateSemanticCorrectiveCapability,consumeSemanticCorrectiveCapability} from './reels-semantic-corrective-capability.mjs';
 import {semanticContractSpec as spec} from './reels-semantic-contract-definition.mjs';
 import {frozenSemanticSourceFromSaved} from './reels-semantic-source-v1.mjs';
 import {validateSemanticSourceRecovery,semanticSourceRecoveryPath,semanticSourceRecoveryVersion,validateSemanticSourceRecoveryMember,semanticSourceRecoveryReceiptValid,projectRecoveredSemanticOutput,validateSemanticPromptTransition} from './reels-semantic-source-recovery.mjs';
@@ -6,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {ReelsCatalogueRuntime,catalogueEditorialForItem} from './reels-contextual-catalogue-runtime.mjs';
 import {semanticHash,semanticPolicy,semanticPolicyPath,semanticPolicyVersion,semanticSourceFromSaved,semanticEditorial,prepareSemanticPlan} from './reels-semantic-source.mjs';
 import {validateSemanticOutput,validateSemanticVerificationEvidence,automaticSemanticPromotion,semanticContractVersion} from './reels-semantic-contract.mjs';
-import {parseSavedSemanticResponse,semanticPromptHash} from './reels-semantic-provider.mjs';
+import {parseSavedSemanticResponse,semanticPromptHash,semanticFailureDiagnostic} from './reels-semantic-provider.mjs';
 const list=v=>Array.isArray(v)?v:[];
 const clone=v=>structuredClone(v);
 const problem=(code,message,status=409)=>Object.assign(Error(message),{code,status});
@@ -19,9 +20,10 @@ const resultPath=id=>'reels_index/semantic_result_'+id;
 const validHash=id=>/^[a-f0-9]{64}$/.test(id??'');
 const sourceCurrent=(a,b)=>semanticHash(a??{})===semanticHash(b??{});
 const checkpointResultMatches=(job,s)=>{
- const cp=job.alignmentCheckpoint;return job.batch===null&&job.phase==='extract'&&job.callsUsed===2&&job.cursor===16&&cp?.version==='semantic-alignment-checkpoint-v1'&&cp.status==='pending_review'&&cp.resultId===semanticHash({jobId:job.id,phase:'extract',cursor:8})&&s?.kind==='semantic_result'&&s.id===cp.resultId&&s.processed===true&&s.phase==='extract'&&s.bindingHash===cp.bindingHash&&s.bindingHash===semanticHash(s.binding??{})&&s.rawHash===cp.rawHash&&s.binding?.jobId===job.id&&s.binding.phase==='extract'&&s.binding.cursor===8&&s.binding.policyHash===job.policyHash&&s.binding.promptHash===semanticPromptHash&&s.binding.promptTransitionHash===cp.transitionHash&&sourceCurrent(s.binding.pins,cp.pins)&&sourceCurrent(cp.pins?.map(p=>({id:p.id,sourceVersions:p.sourceVersions})),job.pins?.slice(8,16));
+ const cp=job.alignmentCheckpoint,corrective=cp?.version==='semantic-corrective-alignment-checkpoint-v1',expectedCalls=corrective?3:2,expectedId=corrective?job.correctiveRecovery?.attemptId:semanticHash({jobId:job.id,phase:'extract',cursor:8});
+ return job.batch===null&&job.phase==='extract'&&job.callsUsed===expectedCalls&&job.cursor===16&&(corrective?cp.capabilityAuthorizationHash===job.correctiveRecovery?.authorizationHash:cp?.version==='semantic-alignment-checkpoint-v1')&&cp.callsUsed===expectedCalls&&cp.cursor===16&&cp.status==='pending_review'&&cp.resultId===expectedId&&s?.kind==='semantic_result'&&s.id===cp.resultId&&s.processed===true&&s.phase==='extract'&&s.bindingHash===cp.bindingHash&&s.bindingHash===semanticHash(s.binding??{})&&s.rawHash===cp.rawHash&&s.binding?.jobId===job.id&&s.binding.phase==='extract'&&s.binding.cursor===8&&s.binding.policyHash===job.policyHash&&s.binding.promptHash===semanticPromptHash&&s.binding.promptTransitionHash===cp.transitionHash&&sourceCurrent(s.binding.pins,cp.pins)&&sourceCurrent(cp.pins?.map(p=>({id:p.id,sourceVersions:p.sourceVersions})),job.pins?.slice(8,16));
 };
-const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0,proposalOverflowCount:list(j.proposalOverflow).length,coverageLimit:j.coverageLimit??null});
+const publicJob=j=>({id:j.id,status:j.status,phase:j.phase,total:j.total??j.pins?.length??0,processed:j.cursor,callsUsed:j.callsUsed,maxCalls:j.maxCalls,uncertain:j.status==='uncertain',dispatch:j.dispatch,reason:j.reason??null,createdAt:j.createdAt,updatedAt:j.updatedAt,cohortHash:j.cohortHash,model:j.policy.model,verifierModel:j.policy.verifierModel,verificationProcessed:j.verifyCursor??0,verificationSkippedSources:j.noTargetVerification?.sourceCount??0,verificationTargetDecisions:j.verificationTargetDecisions??((j.verifyCursor??0)>(j.noTargetVerification?.sourceCount??0)?null:0),proposalOverflowCount:list(j.proposalOverflow).length,coverageLimit:j.coverageLimit??null,providerDiagnostic:j.providerDiagnostic??null,noTargetVerification:j.noTargetVerification??null});
 export class ReelsSemanticCurator{
  constructor({repository,provider=null,enqueue=null,clock=Date.now,leaseMs=180000}){
   if(!repository?.store)throw Error('Curador semântico exige repositório.');
@@ -47,7 +49,7 @@ export class ReelsSemanticCurator{
   const authorizationPath='reels_index/semantic_authorization_'+semanticHash(p.policy.authorizationId),authorization=await this.store.get(authorizationPath);if(authorization)throw problem('SEMANTIC_AUTHORIZATION_CONSUMED','Esta autorização finita já foi utilizada.');
   const coordinatorPath='reels_index/semantic_coordinator',coordinator=await this.store.get(coordinatorPath);
   if(coordinator){const previous=await this.store.get(jobPath(coordinator.data.jobId));if(coordinator.data.authorizationId===p.policy.authorizationId||previous&&['prepared','running','paused','uncertain'].includes(previous.data.status))throw problem('SEMANTIC_JOB_ALREADY_EXISTS','Esta autorização já tem uma curadoria ou resultado que exige conferência.');}
-  const now=this.now(),job={kind:'semantic_job',schemaVersion:1,id,fingerprint,status:'prepared',total:p.pins.length,phase:'extract',cursor:0,verifyCursor:0,pins:p.pins,cohortHash:p.preview.cohortHash,previewHash:p.previewHash,policy:p.policy,policyHash:semanticHash(p.policy),promptHash:semanticPromptHash,policyVersion:p.policySnapshot.updateTime,maxCalls:p.preview.maximumCalls,callsUsed:0,dispatch:this.dispatchFor(id,0),batch:null,createdAt:now,updatedAt:now};
+  const now=this.now(),job={kind:'semantic_job',schemaVersion:1,id,fingerprint,status:'prepared',total:p.pins.length,phase:'extract',cursor:0,verifyCursor:0,verificationTargetDecisions:0,pins:p.pins,cohortHash:p.preview.cohortHash,previewHash:p.previewHash,policy:p.policy,policyHash:semanticHash(p.policy),promptHash:semanticPromptHash,policyVersion:p.policySnapshot.updateTime,maxCalls:p.preview.maximumCalls,callsUsed:0,dispatch:this.dispatchFor(id,0),batch:null,createdAt:now,updatedAt:now};
   await this.commit([{path,updateTime:null},{path:authorizationPath,updateTime:null},{path:coordinatorPath,updateTime:coordinator?.updateTime??null},{path:semanticPolicyPath,updateTime:p.policySnapshot.updateTime}], [{path,data:job},{path:authorizationPath,data:{kind:'semantic_authorization',authorizationId:p.policy.authorizationId,jobId:id,cohortHash:p.preview.cohortHash,promptHash:semanticPromptHash,maximumCalls:p.preview.maximumCalls,consumedAt:now}},{path:coordinatorPath,data:{kind:'semantic_coordinator',jobId:id,authorizationId:p.policy.authorizationId,cohortHash:p.preview.cohortHash,createdAt:now}}]);
   await this.dispatch(job);return {job:publicJob((await this.store.get(path)).data),created:true};
  }
@@ -77,15 +79,32 @@ export class ReelsSemanticCurator{
  async authorizationLedger(job){
   const path='reels_index/semantic_authorization_'+semanticHash(job.policy.authorizationId),snapshot=await this.store.get(path),data=snapshot?.data;if(!data||data.kind!=='semantic_authorization'||data.jobId!==job.id||data.authorizationId!==job.policy.authorizationId||data.cohortHash!==job.cohortHash||data.promptHash!==job.promptHash||data.maximumCalls!==job.maxCalls)throw problem('SEMANTIC_AUTHORIZATION_LEDGER_CHANGED','A autorização consumida não corresponde ao trabalho.');return {path,...snapshot};
  }
- async promptAuthorization(job){
+ async promptAuthorization(job,{forSubmission=false}={}){
   const ledger=await this.authorizationLedger(job),ledgerCheck={path:ledger.path,updateTime:ledger.updateTime};
+  if(job.correctiveRecovery)return this.correctiveAuthorization(job,{ledger,forSubmission});
   if(job.promptHash===semanticPromptHash)return {checks:[ledgerCheck],receipt:null,transitionHash:null};
   const firstId=semanticHash({jobId:job.id,phase:'extract',cursor:0}),path=semanticSourceRecoveryPath(firstId),[recovery,original]=await Promise.all([this.store.get(path),this.store.get(resultPath(firstId))]);
   if(!validateSemanticPromptTransition(recovery?.data,job,original?.data,ledger))throw problem('SEMANTIC_PROMPT_TRANSITION_REQUIRED','A versão do contrato exige transição finita aprovada.');
   return {receipt:recovery.data,transitionHash:recovery.data.transitionHash,checks:[ledgerCheck,{path,updateTime:recovery.updateTime},{path:resultPath(firstId),updateTime:original.updateTime}]};
  }
+
+ async correctiveAuthorization(job,{ledger,forSubmission=false}={}){
+  const ref=job.correctiveRecovery;if(ref?.version!==semanticCorrectiveCapabilityVersion||!/^reels_index\/semantic_corrective_capability_[a-f0-9]{64}$/.test(ref.capabilityPath??'')||!/^reels_index\/semantic_rejected_recovery_[a-f0-9]{64}$/.test(ref.receiptPath??''))throw problem('SEMANTIC_CORRECTIVE_CAPABILITY_INVALID','Permissão corretiva ausente.');
+  ledger??=await this.authorizationLedger(job);
+  const [capability,receipt,p,coordinator]=await Promise.all([this.store.get(ref.capabilityPath),this.store.get(ref.receiptPath),this.policy(),this.store.get('reels_index/semantic_coordinator')]),a=capability?.data.authorization;
+  if(!/^reels_index\/semantic_source_recovery_[a-f0-9]{64}$/.test(a?.historicalRecovery?.path??'')||!/^reels_index\/semantic_result_[a-f0-9]{64}$/.test(a?.firstResult?.path??''))throw problem('SEMANTIC_CORRECTIVE_CAPABILITY_INVALID','Histórico corretivo ausente.');
+  const [historical,first]=await Promise.all([this.store.get(a.historicalRecovery.path),this.store.get(a.firstResult.path)]),historicalRecovery={path:a.historicalRecovery.path,...historical},firstResult={path:a.firstResult.path,...first},valid=validateSemanticCorrectiveCapability({capability:capability?.data,receipt:receipt?.data,job,policy:p.data,ledger,firstResult,historicalRecovery,coordinator,now:this.now(),forSubmission});
+  if(!valid)throw problem('SEMANTIC_CORRECTIVE_CAPABILITY_INVALID','Permissão finita ou sua proveniência mudou.');
+  const checks=[{path:ref.capabilityPath,updateTime:capability.updateTime},{path:ref.receiptPath,updateTime:receipt.updateTime},{path:ledger.path,updateTime:ledger.updateTime},{path:semanticPolicyPath,updateTime:p.snapshot.updateTime},{path:'reels_index/semantic_coordinator',updateTime:coordinator.updateTime},{path:historicalRecovery.path,updateTime:historical.updateTime},{path:firstResult.path,updateTime:first.updateTime}];
+  await this.envelopeRead(first,{checks});
+  const oldId=receipt.data.oldBatchId,paths=[resultPath(oldId),...Array.from({length:12},(_,i)=>'reels_index/semantic_raw_'+oldId+'_'+i)],absent=await Promise.all(paths.map(path=>this.store.get(path)));
+  if(absent.some(Boolean))throw problem('SEMANTIC_CORRECTIVE_OLD_RESPONSE_APPEARED','Uma resposta antiga apareceu; não repetir nem substituir.');
+  checks.push(...paths.map(path=>({path,updateTime:null})));
+  return {receipt:receipt.data,transitionHash:valid.transitionHash,checks,corrective:{...valid,capability:capability.data,capabilityPath:ref.capabilityPath,receipt:receipt.data}};
+ }
+
  async alignmentCheckpointMetadata(job,{inventory=null}={}){
-  const cp=job.alignmentCheckpoint;if(job.status!=='paused'||job.reason!=='SEMANTIC_ALIGNMENT_CHECKPOINT'||cp?.status!=='pending_review'||cp.callsUsed!==2||cp.cursor!==16||job.callsUsed!==2||job.cursor!==16||cp.promptHash!==semanticPromptHash)return false;
+  const cp=job.alignmentCheckpoint,corrective=cp?.version==='semantic-corrective-alignment-checkpoint-v1',expectedCalls=corrective?3:2,expectedReason=corrective?'SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT':'SEMANTIC_ALIGNMENT_CHECKPOINT';if(job.status!=='paused'||job.reason!==expectedReason||cp?.status!=='pending_review'||cp.callsUsed!==expectedCalls||cp.cursor!==16||job.callsUsed!==expectedCalls||job.cursor!==16||cp.promptHash!==semanticPromptHash)return false;
   try{
    const [p,saved,inv,taxonomy]=await Promise.all([this.policy(),this.store.get(resultPath(cp.resultId)),inventory?Promise.resolve(inventory):this.inventory(),this.store.get('settings/reels_v2_taxonomy')]),auth=await this.promptAuthorization(job),s=saved?.data;
    if(!p.data.enabled||Date.parse(p.data.expiresAt)<=this.clock()||semanticHash(p.data)!==job.policyHash||auth.transitionHash!==cp.transitionHash||!checkpointResultMatches(job,s)||s.binding.promptTransitionHash!==auth.transitionHash)return false;
@@ -109,6 +128,7 @@ export class ReelsSemanticCurator{
   if(!validHash(jobId)||!Number.isSafeInteger(sequence)||sequence<0||outboxId!==semanticHash({jobId,sequence})||!Number.isSafeInteger(maxBatches)||maxBatches<1||maxBatches>3)throw problem('INVALID_SEMANTIC_DELIVERY','Entrega inválida.',400);
   let snapshot=await this.store.get(jobPath(jobId));if(!snapshot)throw problem('SEMANTIC_JOB_NOT_FOUND','Curadoria não encontrada.',404);
   if(sequence>snapshot.data.dispatch.sequence)throw problem('SEMANTIC_DELIVERY_AHEAD','Entrega fora da sequência.');
+  if(snapshot.data.correctiveRecovery&&sequence<snapshot.data.correctiveRecovery.sequence)return {job:publicJob(snapshot.data),duplicate:true,ignored:'PRE_CORRECTION_DELIVERY'};
   if(sequence<snapshot.data.dispatch.sequence){await this.dispatch(snapshot.data);return {job:publicJob(snapshot.data),duplicate:true};}
   for(let i=0;i<maxBatches;i++){
    snapshot=await this.store.get(jobPath(jobId));const job=snapshot.data;
@@ -120,15 +140,16 @@ export class ReelsSemanticCurator{
     if(Date.parse(job.batch.leaseUntil)>this.clock())throw problem('SEMANTIC_LEASE_ACTIVE','Entrega já em execução.',503);
     await this.stop(snapshot,'uncertain','PAID_SUBMISSION_OUTCOME_UNCERTAIN');break;
    }
-   if(job.callsUsed>=job.maxCalls){await this.stop(snapshot,'paused','FINITE_CALL_BUDGET_EXHAUSTED');break;}
    let loaded;try{loaded=await this.loadSources(job.phase==='consolidate'?job.pins.slice(0,0):job.pins.slice(job.phase==='extract'?job.cursor:job.verifyCursor,(job.phase==='extract'?job.cursor:job.verifyCursor)+job.policy.batchSize));}catch{await this.stop(snapshot,'paused','SEMANTIC_SOURCE_CHANGED');break;}
-   let promptAuth;try{promptAuth=await this.promptAuthorization(job);}catch{await this.stop(snapshot,'paused','SEMANTIC_PROMPT_TRANSITION_REQUIRED');break;}
+   let promptAuth;try{promptAuth=await this.promptAuthorization(job,{forSubmission:true});}catch{await this.stop(snapshot,'paused',job.correctiveRecovery?'SEMANTIC_CORRECTIVE_CAPABILITY_INVALID':'SEMANTIC_PROMPT_TRANSITION_REQUIRED');break;}
    const groups=await this.currentGroups();
    // Include all current definitions for cross-batch semantic reuse. No fixed
    // regex/word-count classifier substitutes for these provider calls.
    const catalogue={version:semanticPolicyVersion,promptHash:semanticPromptHash,groups:groups.map(g=>compactGroup({id:g.data.id,key:g.data.key,name:g.data.name,context:g.data.context,kind:g.data.kind,dimension:g.data.dimension,definition:g.data.definition,aliases:g.data.aliases,positiveCriteria:g.data.positiveCriteria,negativeCriteria:g.data.negativeCriteria,protected:g.data.protected,manual:g.data.manual,automaticMutable:!g.data.protected&&!g.data.manual&&g.data.status!=='rejected',status:g.data.status}))};
    if(groups.length>128){await this.stop(snapshot,'paused','EXISTING_CATALOGUE_EXCEEDS_REVIEWED_CAP');break;}
    const reviewGroups=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected),selected=new Set(loaded.sources.map(s=>s.id)),members=reviewGroups.flatMap(g=>list(g.data.members).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,role:m.role,unitIds:m.unitIds,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity,sourceReconciliation:m.sourceReconciliation??null,semanticProofHash:m.semanticProofHash,editorialHash:m.editorialHash,sourceVersions:m.sourceVersions,proofSourceBindings:m.proofSourceBindings??{}}))),negativeExamples=reviewGroups.flatMap(g=>list(g.data.negativeExamples).filter(m=>selected.has(m.id)).map(m=>({groupId:g.data.id,reelId:m.id,reason:m.reason,evidence:m.evidence,evidenceRef:m.evidenceRef??null,sourceIdentity:m.sourceIdentity,sourceReconciliation:m.sourceReconciliation??null,semanticProofHash:m.semanticProofHash,editorialHash:m.editorialHash,sourceVersions:m.sourceVersions,proofSourceBindings:m.proofSourceBindings??{}}))),profiles=[];
+   if(job.phase==='verify'&&members.length===0&&negativeExamples.length===0){try{await this.skipEmptyVerification(snapshot,{loaded,groups,policy:p,promptAuth});}catch{break;}continue;}
+   if(job.callsUsed>=job.maxCalls){await this.stop(snapshot,'paused','FINITE_CALL_BUDGET_EXHAUSTED');break;}
    if(job.phase==='verify')try{
     const proofCache=new Map();for(const m of [...members,...negativeExamples]){const full=await this.hydrateEvidence({...m,id:m.reelId},proofCache);m.evidence=full.evidence;delete m.evidenceRef;}
     for(const source of loaded.sources){const p=await this.store.get('reels_index/semantic_profile_'+source.id),saved=p?await this.store.get(resultPath(p.data.resultId)):null,pin=list(saved?.data.binding?.pins).find(x=>x.id===source.id);
@@ -144,23 +165,67 @@ export class ReelsSemanticCurator{
    }catch{await this.stop(snapshot,'paused','SEMANTIC_SAVED_PROOF_BINDING_CHANGED');break;}
    const phasePayload=job.phase==='extract'?{sources:loaded.sources,catalogue}:job.phase==='consolidate'?{groups:catalogue.groups}:{sources:loaded.sources,groups:catalogue.groups.filter(g=>reviewGroups.some(r=>r.data.id===g.id)),members,negativeExamples,profiles};
    if(JSON.stringify(phasePayload).length>320000){await this.stop(snapshot,'paused','SEMANTIC_INPUT_LIMIT_BEFORE_SUBMISSION');break;}
-   const batchId=semanticHash({jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor}),binding={jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor,pins:loaded.sources.map(s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:semanticPromptHash,promptTransitionHash:promptAuth.transitionHash},batch={id:batchId,status:'submitting',phase:job.phase,offset:binding.cursor,sourceIds:loaded.sources.map(s=>s.id),bindingHash:semanticHash(binding),binding,leaseOwner:randomUUID(),leaseUntil:new Date(this.clock()+this.leaseMs).toISOString(),startedAt:this.now(),groupVersions:groups.map(g=>({path:g.path,updateTime:g.updateTime}))};
+   const batchId=promptAuth.corrective?.consumeRequired?promptAuth.corrective.attemptId:semanticHash({jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor}),binding={jobId,phase:job.phase,cursor:job.phase==='verify'?job.verifyCursor:job.cursor,pins:loaded.sources.map(s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),catalogueHash:semanticHash(catalogue),policyHash:job.policyHash,promptHash:semanticPromptHash,promptTransitionHash:promptAuth.transitionHash},batch={id:batchId,status:'submitting',phase:job.phase,offset:binding.cursor,sourceIds:loaded.sources.map(s=>s.id),bindingHash:semanticHash(binding),binding,leaseOwner:randomUUID(),leaseUntil:new Date(this.clock()+this.leaseMs).toISOString(),startedAt:this.now(),groupVersions:groups.map(g=>({path:g.path,updateTime:g.updateTime}))};
    if(typeof this.provider?.[job.phase==='extract'?'infer':job.phase==='consolidate'?'consolidate':'verify']!=='function'){await this.stop(snapshot,'paused','SEMANTIC_PROVIDER_NOT_READY');break;}
    const checks=this.uniqueChecks([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path:semanticPolicyPath,updateTime:p.snapshot?.updateTime??null},...loaded.checks,...promptAuth.checks,...groups.map(g=>({path:g.path,updateTime:g.updateTime}))]);
-   const intent={...job,status:'running',batch,callsUsed:job.callsUsed+1,updatedAt:this.now()};
-   try{await this.commit(checks,[{path:jobPath(job.id),data:intent}]);}catch{break;}
-   const live=await this.store.get(jobPath(job.id));
+   const intent={...job,status:'running',batch,callsUsed:job.callsUsed+1,updatedAt:this.now()},intentWrites=[];
+   if(promptAuth.corrective?.consumeRequired){
+    const correction=promptAuth.corrective,old=correction.capability.authorization.preparationInput.job.data,actualPins=loaded.sources.map(s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash})),expectedPins=correction.capability.authorization.preparationInput.sources.map(s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash}));
+    if(job.phase!=='extract'||job.cursor!==8||job.callsUsed!==2||intent.callsUsed!==3||!sourceCurrent(actualPins,expectedPins)||!sourceCurrent(groups.map(g=>({path:g.path,updateTime:g.updateTime})),old.batch.groupVersions??[])){await this.stop(snapshot,'paused','SEMANTIC_CORRECTIVE_SOURCE_OR_CATALOGUE_CHANGED');break;}
+    const consumed=consumeSemanticCorrectiveCapability(correction.capability,{jobId,binding,bindingHash:batch.bindingHash,attemptId:batchId,now:this.now()});intent.correctiveRecovery={...job.correctiveRecovery,consumptionHash:semanticHash(consumed.consumption)};intentWrites.push({path:correction.capabilityPath,data:consumed});
+   }
+   try{await this.commit(checks,[{path:jobPath(job.id),data:intent},...intentWrites]);}catch(error){
+    if(promptAuth.corrective&&error.code!=='SEMANTIC_VERSION_CHANGED'){const fresh=await this.store.get(jobPath(job.id));if(fresh?.data.batch?.leaseOwner===batch.leaseOwner||fresh?.data.batch===null&&fresh.data.callsUsed===2)try{await this.stop(fresh,'uncertain','SEMANTIC_CORRECTIVE_INTENT_PERSISTENCE_UNCERTAIN');}catch{}}
+    break;
+   }
+   const live=await this.store.get(jobPath(job.id));let failureStage='provider';
    try{
     if(!this.provider)throw Error('Provider semântico não configurado.');
     let envelope;
     if(job.phase==='extract')envelope=await this.provider.infer({...phasePayload,requestId:batchId,model:job.policy.model});
     else if(job.phase==='consolidate')envelope=await this.provider.consolidate({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
     else envelope=await this.provider.verify({...phasePayload,requestId:batchId,model:job.policy.verifierModel});
-    const saved=await this.envelopeSave(batchId,envelope,binding);await this.applySaved(live,saved);
-   }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.stop(latest,error.requiresReconciliation?'uncertain':error.status===409?'paused':known?'failed':'uncertain',error.code??(known?'SAVED_RESPONSE_REQUIRES_REVIEW':'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN'));};break;}
+    failureStage='raw_persistence';const saved=await this.envelopeSave(batchId,envelope,binding);failureStage='saved_application';await this.applySaved(live,saved);
+   }catch(error){const latest=await this.store.get(jobPath(job.id));if(latest?.data.batch?.id===batchId&&latest.data.batch.status==='submitting'){const known=await this.store.get(resultPath(batchId));await this.recordFailure(latest,error,{stage:failureStage,envelopePresent:Boolean(known)});}break;}
   }
-  const final=(await this.store.get(jobPath(jobId))).data;await this.dispatch(final);return {job:publicJob((await this.store.get(jobPath(jobId))).data)};
+  const final=(await this.store.get(jobPath(jobId))).data;if(!(final.correctiveRecovery&&final.batch?.status==='submitting'))await this.dispatch(final);return {job:publicJob((await this.store.get(jobPath(jobId))).data)};
  }
+
+
+ async skipEmptyVerification(snapshot,{loaded,groups,policy,promptAuth}){
+  const job=snapshot.data,selected=new Set(loaded.sources.map(s=>s.id)),eligible=groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected);
+  if(job.phase!=='verify'||job.batch!==null||!loaded.sources.length||eligible.some(g=>[...list(g.data.members),...list(g.data.negativeExamples)].some(m=>selected.has(m.id))))throw problem('SEMANTIC_VERIFICATION_TARGETS_CHANGED','Há associações a verificar; o trabalho não está vazio.');
+  const coordinatorPath='reels_index/semantic_coordinator',coordinator=await this.store.get(coordinatorPath);
+  if(coordinator?.data.kind!=='semantic_coordinator'||coordinator.data.jobId!==job.id||coordinator.data.authorizationId!==job.policy.authorizationId||coordinator.data.cohortHash!==job.cohortHash)throw problem('SEMANTIC_COORDINATOR_CHANGED','A coordenação exclusiva do trabalho mudou; não pular a faixa.');
+  const id=semanticHash({jobId:job.id,phase:'verify',cursor:job.verifyCursor}),path='reels_index/semantic_no_targets_'+id,prior=await this.store.get(path);
+  if(prior)throw problem('SEMANTIC_NO_TARGET_RECEIPT_CONFLICT','Faixa vazia já registrada; consultar o cursor atual.');
+  const pins=loaded.sources.map(s=>({id:s.id,sourceVersions:s.sourceVersions,sourceIdentity:s.sourceIdentity,semanticProofHash:s.semanticProofHash,editorialHash:s.editorialHash})),groupVersions=groups.map(g=>({path:g.path,updateTime:g.updateTime})),nextCursor=Math.min(job.pins.length,job.verifyCursor+loaded.sources.length),now=this.now();
+  const receipt={kind:'semantic_no_targets',version:'semantic-no-target-verification-v1',id,jobId:job.id,phase:'verify',reason:'NO_ELIGIBLE_VERIFICATION_TARGETS',fromCursor:job.verifyCursor,toCursor:nextCursor,sourceIds:pins.map(p=>p.id),pins,pinsHash:semanticHash(pins),groupVersions,groupVersionsHash:semanticHash(groupVersions),policyHash:job.policyHash,promptHash:semanticPromptHash,promptTransitionHash:promptAuth.transitionHash,targetCount:0,memberTargetCount:0,negativeTargetCount:0,providerCalls:0,semanticVerified:false,coordinatorVersion:coordinator.updateTime,writerScope:'current_coordinator_job_and_manual_web_commands',externalCollectionCAS:false,createdAt:now};
+  const next={...job,verifyCursor:nextCursor,batch:null,status:nextCursor===job.pins.length?'completed':'running',reason:nextCursor===job.pins.length?'COMPLETED_WITH_NO_TARGET_RECEIPTS':null,noTargetVerification:{rangeCount:(job.noTargetVerification?.rangeCount??0)+1,sourceCount:(job.noTargetVerification?.sourceCount??0)+pins.length,lastReceiptId:id},dispatch:this.dispatchFor(job.id,job.dispatch.sequence+1),updatedAt:now};
+  await this.commit(this.uniqueChecks([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path,updateTime:null},{path:semanticPolicyPath,updateTime:policy.snapshot.updateTime},{path:coordinatorPath,updateTime:coordinator.updateTime},...loaded.checks,...promptAuth.checks,...groupVersions]),[{path,data:receipt},{path:jobPath(job.id),data:next}]);
+ }
+
+ async recordFailure(snapshot,error,{stage,envelopePresent}){
+  const job=snapshot.data,batch=job.batch,path='reels_index/semantic_attempt_'+batch.id,prior=await this.store.get(path);
+  // Preserve a previous immutable observation; never overwrite it after an ACK
+  // loss or use diagnostic persistence as permission to repeat provider work.
+  if(prior){if(prior.data.jobId!==job.id||prior.data.bindingHash!==batch.bindingHash)throw problem('SEMANTIC_ATTEMPT_CONFLICT','Diagnóstico pertence a outro envio.');return;}
+  const diagnostic=semanticFailureDiagnostic(error,{stage,phase:batch.phase,envelopePresent}),now=this.now();
+  const status=!envelopePresent||error.requiresReconciliation?'uncertain':stage==='saved_application'&&error.status===409?'paused':'failed';
+  const savedCodes=['SEMANTIC_MERGE_CONTRADICTORY_EVIDENCE','SEMANTIC_GROUP_CONTRADICTORY_EVIDENCE','SEMANTIC_SOURCE_CHANGED','SEMANTIC_VERSION_CHANGED','SEMANTIC_AUTHORIZATION_CHANGED'];
+  const reason=envelopePresent?(stage==='saved_application'&&savedCodes.includes(error.code)?error.code:'SAVED_RESPONSE_REQUIRES_REVIEW'):'PAID_SUBMISSION_OR_PERSISTENCE_UNCERTAIN';
+  const attempt={kind:'semantic_attempt',schemaVersion:1,id:batch.id,jobId:job.id,bindingHash:batch.bindingHash,phase:batch.phase,cursor:batch.offset,callsUsed:job.callsUsed,diagnostic,recordedAt:now};
+  const next={...job,status,reason,providerDiagnostic:{attemptId:batch.id,...diagnostic},updatedAt:now};
+  try{await this.commit([{path:jobPath(job.id),updateTime:snapshot.updateTime},{path,updateTime:null}],[{path,data:attempt},{path:jobPath(job.id),data:next}]);}
+  catch(cause){
+   const [a,j]=await Promise.all([this.store.get(path),this.store.get(jobPath(job.id))]);
+   if(a&&j&&semanticHash(a.data)===semanticHash(attempt)&&semanticHash(j.data)===semanticHash(next))return;
+   // A failed diagnostic CAS leaves the original submitting intent untouched.
+   // It cannot release a lease, subtract a counted call or enqueue a replay.
+   throw cause;
+  }
+ }
+
  async stop(snapshot,status,reason){await this.commit([{path:jobPath(snapshot.data.id),updateTime:snapshot.updateTime}],[{path:jobPath(snapshot.data.id),data:{...snapshot.data,status,reason,updatedAt:this.now()}}]);}
  async applySaved(snapshot,saved,{commandReceipt=null,deferContinuation=false}={}){
   const job=snapshot.data,batch=job.batch,currentPolicy=await this.policy();
@@ -192,6 +257,7 @@ export class ReelsSemanticCurator{
    }
    next.proposalOverflow=[...list(job.proposalOverflow),...overflow];next.proposalLimit=128;next.coverageLimit=overflow.length?'PROPOSALS_RETAINED_IN_RAW_NOT_PROMOTED':job.coverageLimit??null;
    next.cursor=Math.min(job.pins.length,job.cursor+loaded.sources.length);if(next.cursor===job.pins.length)next.phase='consolidate';
+   if(job.correctiveRecovery&&job.callsUsed===3&&job.cursor===8&&batch.id===job.correctiveRecovery.attemptId&&next.cursor===16&&!job.alignmentCheckpoint){const auth=await this.promptAuthorization(job);if(!auth.corrective||auth.corrective.consumeRequired)throw problem('SEMANTIC_CORRECTIVE_CAPABILITY_INVALID','Consumo corretivo não confirmado.');checks.push(...auth.checks);next.status='paused';next.reason='SEMANTIC_REJECTED_ATTEMPT_CHECKPOINT';next.alignmentCheckpoint={version:'semantic-corrective-alignment-checkpoint-v1',status:'pending_review',resultId:batch.id,rawHash:saved.data.rawHash,bindingHash:batch.bindingHash,promptHash:batch.binding.promptHash,transitionHash:auth.transitionHash,capabilityAuthorizationHash:auth.corrective.capabilityAuthorizationHash,receiptHash:auth.receipt.receiptHash,pins:batch.binding.pins,callsUsed:3,cursor:16,catalogueAtSubmission:groups.map(g=>({id:g.data.id,key:g.data.key,kind:g.data.kind,context:g.data.context,dimension:g.data.dimension??null,name:g.data.name,aliases:list(g.data.aliases)})),createdAt:this.now()};}
    if(job.promptHash!==semanticPromptHash&&job.callsUsed===2&&next.cursor===16&&!job.alignmentCheckpoint){const auth=await this.promptAuthorization(job);checks.push(...auth.checks);next.status='paused';next.reason='SEMANTIC_ALIGNMENT_CHECKPOINT';next.alignmentCheckpoint={version:'semantic-alignment-checkpoint-v1',status:'pending_review',resultId:batch.id,rawHash:saved.data.rawHash,bindingHash:saved.data.bindingHash,promptHash:batch.binding.promptHash,transitionHash:auth.transitionHash,pins:batch.binding.pins,callsUsed:2,cursor:16,catalogueAtSubmission:groups.map(g=>({id:g.data.id,key:g.data.key,kind:g.data.kind,context:g.data.context,dimension:g.data.dimension??null,name:g.data.name,aliases:list(g.data.aliases)})),createdAt:this.now()};}
   }else if(job.phase==='consolidate'){
    if(output.version!==1||!Array.isArray(output.resolutions)||output.resolutions.length!==groups.length)throw Error('Consolidação global incompleta.');
@@ -219,6 +285,7 @@ export class ReelsSemanticCurator{
     }if(decisions.size!==expected.size)throw Error('Verificador omitiu associações.');return decisions;};
    const expectedMembers=new Map(groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected).flatMap(g=>list(g.data.members).filter(m=>ids.has(m.id)).map(m=>[g.data.id+':'+m.id,'member']))),expectedNegative=new Map(groups.filter(g=>g.data.status!=='rejected'&&!g.data.manual&&!g.data.protected).flatMap(g=>list(g.data.negativeExamples).filter(m=>ids.has(m.id)).map(m=>[g.data.id+':'+m.id,'negative'])));
    const memberDecisions=validateDecisions(output.members,expectedMembers),negativeDecisions=validateDecisions(output.negativeExamples,expectedNegative);
+   next.verificationTargetDecisions=Number.isSafeInteger(job.verificationTargetDecisions)?job.verificationTargetDecisions+memberDecisions.size+negativeDecisions.size:job.verifyCursor===0?memberDecisions.size+negativeDecisions.size:null;
    for(const row of groups){
     const g=row.data;if(g.status==='rejected'||g.protected||g.manual)continue;
     const prior=g.verification??{},m=new Map(list(prior.members).map(x=>[x.reelId,x])),n=new Map(list(prior.negativeExamples).map(x=>[x.reelId,x]));
@@ -252,7 +319,7 @@ export class ReelsSemanticCurator{
  }
  async publicJob(j,{inventory=null}={}){return {...publicJob(j),canReconcileSaved:await this.reconciliationMetadata(j),canContinueAlignmentCheckpoint:await this.alignmentCheckpointMetadata(j,{inventory})};}
  async overview(){
-  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit','batch','promptHash','policyHash','policyVersion','pins','alignmentCheckpoint']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
+  const [state,p,jobs,profiles]=await Promise.all([this.freshGroups(),this.policy(),this.scan('semantic_job',['kind','id','status','phase','cursor','verifyCursor','callsUsed','maxCalls','policy','total','dispatch','reason','createdAt','updatedAt','cohortHash','proposalOverflow','coverageLimit','batch','promptHash','policyHash','policyVersion','pins','alignmentCheckpoint','providerDiagnostic','noTargetVerification','verificationTargetDecisions','correctiveRecovery']),this.scan('semantic_profile',['kind','reelId','state','sourceVersions','semanticProofHash','updatedAt'])]);
   const current=profiles.filter(p=>sourceCurrent(p.data.sourceVersions,state.inventory.sourceVersions.get(p.data.reelId))),unknown=current.filter(p=>p.data.state!=='proposed').length;
   let preview;try{preview=await this.preview({all:true});}catch{preview={preview:{blockingReasons:['SAVED_INVENTORY_UNAVAILABLE']}};}
   const view=g=>({...g,members:undefined,negativeExamples:undefined,verification:g.verification?{status:g.verification.status,authorModel:g.verification.authorModel,verifierModel:g.verification.verifierModel}:null});

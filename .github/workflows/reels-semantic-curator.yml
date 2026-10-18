@@ -20,7 +20,16 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.19.0'
+      - name: Load pinned historical transport schemas for offline comparison
+        run: |
+          git fetch --no-tags origin 8150c85ad40f48c5cac50048f9b233506259068c 120293ac4286e04ef89980e394eb72619967b501
+          git show 8150c85ad40f48c5cac50048f9b233506259068c:google-v0/lib/reels-semantic-provider.mjs > google-v0/lib/semantic-provider-8150.mjs
+          git show 120293ac4286e04ef89980e394eb72619967b501:google-v0/lib/reels-semantic-provider.mjs > google-v0/lib/semantic-provider-120293.mjs
+          mkdir -p "$RUNNER_TEMP/semantic-curator-evidence"
       - name: Semantic contracts and final worker live catalogue with synthetic adapters
+        env:
+          SEMANTIC_SCHEMA_BASES_DIR: ${{ github.workspace }}/google-v0/lib
+          SEMANTIC_SCHEMA_METRICS_OUTPUT: ${{ runner.temp }}/semantic-curator-evidence/schema-complexity-comparison.json
         run: node --test google-v0/tests/reels-semantic*.test.mjs google-v0/tests/reels-live-catalogue.test.mjs
       - name: Select the finite saved499 evidence event
         id: finite
@@ -29,15 +38,24 @@ jobs:
         run: |
           enabled=false
           recovery=false
-          if [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_HEAD_REF" = codex/semantic-curator-live-catalogue ] || [ "$GITHUB_REF_NAME" = codex/semantic-curator-live-catalogue ]; then
+          payload=false
+          if [ "$GITHUB_HEAD_REF" = codex/semantic-payload-audit ] || [ "$GITHUB_REF_NAME" = codex/semantic-payload-audit ] || [ "$GITHUB_HEAD_REF" = codex/semantic-provider-outcome-diagnostics ] || [ "$GITHUB_REF_NAME" = codex/semantic-provider-outcome-diagnostics ]; then
+            enabled=true
+            recovery=true
+            payload=true
+          elif [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_HEAD_REF" = codex/semantic-curator-live-catalogue ] || [ "$GITHUB_REF_NAME" = codex/semantic-curator-live-catalogue ]; then
             enabled=true
             if [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ]; then recovery=true; fi
           elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
-            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
-            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .head.ref == "codex/semantic-source-projection-recovery" and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
+            payload="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          echo "payload=$payload" >> "$GITHUB_OUTPUT"
           echo "recovery=$recovery" >> "$GITHUB_OUTPUT"
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
       - name: Receive exact immutable saved sources without Google access
@@ -53,9 +71,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node ops/receive-semantic-recovery.mjs --source google-v0/config/semantic-source-recovery-input.json --output "$RUNNER_TEMP/semantic-paid-input.json"
+      - name: Reuse the historical receipt already stored in GitHub
+        if: steps.finite.outputs.recovery == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/12126601621/zip" > "$RUNNER_TEMP/semantic-historical-main.zip"
+          echo "80c384b65b7b8e5a545cf0dd9784f7f132eb17df8ba21768a297e21857209873  $RUNNER_TEMP/semantic-historical-main.zip" | sha256sum -c -
+          unzip -p "$RUNNER_TEMP/semantic-historical-main.zip" source-recovery-receipt.json > "$RUNNER_TEMP/semantic-historical-receipt.json"
+          echo "6309285396cf4951336089605dd94e6fe88f2439641c9ba4984fd5ef88d6f770  $RUNNER_TEMP/semantic-historical-receipt.json" | sha256sum -c -
+      - name: Check historical provenance and finite recovery contract offline
+        if: steps.finite.outputs.recovery == 'true'
+        env:
+          SEMANTIC_HISTORICAL_RECOVERY_RECEIPT: ${{ runner.temp }}/semantic-historical-receipt.json
+          SEMANTIC_HISTORICAL_RECOVERY_SOURCE: ${{ runner.temp }}/semantic-saved-source.json
+          SEMANTIC_REJECTED_RECOVERY_INPUT: ${{ runner.temp }}/semantic-paid-input.json
+          SEMANTIC_CORRECTIVE_SOURCE_INPUT: ${{ runner.temp }}/semantic-saved-source.json
+          SEMANTIC_CORRECTIVE_PAID_INPUT: ${{ runner.temp }}/semantic-paid-input.json
+          SEMANTIC_CORRECTIVE_HISTORICAL_RECEIPT: ${{ runner.temp }}/semantic-historical-receipt.json
+        run: node --test google-v0/tests/reels-semantic-historical-source-proof.test.mjs google-v0/tests/reels-semantic-rejected-attempt-recovery.test.mjs google-v0/tests/reels-semantic-corrective-operator.test.mjs google-v0/tests/reels-semantic-corrective-capability.test.mjs
       - name: Rehearse source projection and exact saved-response recovery
         if: steps.finite.outputs.recovery == 'true'
         run: node google-v0/scripts/prepare-semantic-source-recovery.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
+      - name: Audit the exact next-eight request metadata without provider access
+        if: steps.finite.outputs.payload == 'true'
+        env:
+          SEMANTIC_SCHEMA_BASES_DIR: ${{ github.workspace }}/google-v0/lib
+        run: node google-v0/scripts/diagnose-semantic-next-input.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
+      - name: Package tracked owner code without Reel data or temporary providers
+        if: steps.finite.outputs.recovery == 'true'
+        run: |
+          git archive --format=tar "$GITHUB_SHA" google-v0/lib ops/apply-semantic-corrective-capability.mjs | gzip -n > "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code.tar.gz"
+          CODE_SHA="$(sha256sum "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code.tar.gz" | cut -d ' ' -f1)"
+          SOURCE_TREE="$(git rev-parse "$GITHUB_SHA^{tree}")"
+          printf '{"kind":"tracked_corrective_owner_source","sourceCommit":"%s","sourceTree":"%s","archiveSHA256":"%s","reelInputsIncluded":false,"runtimeCredentialsIncluded":false,"temporaryProvidersIncluded":false}\n' "$GITHUB_SHA" "$SOURCE_TREE" "$CODE_SHA" > "$RUNNER_TEMP/semantic-curator-evidence/corrective-owner-code-manifest.json"
       - uses: actions/upload-artifact@v4
         if: always() && steps.finite.outputs.enabled == 'true'
         with:

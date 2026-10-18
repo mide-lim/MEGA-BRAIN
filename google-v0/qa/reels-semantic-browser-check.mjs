@@ -78,7 +78,7 @@ try{
   assert.equal(fixture.calls.length,0);assert.equal(semanticPosts().length,0);assert.equal(sourceSnapshot(),originalSources);
  });
  await record('auxiliary_sources_mount_only_when_open_and_remember_controlled_search',async()=>{
-  const auxiliary=call=>['/api/reels/contextual','/api/reels/curation/catalogue','/api/reels/curation/calibration'].includes(call.path),summary=page.locator('details.contextual-source-explorer summary');
+  const auxiliary=call=>['/api/reels/contextual','/api/reels/curation/catalogue','/api/reels/curation/calibration'].includes(call.path),summary=page.locator('details.contextual-source-explorer > summary');
   const opened=responseFor('/api/reels/contextual');await summary.click();await opened;
   const filtered=responseFor('/api/reels/contextual',response=>new URL(response.url()).searchParams.get('q')==='QaFull');await page.getByLabel('Buscar publicações neste recorte',{exact:true}).fill('QaFull');await filtered;
   await summary.click();await page.getByLabel('Buscar publicações neste recorte',{exact:true}).waitFor({state:'hidden'});const count=server.calls.filter(auxiliary).length;

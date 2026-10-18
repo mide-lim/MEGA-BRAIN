@@ -73,8 +73,9 @@ export class CorrectiveOwnerMetadataClient{
   if(!response.ok)throw Object.assign(Error('GOOGLE_METADATA_HTTP_REJECTED'),{code:'GOOGLE_METADATA_HTTP_REJECTED',status:response.status,commitSent:committing});
   try{return JSON.parse(text);}catch{throw Object.assign(Error('GOOGLE_METADATA_RESPONSE_INVALID'),{code:'GOOGLE_METADATA_RESPONSE_INVALID',commitSent:committing});}
  }
- async batchGet(paths,{transaction=null,metadataOnly=false}={}){
-  const body={documents:paths.map(p=>documents+p),...(transaction?{transaction}:{}),...(metadataOnly?{mask:{fieldPaths:['id']}}:{})};
+ async batchGet(paths,{transaction=null,metadataOnly=false,fieldPaths=null}={}){
+  if(fieldPaths)need(Array.isArray(fieldPaths)&&fieldPaths.length>0&&fieldPaths.length<=5&&fieldPaths.every(f=>['id','paused','active','enabled'].includes(f)),'SELECTED_METADATA_FIELDS_REQUIRED');
+  const body={documents:paths.map(p=>documents+p),...(transaction?{transaction}:{}),...(metadataOnly?{mask:{fieldPaths:['id']}}:fieldPaths?{mask:{fieldPaths}}:{})};
   const rows=await this.request(firestore+':batchGet',{method:'POST',json:body});
   need(Array.isArray(rows)&&rows.length===paths.length,'DOCUMENT_CAPTURE_INCOMPLETE');
   const expected=new Set(paths),out=new Map();
@@ -110,7 +111,7 @@ export async function inspectCorrectiveFences(client,deployment){
   queues[kind]={name:q.name,state:q.state,empty:true};
  }
  const paths=[...stages.map(s=>'reels_controls/'+s),'settings/admission','settings/automation'];
- const docs=await client.batchGet(paths);
+ const docs=await client.batchGet(paths,{fieldPaths:['paused','active','enabled']});
  for(const stage of stages){const row=docs.get('reels_controls/'+stage);need(row?.exists&&row.data.paused===true&&Array.isArray(row.data.active)&&row.data.active.length===0,'REEL_CONTROL_OCCUPIED_OR_OPEN');reads.push({path:row.path,updateTime:row.updateTime});}
  for(const key of ['admission','automation']){const row=docs.get('settings/'+key);need(row?.exists&&row.data.enabled===false,'REEL_WRITER_NOT_DISABLED');reads.push({path:row.path,updateTime:row.updateTime});}
  return {services,queues,checks:reads,observedAt:new Date(client.clock()).toISOString(),fingerprint:semanticHash({services,queues,checks:reads}),providerCalls:0,writes:0};
@@ -232,7 +233,7 @@ export async function loadConventionalOwnerSession({ownerIdentity,exec=execute,e
  return {token,account,project};
 }
 async function pinnedJSON(path,expected){const text=await readFile(path,'utf8');need(hex(expected)&&sha(text)===expected,'PINNED_ARTIFACT_CHANGED');return {text,data:JSON.parse(text)};}
-function argsOf(argv){const mode=argv[0],out={mode};need(['prepare','apply'].includes(mode),'EXPLICIT_PREPARE_OR_APPLY_REQUIRED');for(let i=1;i<argv.length;i+=2){need(/^--[a-z-]+$/.test(argv[i])&&argv[i+1]&&!Object.hasOwn(out,argv[i]),'EXPLICIT_UNIQUE_ARGUMENTS_REQUIRED');out[argv[i]]=argv[i+1];}return out;}
+function argsOf(argv){const mode=argv[0],out={mode},allowed=new Set(['--deployment','--deployment-sha','--evidence','--evidence-sha','--review','--review-sha','--packet','--packet-sha','--approval','--approval-sha','--output']);need(['prepare','apply'].includes(mode),'EXPLICIT_PREPARE_OR_APPLY_REQUIRED');for(let i=1;i<argv.length;i+=2){need(allowed.has(argv[i])&&argv[i+1]&&!Object.hasOwn(out,argv[i]),'EXPLICIT_UNIQUE_ARGUMENTS_REQUIRED');out[argv[i]]=argv[i+1];}return out;}
 export async function correctiveOwnerMain(argv,{stdout=console.log}={}){
  const args=argsOf(argv),deployment=await pinnedJSON(args['--deployment'],args['--deployment-sha']),evidence=await pinnedJSON(args['--evidence'],args['--evidence-sha']),reviewFile=args['--review']?await pinnedJSON(args['--review'],args['--review-sha']):null;
  const review=reviewFile?{path:args['--review'],sha256:args['--review-sha'],data:reviewFile.data}:null;

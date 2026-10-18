@@ -45,7 +45,7 @@ function transport(f,{commitMode='ok',beforeBatchGet=null,mutateFence=null,clock
    state.now+=clockAdvance;
    return reply(body.documents.map(name=>{
     const row=f.docs.get(name.slice(prefix.length));
-    return row?{found:{name,fields:body.mask?encodeFields({id:row.data.id??'metadata'}):encodeFields(row.data),updateTime:row.updateTime},readTime:new Date(state.now).toISOString()}:{missing:name,readTime:new Date(state.now).toISOString()};
+    return row?{found:{name,fields:body.mask?encodeFields(Object.fromEntries(body.mask.fieldPaths.filter(key=>Object.hasOwn(row.data,key)).map(key=>[key,row.data[key]]))):encodeFields(row.data),updateTime:row.updateTime},readTime:new Date(state.now).toISOString()}:{missing:name,readTime:new Date(state.now).toISOString()};
    }));
   }
   if(u.pathname.endsWith(':commit')){
@@ -86,6 +86,7 @@ test('fences read all five paused empty queues, four closed stages plus optional
  assert.equal(Object.keys(result.queues).length,5);assert.equal(Object.keys(result.services).length,5);
  assert.ok(Object.values(result.queues).every(q=>q.state==='PAUSED'&&q.empty));
  assert.equal(io.requests.filter(r=>r.method!=='GET'&&!r.url.endsWith(':batchGet')).length,0);
+ assert.deepEqual(io.requests.find(r=>r.url.endsWith(':batchGet')).body.mask.fieldPaths,['paused','active','enabled']);
  assert.equal(JSON.stringify(result).includes('Synthetic immutable saved source'),false);assert.equal(io.state.commits,0);
  for(const change of ['open','occupied','writer','revision','image','environment']){
   const changed=fixture();if(change==='occupied')changed.docs.get('reels_controls/acquisition').data.active=['synthetic'];if(change==='open')changed.docs.get('reels_controls/acquisition').data.paused=false;if(change==='writer')changed.docs.get('settings/admission').data.enabled=true;

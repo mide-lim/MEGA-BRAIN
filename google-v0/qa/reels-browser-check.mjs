@@ -7,6 +7,7 @@ import {startReelsFixtureServer} from './reels-server.mjs';
 import {prepareContextualCategoryPlan} from '../lib/reels-contextual-calibration.mjs';
 import {calibrationReportView} from '../lib/reels-curation-calibration.mjs';
 import {makeContextualCalibrationFixture} from '../tests/reels-contextual-calibration-fixture.mjs';
+import {makeFullCatalogueFixture} from '../tests/reels-contextual-catalogue-fixture.mjs';
 
 const output=process.env.MEGABRAIN_REELS_QA_OUTPUT??join(tmpdir(),'megabrain-reels-qa-results');
 await mkdir(output,{recursive:true});
@@ -94,7 +95,7 @@ try {
   const populated=responseFor(page,'/api/reels/items',url=>url.searchParams.get('category')==='cat_models'&&url.searchParams.get('q')==='Modelo');await page.getByRole('button',{name:'↻ Atualizar',exact:true}).click();await populated;await page.locator('.catalog .pagination').filter({hasText:'21 resultados'}).waitFor();
   await page.getByRole('button',{name:'Lista',exact:true}).click();await page.locator('.catalog tbody tr').first().waitFor();assert.equal(await page.locator('.catalog tbody tr').count(),21);await page.evaluate(()=>window.scrollTo(0,120));await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));const scroll=await page.evaluate(()=>window.scrollY);assert.ok(scroll>0);
   await navigate(page,'Financeiro');await navigate(page,'Biblioteca');await page.locator('.catalog tbody tr').first().waitFor();assert.equal(await page.locator('.catalog tbody tr').count(),21);assert.equal(await page.getByLabel('Buscar no acervo').inputValue(),'Modelo');assert.equal(await page.getByLabel('Buscar categoria na Biblioteca').inputValue(),'modelos');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Modelos'}).waitFor();assert.equal(await page.getByRole('button',{name:'Lista',exact:true}).getAttribute('aria-pressed'),'true');await page.waitForFunction(value=>Math.abs(window.scrollY-value)<3,scroll);
-  await page.screenshot({path:join(output,'reels-library-tree-desktop.png'),fullPage:true});for(const id of navigationIds)server.store.docs.delete('videos/'+id);await page.getByRole('button',{name:'Grade',exact:true}).click();await page.getByRole('button',{name:'Limpar filtros',exact:true}).click();await page.getByLabel('Buscar categoria na Biblioteca').fill('');await page.setViewportSize({width:1440,height:1000});
+  await page.screenshot({path:join(output,'reels-library-tree-desktop.png'),fullPage:true});for(const id of navigationIds){server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}await page.getByRole('button',{name:'Grade',exact:true}).click();await page.getByRole('button',{name:'Limpar filtros',exact:true}).click();await page.getByLabel('Buscar categoria na Biblioteca').fill('');await page.setViewportSize({width:1440,height:1000});
  });
 
  await record('two_curations_saved_publications_real_api_context_filters_and_unknown_units',async()=>{
@@ -133,7 +134,7 @@ try {
   const template=structuredClone((await server.store.get('videos/QaPub_food')).data),id='QaPub_fish',oldSource='2020-01-02T03:04:05.000Z';
   const fish={...template,id,title:'Receita de peixe publicada',analysis_key:'qa/'+id+'/published.json',source_url:'https://www.instagram.com/reel/'+id+'/',source_caption:{capture_id:'qa-fish-caption',source:'instagram',text:'300g de peixe.'}};
   fish.analysis={...template.analysis,title:fish.title,summary:'Receita de peixe salva para a navegação.',source_consolidation:{sources:[{source:'caption',capture_id:'qa-fish-caption',text:'300g de peixe.'}]},knowledge:{context:'recipe',fields:[{kind:'ingredient',name:'Peixe',value:'300g',role:'supporting',polarity:'positive',evidence:[{source:'caption',excerpt:'300g de peixe',start_seconds:0,end_seconds:0}]}]}};
-  await server.store.create('videos/'+id,fish);
+  await server.store.create('videos/'+id,fish);await server.seedSavedContributions([id]);
   const orPage=await context.newPage();
   try {
    await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
@@ -164,13 +165,13 @@ try {
    await detail.locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();await closeDialog(orPage);
    server.staleNext('/api/reels/contextual',oldSource);await navigate(orPage,'Categorias');
    await orPage.getByRole('region',{name:'Curadoria do acervo',exact:true}).locator('.curation-source[data-source-asof="'+oldSource+'"]').getByRole('status').filter({hasText:'Leitura anterior preservada'}).waitFor();
-  } finally {await orPage.close();server.store.docs.delete('videos/'+id);}
+  } finally {await orPage.close();server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}
  });
 
 
  await record('contextual_browse_preserves_creator_query_and_explicit_empty_scope',async()=>{
   const source=structuredClone((await server.store.get('videos/QaPub_food')).data),id='QaPub_bia';
-  await server.store.create('videos/'+id,{...source,id,title:'Preparo da Bia',creator:'Criadora Bia',analysis_key:'qa/'+id+'/published.json',source_url:'https://www.instagram.com/reel/'+id+'/'});
+  await server.store.create('videos/'+id,{...source,id,title:'Preparo da Bia',creator:'Criadora Bia',analysis_key:'qa/'+id+'/published.json',source_url:'https://www.instagram.com/reel/'+id+'/'});await server.seedSavedContributions([id]);
   const scope=await context.newPage();
   try {
    await scope.goto(server.origin);await navigate(scope,'Biblioteca');await search(scope,'Modelo');await scope.locator('.library-card').filter({hasText:'Modelo publicado'}).waitFor();
@@ -184,15 +185,55 @@ try {
    const allChicken=responseFor(scope,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&!url.searchParams.get('q')&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
    await curator.locator('.contextual-elements button').filter({has:scope.getByText('Frango',{exact:true})}).click();const cleared=await (await allChicken).json();assert.equal(cleared.total,2);assert.deepEqual(cleared.items.map(i=>i.id).sort(),['QaPub_food',id].sort());assert.equal(await scope.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'');
    await scope.locator('.library-card').filter({hasText:'Preparo da Bia'}).waitFor();await scope.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();
-  } finally {await scope.close();server.store.docs.delete('videos/'+id);}
+  } finally {await scope.close();server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}
  });
 
 
 
+
+ await record('full_catalogue_formats_ingredient_filters_and_incremental_source_replacement',async()=>{
+  // All source records, independent reviews, event projections and UI checks
+  // below run in GitHub Actions only. No accepted-publication provider is called.
+  const fixture=makeFullCatalogueFixture(),sources=fixture.records.map(record=>JSON.parse(record.sourceJson)),ids=sources.map(source=>source.item.id),cataloguePage=await context.newPage();
+  for(const source of sources){assert.equal((await server.store.create('videos/'+source.item.id,source.video)).created,true);if(source.legacy)assert.equal((await server.store.create('reels_legacy_content/'+source.item.id,source.legacy)).created,true);}
+  for(const review of fixture.formatReviews)await server.store.create('reels_index/contextual_review_'+review.reelId,review);
+  await server.seedSavedContributions(ids);
+  const beforeCommands=server.calls.filter(call=>call.path==='/api/reels/commands'&&call.method==='POST').length;
+  const contributionCount=()=>[...server.store.docs.values()].filter(record=>record.data?.kind==='contextual_contribution'&&record.data.status==='active').length;
+  try {
+   const catalogueResponse=responseFor(cataloguePage,'/api/reels/curation/catalogue');await cataloguePage.goto(server.origin);await navigate(cataloguePage,'Categorias');const catalogue=await (await catalogueResponse).json();
+   assert.equal(catalogue.processingStarted,false);assert.equal(catalogue.projectionCoverage.inventoryCount,7);assert.equal(catalogue.projectionCoverage.evaluatedCount,7);assert.equal(catalogue.projectionCoverage.missingCount,0);
+   assert.deepEqual(catalogue.formats.find(format=>format.value==='single_recipe').matchingIds,['QaFull_single']);assert.deepEqual(catalogue.formats.find(format=>format.value==='recipe_collection').matchingIds,['QaFull_many']);assert.ok(catalogue.projectionCoverage.unknownContextCount>=1);assert.ok(catalogue.projectionCoverage.formatUnknownCount>=1);
+   const panel=cataloguePage.getByRole('region',{name:'Catálogo do acervo publicado',exact:true});await panel.getByText('Fontes avaliadas pelo catálogo',{exact:true}).waitFor();
+   server.store.docs.delete('reels_index/contextual_QaFull_unknown');
+   const missingRead=responseFor(cataloguePage,'/api/reels/curation/catalogue');await cataloguePage.getByRole('button',{name:'↻ Atualizar',exact:true}).click();const missing=await (await missingRead).json();assert.equal(missing.projectionCoverage.inventoryCount,7);assert.equal(missing.projectionCoverage.evaluatedCount,6);assert.equal(missing.projectionCoverage.missingCount,1);assert.equal(await server.store.get('reels_index/contextual_QaFull_unknown'),null,'Catalogue GET must disclose missing data, never rebuild it as a write side effect');
+   await server.seedSavedContributions(['QaFull_unknown']);const restoredRead=responseFor(cataloguePage,'/api/reels/curation/catalogue');await cataloguePage.getByRole('button',{name:'↻ Atualizar',exact:true}).click();const restored=await (await restoredRead).json();assert.equal(restored.projectionCoverage.evaluatedCount,7);assert.equal(restored.projectionCoverage.missingCount,0);
+await panel.getByText('Desconhecido não significa erro de processamento.',{exact:false}).waitFor();assert.equal(await panel.getByText('em ao menos um preparo',{exact:false}).count(),0);
+   const single=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_single_recipe');await panel.getByRole('button',{name:'Explorar formato Receita única',exact:true}).click();assert.deepEqual((await (await single).json()).items.map(item=>item.id),['QaFull_single']);
+   const tree=cataloguePage.locator('.library-navigation');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Receita única'}).waitFor();await tree.locator('.tree-name').filter({hasText:'Várias receitas'}).waitFor();assert.equal(await tree.locator('.tree-name').filter({hasText:/Receitas com (Frango|Ovo)/}).count(),0);
+   const ingredient=cataloguePage.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});const chicken=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_single_recipe'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));await ingredient.click();assert.deepEqual((await (await chicken).json()).items.map(item=>item.id),['QaFull_single']);assert.equal(await ingredient.getAttribute('aria-pressed'),'true');
+   await search(cataloguePage,'QaFull_single');await cataloguePage.locator('.library-card').filter({hasText:'QaFull_single'}).waitFor();
+   const beforeToggle=server.calls.filter(call=>call.path==='/api/reels/items').length;await tree.getByRole('button',{name:'Recolher Receitas',exact:true}).click();await tree.locator('button[aria-label="Expandir Receitas"]:not([disabled])').click();assert.equal(server.calls.filter(call=>call.path==='/api/reels/items').length,beforeToggle);
+   await navigate(cataloguePage,'Financeiro');await navigate(cataloguePage,'Biblioteca');await cataloguePage.locator('.library-card').filter({hasText:'QaFull_single'}).waitFor();assert.equal(await cataloguePage.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'QaFull_single');assert.equal(await ingredient.getAttribute('aria-pressed'),'true');await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Receita única'}).waitFor();
+   await navigate(cataloguePage,'Categorias');const many=responseFor(cataloguePage,'/api/reels/items',url=>url.searchParams.get('category')==='ctx_format_recipe_collection'&&!url.searchParams.get('q'));await panel.getByRole('button',{name:'Explorar formato Várias receitas',exact:true}).click();assert.deepEqual((await (await many).json()).items.map(item=>item.id),['QaFull_many']);
+   await tree.locator('.tree-name[aria-pressed=true]').filter({hasText:'Várias receitas'}).waitFor();assert.equal(await cataloguePage.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'');
+   const filters=cataloguePage.locator('.contextual-library-filters');await filters.locator('summary').first().click();await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');await filters.getByLabel('Relação 1',{exact:true}).selectOption('SAME_UNIT');await filters.getByLabel('Elemento 1',{exact:true}).selectOption('frango');await filters.getByRole('button',{name:'+ Cruzar outro elemento',exact:true}).click();await filters.getByLabel('Dimensão 2',{exact:true}).selectOption('tool');
+   const crossed=responseFor(cataloguePage,'/api/reels/items',url=>{const facets=JSON.parse(url.searchParams.get('facets')||'[]');return url.searchParams.get('category')==='ctx_format_recipe_collection'&&facets.some(f=>f.value==='frango')&&facets.some(f=>f.value==='forno')&&facets.every(f=>f.quantifier==='SAME_UNIT');});
+   await filters.getByLabel('Elemento 2',{exact:true}).selectOption('forno');assert.equal((await (await crossed).json()).total,0,'A collection must not combine chicken from one preparation with an oven from another');
+   const derivedBefore=await server.store.get('reels_index/contextual_QaFull_single');await server.store.patch('reels_index/contextual_QaFull_single',{obsoleteFixtureMarker:true},{updateTime:derivedBefore.updateTime});
+   const documentPath='videos/QaFull_single',source=await server.store.get(documentPath),changed=JSON.parse(JSON.stringify(source.data).replaceAll('Frango','Peixe').replaceAll('frango','peixe'));changed.analysis_generation='8';await server.store.patch(documentPath,changed,{updateTime:source.updateTime});
+   await server.seedSavedContributions(['QaFull_single'],{type:'sourceCorrected'});const contributionPath='reels_index/contextual_QaFull_single',current=await server.store.get(contributionPath),uniqueBefore=contributionCount();assert.equal(Object.hasOwn(current.data,'obsoleteFixtureMarker'),false,'Derived CAS must replace the complete old contribution');const rejected=await server.store.compareAndReplaceDerived({path:contributionPath,replacement:current.data,checks:[{path:documentPath,updateTime:source.updateTime},{path:contributionPath,updateTime:current.updateTime}]});assert.equal(rejected.applied,false);assert.deepEqual(await server.store.get(contributionPath),current);await server.seedSavedContributions(['QaFull_single'],{type:'sourceCorrected'});assert.equal((await server.store.get(contributionPath)).updateTime,current.updateTime,'Repeating the same source event must not write or inflate a contribution');assert.equal(contributionCount(),uniqueBefore);
+   await navigate(cataloguePage,'Categorias');const refresh=responseFor(cataloguePage,'/api/reels/curation/catalogue');await cataloguePage.getByRole('button',{name:'↻ Atualizar',exact:true}).click();const replaced=await (await refresh).json();assert.equal(replaced.projectionCoverage.inventoryCount,7);assert.equal(replaced.projectionCoverage.evaluatedCount,7);assert.equal(replaced.projectionCoverage.missingCount,0);assert.equal(replaced.formats.find(format=>format.value==='single_recipe').count,0,'An old review cannot certify a changed source');assert.deepEqual(replaced.formats.find(format=>format.value==='recipe_collection').matchingIds,['QaFull_many']);assert.ok(replaced.ingredients.some(ingredient=>ingredient.valueId==='peixe'&&ingredient.supportCount>=1));
+   assert.equal(server.calls.filter(call=>call.path==='/api/reels/commands'&&call.method==='POST').length,beforeCommands);assert.deepEqual(server.externalAttempts,[]);await cataloguePage.screenshot({path:join(output,'reels-full-catalogue-formats.png'),fullPage:true});
+  } finally {
+   await cataloguePage.close();for(const id of ids){server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_legacy_content/'+id);server.store.docs.delete('reels_index/contextual_'+id);server.store.docs.delete('reels_index/contextual_review_'+id);}
+  }
+ });
+
  await record('calibration_without_an_audit_does_not_claim_automatic_categories',async()=>{
   const noAudit=await context.newPage(),read=responseFor(noAudit,'/api/reels/curation/calibration');
   try {
-   await noAudit.goto(server.origin);await navigate(noAudit,'Categorias');const data=await (await read).json();assert.equal(data.available,false);assert.equal(data.processingStarted,false);
+   await noAudit.goto(server.origin);await navigate(noAudit,'Categorias');await noAudit.getByText('Avaliação inicial de agrupamentos',{exact:true}).click();const data=await (await read).json();assert.equal(data.available,false);assert.equal(data.processingStarted,false);
    const panel=noAudit.getByRole('region',{name:'Calibração de agrupamentos',exact:true});await panel.getByText('A calibração ainda não está disponível. Isso não invalida as publicações preservadas.',{exact:true}).waitFor();assert.equal(await panel.getByText('Calibrado neste acervo',{exact:true}).count(),0);
   } finally {await noAudit.close();}
  });
@@ -204,47 +245,26 @@ try {
   const input=makeContextualCalibrationFixture(),{calibration,plan}=prepareContextualCategoryPlan(input),path='settings/reels_v2_contextual_calibration',taxonomyPath='settings/reels_v2_taxonomy',beforeTaxonomy=(await server.store.get(taxonomyPath)).data;
   const sources=input.records.map(r=>JSON.parse(r.sourceJson)),ids=sources.map(source=>source.item.id),calibrationPage=await context.newPage();
   for(const source of sources)assert.equal((await server.store.create('videos/'+source.item.id,source.video)).created,true);
+  await server.seedSavedContributions(ids);
   const taxonomyRecord=await server.store.get(taxonomyPath);await server.store.patch(taxonomyPath,{nodes:[...beforeTaxonomy.nodes,...input.taxonomy.data.nodes.filter(node=>!beforeTaxonomy.nodes.some(existing=>existing.id===node.id))]},{updateTime:taxonomyRecord.updateTime});
   await server.store.create(path,{schemaVersion:1,planHash:plan.planHash,sourceHash:plan.sourceCorpusHash,report:calibrationReportView(calibration,plan)});
   const beforeCommands=server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length;
   try {
-   const read=responseFor(calibrationPage,'/api/reels/curation/calibration');await calibrationPage.goto(server.origin);await navigate(calibrationPage,'Categorias');const data=await (await read).json();
+   const read=responseFor(calibrationPage,'/api/reels/curation/calibration');await calibrationPage.goto(server.origin);await navigate(calibrationPage,'Categorias');await calibrationPage.getByText('Avaliação inicial de agrupamentos',{exact:true}).click();const data=await (await read).json();
    assert.equal(data.available,true);assert.equal(data.processingStarted,false);assert.equal(data.evaluatedCount,input.records.length);assert.equal(data.inventoryCount,input.catalog.length);assert.equal(data.unknownCount,input.catalog.length-input.records.length);
    assert.ok(data.groups.some(group=>group.state==='calibrated'));assert.ok(data.groups.some(group=>group.state==='insufficient'));assert.ok(data.groups.every(group=>!group.appliedCategoryId),'A calibrated plan must not appear already applied');
    const panel=calibrationPage.getByRole('region',{name:'Calibração de agrupamentos',exact:true});await panel.getByText('Calibrado neste acervo',{exact:true}).first().waitFor();await panel.getByText('Evidências insuficientes',{exact:true}).first().waitFor();assert.equal(await panel.getByRole('button',{name:'Abrir grupo na Biblioteca →',exact:true}).count(),0);
-   const group=data.groups.find(group=>group.state==='calibrated'&&group.members.length>0),card=panel.locator('.contextual-patterns>article').filter({has:calibrationPage.getByRole('heading',{name:group.label,exact:true})});await card.getByText('Publicações e métricas deste agrupamento',{exact:true}).click();
+   const group=data.groups.find(group=>group.state==='calibrated'&&group.members.length>0),card=panel.locator('.contextual-patterns>article[data-group-id="'+group.id+'"]');await card.getByText(group.reason||'As fontes e os membros deste recorte atenderam aos critérios versionados da avaliação.',{exact:true}).waitFor();assert.equal(await card.getByText('Critério ainda não informado.',{exact:true}).count(),0);await card.getByText('Publicações e métricas deste agrupamento',{exact:true}).click();
    await card.getByRole('region',{name:'Conferência independente',exact:true}).getByText(String(group.metrics.holdout.total),{exact:true}).first().waitFor();assert.equal(new Set(group.members.map(m=>m.id)).size,group.members.length);
    const member=group.members[0],browse=responseFor(calibrationPage,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&url.searchParams.get('q')===member.id);
    await card.getByRole('button',{name:member.title||'Ver Reel '+member.id,exact:true}).click();const memberData=await (await browse).json();assert.equal(memberData.items.some(item=>item.id===member.id),true);
 
-   // Simulate the finite additive metadata apply in the synthetic database only.
-   // Raw publications are deliberately unchanged: category membership must be
-   // derived from the reviewed settings, just as in the real two-document apply.
-   const beforeApply=await server.store.get(taxonomyPath),assignments=new Map();
-   for(const planned of plan.groups)for(const member of planned.members){
-    const previous=assignments.get(member.id),categoryIds=[...new Set([...(previous?.categoryIds||member.priorCategoryIds||[]),planned.categoryId])];
-    assignments.set(member.id,{reelId:member.id,categoryIds,ruleIds:[...new Set([...(previous?.ruleIds||[]),planned.rule.id])],manual:false,revision:beforeApply.data.revision+1,calibrationPlanHash:plan.planHash});
-   }
-   await server.store.patch(taxonomyPath,{
-    revision:beforeApply.data.revision+1,
-    nodes:[...beforeApply.data.nodes,...plan.groups.map(planned=>({id:planned.categoryId,name:planned.label,parentId:planned.parentCategoryId,manual:false,evidenceCount:planned.members.length,calibrationPlanHash:plan.planHash}))],
-    rules:[...(beforeApply.data.rules||[]),...plan.groups.map(planned=>({...planned.rule,members:planned.members.map(member=>({id:member.id,sourceIdentity:member.sourceIdentity,publicationProofHash:member.publicationProofHash})),calibrationPlanHash:plan.planHash}))],
-    assignments:[...(beforeApply.data.assignments||[]),...assignments.values()],
-    appliedCommands:[...(beforeApply.data.appliedCommands||[]),{id:'qa-finite-calibration-apply',fingerprint:plan.planHash}]
-   },{updateTime:beforeApply.updateTime});
-   await calibrationPage.reload();const appliedRead=responseFor(calibrationPage,'/api/reels/curation/calibration');await navigate(calibrationPage,'Categorias');const appliedData=await (await appliedRead).json();
-   const plannedGroup=plan.groups[0],appliedGroup=appliedData.groups.find(candidate=>candidate.appliedCategoryId===plannedGroup.categoryId);assert.ok(appliedGroup,'A trusted finite derived group must be available as an applied category');
-   const expectedIds=plannedGroup.members.map(member=>member.id).sort();assert.deepEqual(appliedGroup.members.map(member=>member.id).sort(),expectedIds);assert.equal(appliedGroup.memberCount,expectedIds.length);
-   const appliedPanel=calibrationPage.getByRole('region',{name:'Calibração de agrupamentos',exact:true}),appliedCard=appliedPanel.locator('.contextual-patterns>article').filter({has:calibrationPage.getByRole('heading',{name:appliedGroup.label,exact:true})});
-   const groupBrowse=responseFor(calibrationPage,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&url.searchParams.get('category')===plannedGroup.categoryId&&!url.searchParams.get('q'));
-   await appliedCard.getByRole('button',{name:'Abrir grupo na Biblioteca →',exact:true}).click();const libraryGroup=await (await groupBrowse).json();assert.equal(libraryGroup.total,expectedIds.length);assert.deepEqual(libraryGroup.items.map(item=>item.id).sort(),expectedIds,'Library must contain exactly the reviewed finite members, without inferred extras');
-   const selectedTree=calibrationPage.locator('.library-navigation .tree-name[aria-pressed=true]').filter({hasText:appliedGroup.label});await selectedTree.getByText(String(expectedIds.length),{exact:true}).waitFor();
-   await calibrationPage.locator('.library-card').first().waitFor();assert.equal(await calibrationPage.locator('.library-card').count(),expectedIds.length);
-   for(const source of sources)assert.deepEqual((await server.store.get('videos/'+source.item.id)).data,source.video,'Metadata-only grouping must preserve every raw published analysis');
-
+   // Ingredient calibration is retained as historical evidence. Current recipe
+   // format navigation is exercised by the full-catalogue journey below.
+   for(const source of sources)assert.deepEqual((await server.store.get('videos/'+source.item.id)).data,source.video,'Historical calibration browsing must preserve every raw publication');
    assert.equal(server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length,beforeCommands);assert.deepEqual(server.externalAttempts,[]);
   } finally {
-   await calibrationPage.close();server.store.docs.delete(path);for(const id of ids)server.store.docs.delete('videos/'+id);
+   await calibrationPage.close();server.store.docs.delete(path);for(const id of ids){server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}
    const current=await server.store.get(taxonomyPath);await server.store.patch(taxonomyPath,beforeTaxonomy,{updateTime:current.updateTime});
   }
  });
@@ -266,7 +286,7 @@ try {
    assert.ok(['supported','present_unverified','unknown','inconclusive','invalid','not_recorded','not_applicable'].includes(foodData.items[0].state));await saved.getByText('Publicação histórica preservada',{exact:true}).waitFor();assert.equal(await saved.locator('tbody tr').count(),1);
    assert.equal(server.calls.filter(c=>c.path==='/api/reels/commands'&&c.method==='POST').length,commandCount);assert.deepEqual(server.externalAttempts,[]);assert.deepEqual((await server.store.get('videos/QaPub_food')).data,foodBefore,'Offline diagnostics must preserve the published record');assert.equal(await saved.getByRole('alert').count(),0);
    await qualityPage.screenshot({path:join(output,'reels-saved-quality-on-demand.png'),fullPage:true});
-  } finally {await qualityPage.close();for(const id of ids)server.store.docs.delete('videos/'+id);}
+  } finally {await qualityPage.close();for(const id of ids){server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}}
  });
 
  await record('discovery_first_preview_global_scope_and_preserved_legacy_evidence_gaps',async()=>{

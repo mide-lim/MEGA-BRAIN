@@ -11,12 +11,15 @@ import {videoBytes} from './video-base64.mjs';
 import {reelsWebRuntime} from '../lib/reels-web-runtime.mjs';
 import {ReelsCommandRunner} from '../lib/reels-command-runner.mjs';
 import {executionId} from '../lib/reels-pipeline.mjs';
+import {ReelsCatalogueRuntime} from '../lib/reels-catalogue-runtime.mjs';
 
 // Same isolated esbuild/HTTP pattern as server.mjs; the legacy harness is retained.
 // This mounts the real Workspace and operational API, injecting only the database.
 export async function startReelsFixtureServer({operational=false}={}) {
  const root=fileURLToPath(new URL('.',import.meta.url)),temp=await mkdtemp(join(tmpdir(),'megabrain-reels-qa-'));
  const fixture=reelsFixture(),store=memoryReelsStore(fixture.documents),repository=new ReelsRepository({store,cacheTtlMs:0}),calls=[],holds=new Set(),failures=new Map(),staleResponses=new Map(),externalAttempts=[];
+ const catalogueRuntime=new ReelsCatalogueRuntime({repository});
+ async function seedSavedContributions(ids,options={}){const outcomes=[];for(const id of ids)outcomes.push(await catalogueRuntime.project(id,{type:'baselinePublicationRegistered',...(options[id]||options)}));return outcomes;}
  let server,origin;const externalFetch=globalThis.fetch;
  globalThis.fetch=async()=>{externalAttempts.push('external fetch attempted');throw Error('External fetch forbidden in Reels browser QA');};
  // Explicit synthetic mode for browser journeys. No Cloud Tasks client, ADC,
@@ -32,6 +35,9 @@ export async function startReelsFixtureServer({operational=false}={}) {
  const api=reelsAPI({repository,...(runtime?{service:runtime.service,reconciliation:runtime.reconciliation}:{}),processingEnabled:operational,authorize:async request=>request.headers.get('cookie')?.includes('qa_session=local')===true,sameOrigin:async request=>request.headers.get('origin')===origin});
  async function cleanup(){for(const hold of holds)hold.release();if(server?.listening){server.closeAllConnections();await new Promise(r=>server.close(r));}globalThis.fetch=externalFetch;const target=resolve(temp);if(dirname(target)!==resolve(tmpdir())||!target.includes('megabrain-reels-qa-'))throw Error('Cleanup outside QA directory');await rm(target,{recursive:true,force:true});}
  try {
+  // Explicit fixture bootstrap through the same metadata-only runtime used by
+  // publication events. GET requests never create contributions.
+  await seedSavedContributions(['QaPub_tech','QaPub_food']);
   const entry=join(temp,'entry.jsx');await writeFile(entry,`import React from 'react';import {createRoot} from 'react-dom/client';import Workspace from ${JSON.stringify(resolve(root,'../web-google/app/reels/workspace.jsx'))};createRoot(document.getElementById('root')).render(<Workspace/>);`);
   await build({entryPoints:[entry],outfile:join(temp,'app.js'),bundle:true,platform:'browser',jsx:'automatic',nodePaths:[join(root,'node_modules')],define:{'process.env.NODE_ENV':'"production"'},logLevel:'silent'});
   const bundle=await readFile(join(temp,'app.js')),css=await readFile(resolve(root,'../web-google/app/globals.css'));
@@ -62,7 +68,7 @@ export async function startReelsFixtureServer({operational=false}={}) {
    }catch(error){if(!res.headersSent){res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:error.message}));}else res.end();}
   });
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});origin='http://127.0.0.1:'+server.address().port;
-  return {origin,calls,store,repository,fixture,externalAttempts,tasks,close:cleanup,
+  return {origin,calls,store,repository,catalogueRuntime,seedSavedContributions,fixture,externalAttempts,tasks,close:cleanup,
    async pumpControls(){if(!runtime)throw Error('Synthetic operational mode required');const runner=new ReelsCommandRunner({service:runtime.service,dispatcher:runtime.dispatcher,pageSize:25,enabled:true});let count=0;for(const [name,task]of [...tasks]){if(!task.httpRequest.url.endsWith('/tasks/control'))continue;const body=JSON.parse(Buffer.from(task.httpRequest.body,'base64').toString());await runtime.dispatcher.acknowledge({...body,stage:'acquisition'});await runner.run(body);tasks.delete(name);count++;}return count;},
    failNext(path,message='Leitura sintética indisponível.',status=503){failures.set(path,{message,status});},
    // Optional source timestamp is a synthetic presentation fixture only.

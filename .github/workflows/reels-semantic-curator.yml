@@ -92,6 +92,8 @@ jobs:
         run: node google-v0/scripts/prepare-semantic-source-recovery.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
       - name: Audit the exact next-eight request metadata without provider access
         if: steps.finite.outputs.payload == 'true'
+        env:
+          SEMANTIC_SCHEMA_BASES_DIR: ${{ github.workspace }}/google-v0/lib
         run: node google-v0/scripts/diagnose-semantic-next-input.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
       - uses: actions/upload-artifact@v4
         if: always() && steps.finite.outputs.enabled == 'true'

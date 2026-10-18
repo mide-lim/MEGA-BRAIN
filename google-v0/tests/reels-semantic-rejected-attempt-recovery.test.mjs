@@ -12,6 +12,7 @@ test('pure preparation fails closed without complete fresh metadata and a pinned
  assert.equal(result.receipt,null);assert.equal(result.plan,null);assert.equal(result.report.providerCalls,0);assert.equal(result.report.writes,0);
  assert.ok(result.report.errors.includes('TRUSTED_INDEPENDENT_REVIEW_REQUIRED'));
  assert.equal(validateRejectedSemanticAttemptRecovery(null,{}),false);
+ const cycle={};cycle.self=cycle;assert.equal(prepareRejectedSemanticAttemptRecovery({newContract:{schema:cycle}}).report.ready,false);
 });
 test('hash is canonical, preserves array order and matches the existing engine',()=>{
  const value={z:[{b:2,a:1},3],a:'metadata'};
@@ -78,6 +79,15 @@ test('historical metadata simulation: finite receipt, every guard, no execution 
  await t.test('independent review is separately pinned and cannot be an accepted request flag',()=>{
   assert.equal(prepareRejectedSemanticAttemptRecovery(input).report.ready,false);
   const changed=structuredClone(input);changed.review.data.accepted=false;assert.equal(prepareRejectedSemanticAttemptRecovery(changed,options).report.ready,false);
+ });
+ await t.test('metadata output drops unrecognized input fields rather than publishing them',()=>{
+  const augmented=structuredClone(input),secret='synthetic-input-only-text-not-for-artifacts';
+  augmented.newContract.unexpectedText=secret;augmented.evidence.unexpectedText=secret;augmented.rawAbsence.query.unexpectedText=secret;
+  const prepared=prepareRejectedSemanticAttemptRecovery(augmented,sign(augmented));
+  assert.equal(prepared.report.ready,true,JSON.stringify(prepared.report.errors));
+  assert.equal(JSON.stringify(prepared).includes(secret),false);
+  assert.equal(Object.hasOwn(prepared.receipt.binding.newContract,'unexpectedText'),false);
+  assert.equal(Object.hasOwn(prepared.plan.queryRechecks[0],'unexpectedText'),false);
  });
  const changes={
   genericJob:x=>x.job.data.id=hash('otherjob'),

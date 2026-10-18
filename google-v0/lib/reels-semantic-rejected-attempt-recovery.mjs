@@ -41,7 +41,7 @@ const resultPath='reels_index/semantic_result_'+S.oldBatchId;
 const sourceMetadata=s=>({id:s.id,sourceProjectionVersion:s.sourceProjectionVersion,semanticProofHash:s.semanticProofHash,sourceVersions:s.sourceVersions,editorialHash:s.editorialHash});
 const snapshotBinding=s=>({path:s?.path,updateTime:s?.updateTime,dataHash:s?.data?rejectedRecoveryHash(s.data):null});
 function metadataBinding(input){
- return {scopeVersion:S.version,job:snapshotBinding(input.job),policy:snapshotBinding(input.policy),authorization:snapshotBinding(input.authorization),firstResult:snapshotBinding(input.firstResult),editorial:snapshotBinding(input.editorial),sources:(input.sources??[]).map(sourceMetadata),newContract:input.newContract,evidence:input.evidence};
+ return {scopeVersion:S.version,job:snapshotBinding(input.job),policy:snapshotBinding(input.policy),authorization:snapshotBinding(input.authorization),firstResult:snapshotBinding(input.firstResult),editorial:snapshotBinding(input.editorial),sources:(input.sources??[]).map(sourceMetadata),newContract:input.newContract?{wireVersion:input.newContract.wireVersion,promptHash:input.newContract.promptHash,schemaHash:input.newContract.schemaHash,schema:structuredClone(input.newContract.schema),sourceCommit:input.newContract.sourceCommit}:null,evidence:input.evidence?{references:structuredClone(input.evidence.references),correlation:structuredClone(input.evidence.correlation)}:null};
 }
 // Independent native review must bind exactly the metadata and proposed wire.
 // The caller pins the review artifact separately; a request-body accepted:true is
@@ -136,7 +136,8 @@ export function rejectedSemanticAttemptIdentity(receipt){
  return {attemptId,sequence:2,outboxId:rejectedRecoveryHash({jobId:S.jobId,sequence:2}),callsBefore:2,callsAfterIntent:3,logicalCursor:8,checkpoint:structuredClone(S.checkpoint)};
 }
 export function prepareRejectedSemanticAttemptRecovery(input,options={}){
- const result=evaluate(input,options);
+ let result;
+ try{result=evaluate(input,options);}catch{result={errors:['METADATA_INPUT_INVALID'],captures:[],checks:[]};}
  const report={kind:S.version,ready:result.errors.length===0,errors:result.errors,executionAuthorized:false,providerCalls:0,writes:0,oldIntentPreserved:true,oldCallsUsed:2,maximumCalls:127,historicalAttribution:'circumstantial_aggregate_only',freshStateObservedByModule:false};
  if(!report.ready)return {report,receipt:null,plan:null};
  const validUntil=new Date(Math.min(...result.captures.map(t=>t+S.maximumObservationAgeMs),Date.parse(input.policy.data.expiresAt))).toISOString();
@@ -144,7 +145,7 @@ export function prepareRejectedSemanticAttemptRecovery(input,options={}){
  receipt.receiptHash=rejectedRecoveryHash(receipt);
  const nextAttempt=rejectedSemanticAttemptIdentity(receipt);
  const checks=[...new Map(result.checks.map(c=>[c.path,c])).values()];
- const plan={kind:'semantic_rejected_attempt_preparation_plan',receiptHash:receipt.receiptHash,executable:false,executionAuthorized:false,requiresSeparateExactAuthorization:true,checks,queryRechecks:[structuredClone(input.rawAbsence.query)],preCommitRechecks:{queueName:S.queueName,requiredState:'PAUSED',validUntil,jobEpoch:S.jobUpdateTime,leaseMustRemainExpired:true},createOnly:[{path:rejectedSemanticRecoveryPath(),data:receipt}],nextAttempt,oldIntentWrites:[],jobWrites:[],queueWrites:[],providerCalls:0};
+ const plan={kind:'semantic_rejected_attempt_preparation_plan',receiptHash:receipt.receiptHash,executable:false,executionAuthorized:false,requiresSeparateExactAuthorization:true,checks,queryRechecks:[{collection:'reels_index',filters:structuredClone(input.rawAbsence.query.filters),complete:true,records:[],readTime:input.rawAbsence.query.readTime}],preCommitRechecks:{queueName:S.queueName,requiredState:'PAUSED',validUntil,jobEpoch:S.jobUpdateTime,leaseMustRemainExpired:true},createOnly:[{path:rejectedSemanticRecoveryPath(),data:receipt}],nextAttempt,oldIntentWrites:[],jobWrites:[],queueWrites:[],providerCalls:0};
  plan.planHash=rejectedRecoveryHash(plan);return {report,receipt,plan};
 }
 export function validateRejectedSemanticAttemptRecovery(receipt,current,options={}){

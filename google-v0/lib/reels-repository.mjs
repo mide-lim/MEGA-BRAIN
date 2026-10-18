@@ -80,7 +80,7 @@ export class ReelsRepository{
   }
   if(taxonomy.pendingOperationId)sourceStale=true;
   const dataAsOf=contributions.length?contributions.map(c=>c.observedAt).filter(Boolean).sort()[0]:manifestSnapshot?.data?.dataAsOf??this.now();
-  return {active,contributions,inventoryIds,items,sourceStale,dataAsOf,versionHash:contextualHash({active,contributions:contributions.map(c=>[c.reelId,c.idempotencyKey]),inventoryIds,sourceStale}),sourceVersions:versions};
+  return {active,contributions,inventoryIds,items,sourceStale,dataAsOf,versionHash:contextualHash({active,contributions:contributions.map(c=>[c.reelId,c.idempotencyKey]),inventoryIds,sourceStale}),sourceVersions:versions,taxonomySnapshot,observedAt:this.now()};
  }
  async scanContextualReviews(){
   const records=[];let cursor;const seen=new Set();
@@ -166,15 +166,22 @@ export class ReelsRepository{
   return {groups:[...groups.values()].sort((a,b)=>(b.day??'').localeCompare(a.day??'')||a.kind.localeCompare(b.kind)),coverage:{records:entries.length,unknownAmounts:entries.filter(e=>e.amount===null).length,withoutDate:entries.filter(e=>e.day===null).length,billingConfirmed:false,costsComplete:false},historical:true,executable:false,observedAt:this.now(),note:'Contabilidade antiga e reservas não são fatura nem produção atual. Valores sem data permanecem sem alocação diária; ausência não significa zero.'};
  }
  async categories(){
-  const navigation=await this.navigation(await this.items(),(await this.store.get('settings/reels_v2_taxonomy'))?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
+  // Share only this request's fresh metadata. Paid execution never uses it.
+  const snapshot=this.catalogueRuntime?await this.contextualContributions():null;
+  const sourceItems=snapshot?snapshot.items:await this.items();
+  const taxonomySnapshot=snapshot?snapshot.taxonomySnapshot:await this.store.get('settings/reels_v2_taxonomy');
+  const navigation=await this.navigation(sourceItems,taxonomySnapshot?.data),items=navigation.items.filter(x=>x.publication.available&&x.categoryIds.length),t=navigation.taxonomy,nodes=t.nodes,byId=new Map(nodes.map(n=>[n.id,n]));
   const memberships=new Map(nodes.map(n=>[n.id,new Set()])),direct=new Map(nodes.map(n=>[n.id,new Set()]));
   for(const item of items)for(const cid of item.categoryIds){direct.get(cid)?.add(item.id);let id=cid;const seen=new Set();while(byId.has(id)&&!seen.has(id)){seen.add(id);memberships.get(id).add(item.id);id=byId.get(id).parentId;}}
-  const catalogue=this.catalogueRuntime?await this.catalogueRuntime.overview():null,semanticState=this.semanticCurator?await this.semanticCurator.freshGroups():null;
+  const [catalogue,semanticState]=await Promise.all([
+   this.catalogueRuntime?this.catalogueRuntime.overview({snapshot}):null,
+   this.semanticCurator?this.semanticCurator.freshGroups(snapshot?{inventorySnapshot:snapshot,taxonomySnapshot}:{}):null
+  ]);
   const ordinary=nodes.filter(n=>!/^ctx_format_(single_recipe|recipe_collection)$/.test(n.id));
   const mapped=ordinary.map(n=>({...n,editorialOwner:n.id.startsWith('ctx_')?'catalogue':'taxonomy',actionCapabilities:{createChild:!n.id.startsWith('ctx_'),rename:!n.id.startsWith('ctx_'),move:!n.id.startsWith('ctx_'),merge:!n.id.startsWith('ctx_'),assign:!n.id.startsWith('ctx_'),segment:false},patterns:(t.rules??[]).filter(r=>r.kind==='structured_recurrence'&&r.enabled!==false&&r.categoryId===n.id).map(r=>({label:n.name??n.id,support:r.support?.length??0,meetsMinimum:r.meetsMinimum??null,observedAt:r.observedAt??null})),count:memberships.get(n.id).size,directCount:direct.get(n.id).size,evidenceCount:n.evidenceCount??null,manual:n.manual??false}));
   for(const f of catalogue?.formats??[]){const saved=nodes.find(n=>n.id===f.categoryId);mapped.push({...saved,id:f.categoryId,name:saved?.manual?saved.name:f.label,parentId:saved?.manual?saved.parentId:'receitas',manual:saved?.manual??false,count:new Set([...f.matchingIds,...(this.semanticCurator?await this.semanticCurator.formatIds(f.value,semanticState):[])]).size,directCount:new Set([...f.matchingIds,...(this.semanticCurator?await this.semanticCurator.formatIds(f.value,semanticState):[])]).size,patterns:[],editorialOwner:'catalogue',actionCapabilities:{createChild:false,rename:false,move:false,merge:false,assign:false,segment:false},format:f.value,filter:f.filter});}
   if(this.semanticCurator){for(const n of await this.semanticCurator.nodes(semanticState)){const old=mapped.find(x=>x.id===n.id);if(!old)mapped.push(n);}for(const n of mapped.filter(n=>!n.semantic&&!n.format)){const ids=await this.semanticCurator.categoryIds(n.id,semanticState);n.count=new Set([...(memberships.get(n.id)??[]),...ids]).size;}}
-  return {nodes:mapped,total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...this.observation()};
+  return {nodes:mapped,total:new Set(items.filter(i=>i.categoryIds.some(id=>byId.has(id))).map(i=>i.id)).size,revision:t.revision??0,compatibility:t.compatibility,...(snapshot?{observedAt:snapshot.observedAt,cache:{ttlMs:0,stale:snapshot.sourceStale}}:this.observation())};
  }
  async finance({from,to}={}){for(const d of [from,to])if(d!==undefined&&!/^\d{4}-\d{2}-\d{2}$/.test(d))throw invalid('Data inválida.');const f=(await this.store.get('settings/reels_v2_finance'))?.data??{};const days=(Array.isArray(f.days)?f.days:[]).filter(d=>(!from||d.day>=from)&&(!to||d.day<=to)).map(d=>Object.fromEntries(['day','admitted','completed','published','failed','estimatedUsd','measuredUsd','billed','uncertain'].map(k=>[k,d[k]??null])));return {days,budget:f.budget??{amount:null,currency:null},coverage:f.coverage??null,observedAt:this.now(),note:'Estimativas e medições não equivalem a faturamento confirmado. Fuso America/Sao_Paulo; orçamento informativo.'};}
 }

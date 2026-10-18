@@ -38,7 +38,7 @@ export class ReelsSemanticCurator{
  now(){return new Date(this.clock()).toISOString();}
  async scan(kind,select){const rows=[];let cursor;const seen=new Set();do{const page=await this.store.query('reels_index',{filters:[{field:'kind',op:'eq',value:kind}],select,limit:500,cursor});rows.push(...page.records);cursor=page.nextCursor;if(cursor&&seen.has(cursor))throw Error('Curadoria não avançou.');if(cursor)seen.add(cursor);}while(cursor);return rows;}
  async policy(){const snapshot=await this.store.get(semanticPolicyPath);return {snapshot,data:semanticPolicy(snapshot?.data)};}
- async inventory(){const s=await this.repository.contextualContributions();return {...s,inventory:s.items.map(i=>({id:i.id,publicationAvailable:true,sourceVersions:s.sourceVersions.get(i.id)}))};}
+ async inventory(snapshot=null){const s=snapshot??await this.repository.contextualContributions();return {...s,inventory:s.items.map(i=>({id:i.id,publicationAvailable:true,sourceVersions:s.sourceVersions.get(i.id)}))};}
  expectedPromptHash(job){return semanticExecutionPromptHash(job?.policy?.domainCuration?.domainId);}
  domainPolicy(root,domainId,manifest){
   if(!root.domainCuration||!semanticDomainManifestValid(manifest)||root.domainCuration.planHash!==manifest.manifestHash)throw problem('DOMAIN_ROOT_POLICY_OR_MANIFEST_INVALID','A configuração raiz ou o plano mudou.',423);
@@ -337,8 +337,8 @@ export class ReelsSemanticCurator{
   writes.push({path:jobPath(job.id),data:next},{path:resultPath(batch.id),data:{...saved.data,processed:true,processedAt:this.now()}});
   await this.commit(this.uniqueChecks(checks),writes);
  }
- async freshGroups(){
-  const [rows,inv,taxonomySnapshot,policy]=await Promise.all([this.currentGroups(),this.inventory(),this.store.get('settings/reels_v2_taxonomy'),this.policy()]),versions=inv.sourceVersions,taxonomy=taxonomySnapshot?.data??{};let stale=!!taxonomy.pendingOperationId;
+ async freshGroups({inventorySnapshot=null,taxonomySnapshot:providedTaxonomy}={}){
+  const [rows,inv,taxonomySnapshot,policy]=await Promise.all([this.currentGroups(),this.inventory(inventorySnapshot),providedTaxonomy===undefined?this.store.get('settings/reels_v2_taxonomy'):providedTaxonomy,this.policy()]),versions=inv.sourceVersions,taxonomy=taxonomySnapshot?.data??{};let stale=!!taxonomy.pendingOperationId;
   const recoverySnapshots=new Map();for(const m of rows.flatMap(r=>[...list(r.data.members),...list(r.data.negativeExamples)])){const id=m.sourceReconciliation?.receiptId;if(id&&!recoverySnapshots.has(id)){const snapshot=validHash(id)?await this.store.get(semanticSourceRecoveryPath(id)):null;recoverySnapshots.set(id,snapshot?.data??null);}}
   const current=m=>{if(m.sourceReconciliation&&!validateSemanticSourceRecoveryMember(recoverySnapshots.get(m.sourceReconciliation.receiptId),m))return false;const item=inv.items.find(i=>i.id===m.id);if(!item||!sourceCurrent(m.sourceVersions,versions.get(m.id)))return false;const ed=semanticEditorial(item,catalogueEditorialForItem(item,taxonomy));return m.editorialHash===semanticHash(ed)&&(!ed.manual&&!m.manualProtected||m.manualMembership===true);};
   const groups=rows.map(r=>{

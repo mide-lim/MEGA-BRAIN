@@ -41,17 +41,25 @@ try{
    assert.equal(state.server.calls.some(call=>call.method==='POST'&&call.body?.action==='create'),false);assert.deepEqual(state.server.externalAttempts,[]);
   }finally{hold.release();await state.close();}
  });
- await record('failed_tree_and_failed_curator_reads_are_isolated_from_manual_tools',async()=>{
+ await record('failed_curator_read_preserves_the_tree_and_manual_tools',async()=>{
   const state=await start();
   try{
-   state.server.failNext('/api/reels/categories','Árvore sintética indisponível.');
    state.server.failNext('/api/reels/curation/semantic','Curadoria sintética indisponível.');
    await navigate(state.page,'Categorias');
-   await state.page.getByText('Árvore sintética indisponível.',{exact:false}).waitFor();await state.page.getByText('Curadoria sintética indisponível.',{exact:false}).waitFor();
+   await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();await state.page.getByText('Curadoria sintética indisponível.',{exact:false}).waitFor();
    assert.equal(await state.page.getByRole('button',{name:'Organizar acervo salvo',exact:true}).isDisabled(),true,'Failed admission read cannot enable provider execution');
    await createContext(state,'Contexto sem depender da consulta');
    await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();
    const overview=await read(state,'/curation/semantic');assert.ok(overview.groups.some(group=>group.name==='Contexto sem depender da consulta'));assert.equal(state.fixture.calls.length,0);
+  }finally{await state.close();}
+ });
+ await record('failed_tree_read_preserves_loaded_curation_and_manual_tools',async()=>{
+  const state=await start();
+  try{
+   state.server.failNext('/api/reels/categories','Árvore sintética indisponível.');await navigate(state.page,'Categorias');
+   await state.page.getByText('Árvore sintética indisponível.',{exact:false}).waitFor();await state.page.getByLabel('Buscar contextos semânticos',{exact:true}).waitFor();
+   const created=await createContext(state,'Contexto com árvore indisponível');assert.equal(created.group.manual,true);await state.page.getByLabel('Buscar na árvore',{exact:true}).waitFor();
+   assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
   }finally{await state.close();}
  });
  await record('uncertain_operation_blocks_new_execution_but_not_manual_editorial_actions',async()=>{
@@ -67,6 +75,16 @@ try{
    assert.equal(state.fixture.calls.length,0);assert.equal(await state.page.getByRole('button',{name:'Continuar curadoria',exact:true}).count(),0);
    await state.page.screenshot({path:join(output,'manual-tools-with-uncertain-operation.png'),fullPage:true});
   }finally{await state.close();}
+ });
+ await record('library_prioritizes_items_before_auxiliary_element_queries',async()=>{
+  const state=await start(),hold=state.server.holdNext(url=>url.pathname==='/api/reels/items'&&url.searchParams.get('workspace')==='library');
+  try{
+   await navigate(state.page,'Biblioteca');await hold.started;
+   assert.equal(state.server.calls.some(call=>call.path==='/api/reels/contextual'),false,'Initial auxiliary queries must wait for the first published items response');
+   const auxiliary=state.page.waitForResponse(response=>new URL(response.url()).pathname==='/api/reels/contextual');hold.release();await auxiliary;
+   const search=state.page.getByLabel('Buscar no acervo',{exact:true}),updated=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('q')==='QaFull';});
+   await search.fill('QaFull');await updated;assert.equal(await search.evaluate(element=>element===document.activeElement),true,'Reading the next result must preserve the search focus');assert.equal(state.fixture.calls.length,0);assert.equal(state.sources(),state.sourceBefore);
+  }finally{hold.release();await state.close();}
  });
  await record('semantic_tree_nodes_open_the_same_editor_without_legacy_taxonomy_commands',async()=>{
   const state=await start();
@@ -96,10 +114,13 @@ try{
   const other=structuredClone(template.data);other.id='QaDomain_other';other.title='Destino ainda não definido';other.category_ids=[];other.analysis_key='analysis/'+other.id+'.json';fixture.documents.push({path:'videos/'+other.id,data:other,updateTime:template.updateTime});
   const state=await start(fixture);
   try{
+   const allIds=[...expected,tech.id,other.id];await state.server.store.create('settings/reels_v2_contextual_catalogue',{schemaVersion:1,status:'active',policyVersion:'saved-publication-catalogue-v1',operationId:'0'.repeat(64),sourceObservationSHA256:'0'.repeat(64),sourceHash:'0'.repeat(64),inventoryIds:allIds,inventoryCount:allIds.length,evaluatedCount:allIds.length,observedAt:template.updateTime,activatedBy:'synthetic_fixture_bootstrap',incremental:{enabled:true,eventDriven:true,noProviders:true}});await state.server.seedSavedContributions(allIds);
    const overview=await read(state,'/curation/semantic/domains'),food=overview.domains.find(domain=>domain.id==='food');assert.ok(food);assert.equal(food.inventoryCount,40);assert.equal(overview.destinationPending.count,1);
    await navigate(state.page,'Categorias');await state.page.getByRole('button',{name:'Ver área '+food.label,exact:true}).click();const detail=state.page.getByRole('region',{name:'Detalhes da área'});await detail.getByRole('heading',{name:food.label,exact:true}).waitFor();
    assert.equal(await state.page.getByRole('button',{name:'Segmentar por evidências',exact:true}).count(),0,'Removed legacy action must not advertise a known409 route');
    await detail.getByRole('button',{name:'Explorar área na Biblioteca →',exact:true}).click();await state.page.getByText('Área:',{exact:false}).waitFor();
+   const contextual=await read(state,'/contextual?curationDomainId=food');assert.equal(contextual.total,40);assert.equal(contextual.facets.find(facet=>facet.dimensionId==='ingredient'&&facet.valueId==='frango')?.supportCount,40,'Element counts and OR options must use the domain, not the42-source inventory');
+   const ingredient=state.page.getByRole('button',{name:'Filtrar ingrediente Frango',exact:true});await ingredient.waitFor();assert.match(await ingredient.innerText(),/40/);const faceted=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('curationDomainId')==='food'&&url.searchParams.get('facets')?.includes('frango');});await ingredient.click();await faceted;
    const first=await read(state,'/items?workspace=library&curationDomainId=food&limit=25');assert.equal(first.total,40);assert.equal(first.items.length,25);assert.ok(first.nextCursor);
    const next=await read(state,'/items?workspace=library&curationDomainId=food&limit=25&cursor='+encodeURIComponent(first.nextCursor));assert.deepEqual([...first.items,...next.items].map(item=>item.id).sort(),expected);assert.equal(Boolean(next.nextCursor),false);
    const paged=state.page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/reels/items'&&url.searchParams.get('curationDomainId')==='food'&&url.searchParams.get('limit')==='25';});

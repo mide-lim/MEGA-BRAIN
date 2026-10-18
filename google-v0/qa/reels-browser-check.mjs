@@ -115,7 +115,7 @@ try {
   await navigate(curate,'Filas');assert.equal(await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).inputValue(),'Receita publicada');
   await navigate(curate,'Categorias');const contextPanel=curate.getByRole('region',{name:'Curadoria do acervo',exact:true});
   const library=responseFor(curate,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
-  await contextPanel.locator('.contextual-elements button').filter({has:curate.getByText('Frango',{exact:true})}).click();const filtered=await (await library).json();
+  await contextPanel.getByRole('button',{name:'Explorar ingrediente Frango neste recorte',exact:true}).click();const filtered=await (await library).json();
   assert.equal(filtered.total,1);await curate.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();assert.equal(await curate.locator('.library-card').count(),1);
   const facetDetails=curate.locator('.contextual-library-filters');assert.equal(await facetDetails.getByLabel('Elemento 1',{exact:true}).inputValue(),'frango');
   const sameUnit=responseFor(curate,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('SAME_UNIT'));
@@ -180,11 +180,11 @@ try {
    const creator=responseFor(scope,'/api/reels/contextual',url=>url.searchParams.get('q')==='Criadora Bia');
    await curator.getByLabel('Buscar publicações neste recorte',{exact:true}).fill('Criadora Bia');const creatorData=await (await creator).json();assert.equal(creatorData.total,1);assert.equal(creatorData.facets.find(f=>f.dimensionId==='ingredient'&&f.valueId==='frango').supportCount,1);
    const library=responseFor(scope,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&url.searchParams.get('q')==='Criadora Bia'&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
-   await curator.locator('.contextual-elements button').filter({has:scope.getByText('Frango',{exact:true})}).click();const sameScope=await (await library).json();assert.equal(sameScope.total,1);assert.deepEqual(sameScope.items.map(i=>i.id),[id]);assert.equal(await scope.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'Criadora Bia');await scope.locator('.library-card').filter({hasText:'Preparo da Bia'}).waitFor();assert.equal(await scope.locator('.library-card').count(),1);
+   await curator.getByRole('button',{name:'Explorar ingrediente Frango neste recorte',exact:true}).click();const sameScope=await (await library).json();assert.equal(sameScope.total,1);assert.deepEqual(sameScope.items.map(i=>i.id),[id]);assert.equal(await scope.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'Criadora Bia');await scope.locator('.library-card').filter({hasText:'Preparo da Bia'}).waitFor();assert.equal(await scope.locator('.library-card').count(),1);
    await navigate(scope,'Categorias');assert.equal(await curator.getByLabel('Buscar publicações neste recorte',{exact:true}).inputValue(),'Criadora Bia');
    const clear=responseFor(scope,'/api/reels/contextual',url=>!url.searchParams.get('q'));await curator.getByLabel('Buscar publicações neste recorte',{exact:true}).fill('');const allContext=await (await clear).json();assert.equal(allContext.facets.find(f=>f.dimensionId==='ingredient'&&f.valueId==='frango').supportCount,2);
    const allChicken=responseFor(scope,'/api/reels/items',url=>url.searchParams.get('workspace')==='library'&&!url.searchParams.get('q')&&(url.searchParams.get('facets')||'').includes('"value":"frango"'));
-   await curator.locator('.contextual-elements button').filter({has:scope.getByText('Frango',{exact:true})}).click();const cleared=await (await allChicken).json();assert.equal(cleared.total,2);assert.deepEqual(cleared.items.map(i=>i.id).sort(),['QaPub_food',id].sort());assert.equal(await scope.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'');
+   await curator.getByRole('button',{name:'Explorar ingrediente Frango neste recorte',exact:true}).click();const cleared=await (await allChicken).json();assert.equal(cleared.total,2);assert.deepEqual(cleared.items.map(i=>i.id).sort(),['QaPub_food',id].sort());assert.equal(await scope.getByLabel('Buscar no acervo',{exact:true}).inputValue(),'');
    await scope.locator('.library-card').filter({hasText:'Preparo da Bia'}).waitFor();await scope.locator('.library-card').filter({hasText:'Receita publicada'}).waitFor();
   } finally {await scope.close();server.store.docs.delete('videos/'+id);server.store.docs.delete('reels_index/contextual_'+id);}
  });

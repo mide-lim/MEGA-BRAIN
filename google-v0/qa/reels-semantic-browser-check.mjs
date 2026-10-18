@@ -136,8 +136,8 @@ try{
   const tree=await read('/categories');assert.equal(tree.nodes.some(node=>node.id==='semantic_'+facet.id||node.groupId===facet.id||node.name==='Frango'),false,'Ingredient is a contextual filter, never another branch');
   library=responseFor('/api/reels/items',response=>{const q=new URL(response.url()).searchParams;return q.get('semanticFacet')===facet.id&&!q.get('category');});
   await page.getByRole('button',{name:'Explorar contexto na Biblioteca →',exact:true}).click();await library;assert.deepEqual(await libraryIds(),fixture.expected.memberIds);
-  await page.getByRole('button',{name:'Remover filtro do contexto',exact:true}).waitFor();await navigate('Financeiro');await navigate('Biblioteca');
-  assert.equal(await page.getByRole('button',{name:'Remover filtro do contexto',exact:true}).count(),1);assert.deepEqual(await libraryIds(),fixture.expected.memberIds);
+  await page.getByRole('button',{name:'Remover filtro da faceta',exact:true}).waitFor();await page.getByText('Faceta aprovada:',{exact:false}).filter({hasText:'Esta seleção não afirma que seja o tema principal.'}).waitFor();await navigate('Financeiro');await navigate('Biblioteca');
+  assert.equal(await page.getByRole('button',{name:'Remover filtro da faceta',exact:true}).count(),1);assert.deepEqual(await libraryIds(),fixture.expected.memberIds);
   library=responseFor('/api/reels/items',response=>{const q=new URL(response.url()).searchParams;return q.get('workspace')==='library'&&!q.get('semanticFacet')&&!q.get('category');});
   await page.getByRole('button',{name:'Limpar filtros',exact:true}).click();await library;assert.equal((await libraryIds()).length,5,'Clear restores the full saved corpus');
   assert.equal(fixture.calls.length,paidFixtureCalls);await navigate('Categorias');await selectGroup(fixture.expected.groupName);

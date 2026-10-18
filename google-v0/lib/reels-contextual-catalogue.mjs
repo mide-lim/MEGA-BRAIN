@@ -91,7 +91,7 @@ export function catalogueEntries(contributions,{inventoryIds=null}={}){
 export function normalizeCatalogueQuery(query={}){
  const parsed=parseContextualQuery(query),virtual=formatDefinitions.find(f=>parsed.category==='ctx_format_'+f.value);
  const existingFormats=parsed.facets.filter(f=>f.dimension==='format');
- const impossible=!!(virtual&&existingFormats.length&&!existingFormats.some(f=>f.value===virtual.value));
+ const impossible=!!(virtual&&(parsed.context&&parsed.context!=='recipe'||existingFormats.length&&!existingFormats.some(f=>f.value===virtual.value)));
  return {virtual:virtual?.value??null,impossible,query:virtual?{...parsed,category:'receitas',context:'recipe',facets:[...parsed.facets.filter(f=>f.dimension!=='format'),{dimension:'format',value:virtual.value,quantifier:'ANY'}]}:parsed};
 }
 export function catalogueMatchingIds(contributions,query={},nodes=[]){

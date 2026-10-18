@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {validateCategoryIds} from './category-taxonomy.mjs';
+import {validateCategoryIds,categoryOptions,categoryIds} from './category-taxonomy.mjs';
 import {reviewKnowledge,fieldLabels} from './knowledge.mjs';
 import {semanticQualityPolicyVersion,literalClaimSupport,evaluateContextualPropositions,contextualPropositionEntries,typedFieldLiteralRule} from './reels-quality-semantic-policy.mjs';
 import {validatePreparedAudio} from './audio-artifact.mjs';
@@ -14,6 +14,29 @@ export const qualityCandidateHash=report=>{
 };
 export const qualityReceiptIdPattern=/^quality_[a-f0-9]{64}$/;
 export const qualityDigest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+// Only the sealed, complete editorial tree can extend classification options.
+// This is navigation authority, never source/claim verification or a new call.
+export function qualityCategoryOptions(snapshot=null){
+ const official=categoryOptions(),fallback=()=>official;
+ if(!snapshot||snapshot.version!=='semantic-curator-v1'||snapshot.state!=='available'||snapshot.complete!==true||snapshot.noProviders!==true||!Array.isArray(snapshot.groups)||snapshot.groups.length>64)return fallback();
+ const editorial=snapshot.editorial_taxonomy,nodes=editorial?.nodes;
+ if(editorial?.authority!=='editorial_reference_only'||!Array.isArray(nodes)||nodes.length>64||!Number.isSafeInteger(editorial.revision)||editorial.revision<0||typeof editorial.updateTime!=='string'||!editorial.updateTime)return fallback();
+ const {snapshotHash,...body}=snapshot;
+ if(!/^[a-f0-9]{64}$/.test(snapshotHash??'')||Buffer.byteLength(JSON.stringify(snapshot),'utf8')>30000||qualityDigest(body)!==snapshotHash)return fallback();
+ const byId=new Map();
+ for(const node of nodes){
+  if(!node||typeof node.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(node.id)||byId.has(node.id)||typeof node.name!=='string'||!node.name.trim()||node.name.length>120||(node.parentId!==null&&typeof node.parentId!=='string'))return fallback();
+  byId.set(node.id,node);
+ }
+ const paths=new Map();
+ for(const node of nodes){
+  const seen=new Set(),path=[];let current=node;
+  while(current){if(seen.has(current.id))return fallback();seen.add(current.id);path.unshift(current.name);if(current.parentId===null)break;current=byId.get(current.parentId);if(!current)return fallback();}
+  paths.set(node.id,path);
+ }
+ return [...official,...nodes.filter(n=>n.manual===true&&!categoryIds.includes(n.id)).map(n=>({id:n.id,group:paths.get(n.id)[0],name:n.name,scope:'Destino editorial existente: '+paths.get(n.id).join(' > ')+'. Escolha somente se esta finalidade for desenvolvida nas fontes; a organização editorial não verifica alegações.'}))];
+}
+
 const identity=(key,generation)=>present(key)&&/^\d+$/.test(String(generation??''))?{key,generation:String(generation)}:null;
 const same=(a,b)=>!!a&&!!b&&qualityDigest(a)===qualityDigest(b);
 const resultIdentity=value=>value&&present(value.key)&&/^\d+$/.test(String(value.generation??''))?{key:value.key,generation:String(value.generation)}:null;
@@ -106,7 +129,7 @@ function contextualEvidenceReview(report,record,manifest,reportHash,manifestHash
 // Admission policy for a *new* already-received candidate. It has no provider,
 // replay, queue, financial or historical-publication side effects. The caller
 // must validate report shape with the existing contract before this policy.
-export function evaluateQualityGateV2({record={},report,mediaInspection=null,transcriptionReceipt=null,trustedReviews=[]}={}){
+export function evaluateQualityGateV2({record={},report,mediaInspection=null,transcriptionReceipt=null,trustedReviews=[],contextCatalogSnapshot=null}={}){
  const sourceManifest=qualitySourceManifest(record),checks=[],gaps=[],reportHash=qualityCandidateHash(report),sourceManifestHash=qualityDigest(sourceManifest);
  if(!report||typeof report!=='object')return {policyVersion:qualityPolicyVersion,accepted:false,state:'inconclusive',reportHash,sourceManifestHash,sourceManifest,checks:[check('RESPONSE_NOT_RECEIVED','inconclusive','Resposta ausente não confirma falha nem autoriza repetição paga.')],gaps:[],replayAllowed:false};
  if(!sourceManifest.video||record.media_verified!==true||!Number.isFinite(record.duration_seconds)||record.duration_seconds<=0)checks.push(check('MEDIA_IDENTITY_MISSING','inconclusive','Identidade ou duração verificável da mídia ausente.'));
@@ -125,7 +148,7 @@ export function evaluateQualityGateV2({record={},report,mediaInspection=null,tra
   if(!transcript.trim())gaps.push(check('NO_SPEECH_RECOGNIZED','not_recorded','Texto vazio preservado; silêncio e falta de informação não são falha STT.'));
  }
  try{
-  validateCategoryIds(report.categories);
+  validateCategoryIds(report.categories,{additionalIds:qualityCategoryOptions(contextCatalogSnapshot).filter(c=>!categoryIds.includes(c.id)).map(c=>c.id)});
   if(!present(report.title)||!present(report.summary)||!Array.isArray(report.useful_information)||!report.useful_information.every(i=>present(i?.claim)&&typeof i?.application==='string'&&['author_claim','visual_observation','interpretation'].includes(i.classification)&&Array.isArray(i.evidence)&&i.evidence.length>0)||!Array.isArray(report.visual_observations)||!report.visual_observations.every(v=>typeof v==='string')||!Array.isArray(report.limitations)||!report.limitations.every(v=>typeof v==='string')||!present(report.transcript_quality?.assessment)||!Array.isArray(report.transcript_quality?.uncertain_segments)||!report.transcript_quality.uncertain_segments.every(s=>typeof s==='string'))throw Error('shape');
   if(report.knowledge){const reviewed=reviewKnowledge(report.knowledge,record);if(reviewed.omitted)throw Error('omitted');}
   else throw Error('missing_knowledge');
@@ -211,3 +234,4 @@ export async function persistQualityCandidateV2(options={}){
  if(committed?.applied!==true)return {...gate,accepted:false,state:'inconclusive',candidateIdentity,receiptIdentity,publicationChanged:false,reasons:['publication_revision_conflict']};
  return {...gate,candidateIdentity,receiptIdentity,publicationIdentity,publicationChanged:true,event:{eventType:'publicationAccepted',reelId:record.id,publicationIdentity,qualityPolicyVersion,sourceManifest:gate.sourceManifest,contextualSignals:options.report?.contextualSignals??null}};
 }
+

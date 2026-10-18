@@ -57,3 +57,14 @@ test('all supported analysis presets produce a schema matching the captured Vert
   assert.deepEqual(Object.keys(schema.properties.categories),['anyOf']);
  }
 });
+
+test('final classification weighs saved source modalities and keeps editorial IDs outside categories',()=>{
+ const snapshot={version:'semantic-curator-v1',state:'available',groups:[],editorial_taxonomy:{authority:'editorial_reference_only',revision:8,nodes:[{id:'manual_style',name:'Estilo pessoal',parentId:'group-casa',manual:true}]},noProviders:true,snapshotHash:'a'.repeat(64)};
+ const request=buildAnalysisRequest({record:{...record,source_caption:{capture_id:'fixture-caption',text:'Estilo e aparência pessoal.'}},bucket:'megabrain-v0-test-media',preset:{version:'fixture',system_instruction:'Analise',user_instruction:'Resuma'},qualityGateV2Enabled:true,contextCatalogSnapshot:snapshot});
+ const input=JSON.parse(request.contents[0].parts[1].text),instruction=request.systemInstruction.parts[0].text;
+ assert.equal(input.transcript_raw,record.transcript);assert.equal(input.caption_raw,'Estilo e aparência pessoal.');assert.ok(request.contents[0].parts[0].fileData.fileUri.endsWith('/video.mp4'));
+ assert.deepEqual(input.context_catalog_snapshot,snapshot);
+ assert.equal(matches(['manual_style'],request.generationConfig.responseSchema.properties.categories),false);
+ assert.match(instruction,/Avalie conjuntamente/);assert.match(instruction,/hierarquia editorial/);assert.match(instruction,/sem comprovar pertinência/);assert.match(instruction,/stale\/unavailable/);
+});
+

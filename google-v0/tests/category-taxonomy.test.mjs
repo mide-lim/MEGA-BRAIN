@@ -105,3 +105,21 @@ test('generation bounds additional categories and keeps general destinations exc
  assert.equal(Math.max(...req.generationConfig.responseSchema.properties.categories.anyOf.map(branch=>branch.maxItems)),2);
  assert.ok(categoryOptions().every(c=>c.scope));
 });
+
+test('unambiguous official display names and personal-style labels avoid false fallback',()=>{
+ for(const c of categoryDefinitions.filter(c=>c.id!=='sustentabilidade-alimentar'))assert.deepEqual(resolveCategories([c.name]).ids,[c.id],c.name);
+ // The visible short name must not turn broad environmental content into Food.
+ const broad=resolveCategories(['Sustentabilidade']);
+ assert.deepEqual(broad.ids,['a-organizar']);assert.deepEqual(broad.unresolved,['Sustentabilidade']);
+ assert.deepEqual(resolveCategories(['Alimentação sustentável']).ids,['sustentabilidade-alimentar']);
+ assert.deepEqual(resolveCategories(['sustentabilidade-alimentar']).ids,['sustentabilidade-alimentar']);
+ assert.deepEqual(resolveCategories(['Sustentabilidade','Moda']).ids,['moda-acessorios']);
+ for(const term of ['Moda e estilo','Estilo pessoal','Beleza e cuidados pessoais','Cuidados pessoais','Cabelo e barba','Cortes de cabelo','Barbearia']){
+  assert.deepEqual(resolveCategories([term]).ids,['moda-acessorios'],term);
+ }
+ // Broad roots and medical subjects cannot silently become style destinations.
+ for(const term of ['Casa e estilo','Trabalho e negócios','Tratamento de alopecia'])assert.deepEqual(resolveCategories([term]).ids,['a-organizar']);
+ const option=categoryOptions().find(c=>c.id==='moda-acessorios');
+ assert.match(option.scope,/estilo pessoal/);assert.match(option.scope,/cabelo, barba/);assert.match(option.scope,/Diagnóstico e tratamento/);
+});
+

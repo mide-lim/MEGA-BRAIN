@@ -29,15 +29,24 @@ jobs:
         run: |
           enabled=false
           recovery=false
-          if [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_HEAD_REF" = codex/semantic-curator-live-catalogue ] || [ "$GITHUB_REF_NAME" = codex/semantic-curator-live-catalogue ]; then
+          payload=false
+          if [ "$GITHUB_HEAD_REF" = codex/semantic-payload-audit ] || [ "$GITHUB_REF_NAME" = codex/semantic-payload-audit ] || [ "$GITHUB_HEAD_REF" = codex/semantic-provider-outcome-diagnostics ] || [ "$GITHUB_REF_NAME" = codex/semantic-provider-outcome-diagnostics ]; then
+            enabled=true
+            recovery=true
+            payload=true
+          elif [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_HEAD_REF" = codex/semantic-curator-live-catalogue ] || [ "$GITHUB_REF_NAME" = codex/semantic-curator-live-catalogue ]; then
             enabled=true
             if [ "$GITHUB_HEAD_REF" = codex/semantic-source-projection-recovery ] || [ "$GITHUB_REF_NAME" = codex/semantic-source-projection-recovery ]; then recovery=true; fi
           elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ]; then
-            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            enabled="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; ((.number == 74 and .head.ref == "codex/semantic-curator-live-catalogue") or .head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
-            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; .head.ref == "codex/semantic-source-projection-recovery" and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+            recovery="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-source-projection-recovery" or .head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
           fi
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" = main ] && [ "$enabled" = true ]; then
+            payload="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'any(.[]; (.head.ref == "codex/semantic-payload-audit" or .head.ref == "codex/semantic-provider-outcome-diagnostics") and .merged_at != null and .merge_commit_sha == env.GITHUB_SHA)')"
+          fi
+          echo "payload=$payload" >> "$GITHUB_OUTPUT"
           echo "recovery=$recovery" >> "$GITHUB_OUTPUT"
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
       - name: Receive exact immutable saved sources without Google access
@@ -56,6 +65,9 @@ jobs:
       - name: Rehearse source projection and exact saved-response recovery
         if: steps.finite.outputs.recovery == 'true'
         run: node google-v0/scripts/prepare-semantic-source-recovery.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
+      - name: Audit the exact next-eight request metadata without provider access
+        if: steps.finite.outputs.payload == 'true'
+        run: node google-v0/scripts/diagnose-semantic-next-input.mjs --input "$RUNNER_TEMP/semantic-saved-source.json" --paid-input "$RUNNER_TEMP/semantic-paid-input.json" --output-dir "$RUNNER_TEMP/semantic-curator-evidence"
       - uses: actions/upload-artifact@v4
         if: always() && steps.finite.outputs.enabled == 'true'
         with:

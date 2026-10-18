@@ -1,6 +1,6 @@
 import {semanticHash,semanticPolicyVersion} from './reels-semantic-source.mjs';
 const hash=v=>/^[a-f0-9]{64}$/.test(v??''),list=v=>Array.isArray(v)?v:[],fail=code=>{throw Object.assign(Error(code),{code});};
-export const semanticDefinitionHash=g=>semanticHash({context:g.context,kind:g.kind??g.groupKind,dimension:g.dimension??null,key:g.key,definition:g.definition,positiveCriteria:g.positiveCriteria,negativeCriteria:g.negativeCriteria});
+export const semanticDefinitionHash=g=>semanticHash({context:g.context,kind:g.groupKind??g.kind,dimension:g.dimension??null,key:g.key,definition:g.definition,positiveCriteria:g.positiveCriteria,negativeCriteria:g.negativeCriteria});
 function metrics(rows){const m={tp:0,fp:0,fn:0,tn:0,abstained:0,total:rows.length};for(const r of rows){if(r.abstained)m.abstained++;m[r.label?r.predicted?'tp':'fn':r.predicted?'fp':'tn']++;}return {...m,precision:m.tp+m.fp?m.tp/(m.tp+m.fp):0,recall:m.tp+m.fn?m.tp/(m.tp+m.fn):0,coverage:rows.length?(rows.length-m.abstained)/rows.length:0};}
 export function evaluateSemanticCalibration({job,groups,annotations,sources,minimumPrecision=0.95,observedAt}){
  if(job?.status!=='completed'||job.phase!=='complete'||!hash(job.id)||!hash(job.cohortHash)||!hash(job.promptHash??annotations?.promptHash)||!Number.isFinite(minimumPrecision)||minimumPrecision<0.9||minimumPrecision>1)fail('CALIBRATION_JOB_OR_POLICY_INVALID');
@@ -12,7 +12,7 @@ export function evaluateSemanticCalibration({job,groups,annotations,sources,mini
   if(splitById.has(a.reelId)&&splitById.get(a.reelId)!==a.split)fail('CALIBRATION_HOLDOUT_LEAKAGE');splitById.set(a.reelId,a.split);seen.add(key);
   if(!list(g.jobIds).includes(job.id)&&g.originJobId!==job.id)fail('CALIBRATION_GROUP_NOT_FROM_JOB');
   const m=list(g.members).find(m=>m.id===a.reelId),v=list(g.verification?.members).find(v=>v.reelId===a.reelId),predicted=!!m&&['central','supporting'].includes(m.role)&&m.semanticProofHash===s.semanticProofHash&&v?.verdict==='supported'&&v.semanticProofHash===s.semanticProofHash;
-  rows.push({...a,predicted,abstained:!!m&&!predicted,context:g.context,kind:g.kind??g.groupKind});
+  rows.push({...a,predicted,abstained:!!m&&!predicted,context:g.context,kind:g.groupKind??g.kind});
  }
  if(!rows.length||!rows.some(x=>x.split==='train')||!rows.some(x=>x.split==='holdout'))fail('CALIBRATION_SPLIT_REQUIRED');
  const train=rows.filter(x=>x.split==='train'),holdout=rows.filter(x=>x.split==='holdout'),perGroup=[...byGroup.values()].filter(g=>rows.some(r=>r.groupId===g.id)).map(g=>({groupId:g.id,definitionHash:semanticDefinitionHash(g),train:metrics(train.filter(r=>r.groupId===g.id)),holdout:metrics(holdout.filter(r=>r.groupId===g.id))}));

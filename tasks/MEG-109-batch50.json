@@ -3,52 +3,43 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "54b70d22405d62835810a60b7df8d02f36e6a36c",
-  "objective": "Correct the current100-Reel Google analysis request rejection: preserve bounded sanitized provider diagnostics, flatten repeated source schema branches, and prove real provider acceptance without blind retry or new cohort.",
+  "base_commit": "2ab82cb312f3c40722b1ea49de84c2958cdbac2b",
+  "objective": "Publish the reviewed Google analysis correction to the analysis service only, honoring explicit owner analysis-only pause while acquisition and transcription remain running. Extend the same existing publisher selector; no new deployment framework.",
   "risk": "high",
   "acceptance_criteria": [
-    "Google GenerateContent400 diagnosis survives REST -> pipeline -> private saved execution/video through an explicit sanitized allowlist. Public detail preserves its existing sanitized summary and does not expose provider/google diagnostic fields. No raw error/request/body/header/token leakage; prior publications and finances unchanged.",
-    "Flatten wire evidence schema only. Source identities, anchor/hash generation, finite time refs, existing normalizer, factual source/timing validation, legacy response compatibility and publication quality gates remain unchanged. No claim that complexity is the specific400cause without actual provider proof.",
-    "GitHub Actions only: negative source/time/hash cases and diagnostic persistence/no duplicate submit, full existing builds/integration/entrypoint checks. Independent review exact head; real same100 Google response/production-web acceptance still required.",
-    "No new cohort, capacity/IAM changes, deletes or identical paid retry. Existing100-only processing authorization applies; any analysis-only pause remains pending direct owner answer after automatic-review rejection."
+    "services=analysis selects only analysis for validation-only PATCH, rollout, readiness, rollback and target_revisions. Other four service configurations and all four queue stable configurations remain bound to reviewed fingerprint; no queue/control/IAM/data mutation in publisher.",
+    "Target analysis queue must be PAUSED; legacy processing queue PAUSED and empty. Acquisition/STT may stay RUNNING with pending work only in analysis selector. Original web_stages and legacy publisher behavior preserved.",
+    "Root proves analysis control paused and active[] immediately before publication. Publish analysis fenced, retain same100 queued deliveries; verify candidate source image and non-target configuration equality before removing analysis fence for one real corrected request. No new cohort/scaling/IAM or blind repeats.",
+    "Regression tests, builds and image/entrypoint checks exclusively GitHub Actions; independent exact-head review before integration/publication."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
-    "google-v0/lib/google-rest.mjs",
-    "google-v0/lib/reels-pipeline.mjs",
-    "google-v0/tests/google-rest.test.mjs",
-    "google-v0/tests/reels-pipeline.test.mjs",
-    "google-v0/lib/analysis.mjs",
-    "google-v0/lib/reels-analysis-contract.mjs",
-    "google-v0/tests/analysis.test.mjs"
+    ".github/workflows/google-deploy.yml",
+    "ops/deploy-reels-services.py",
+    "ops/test_deploy_reels_services.py",
+    "ops/test_deploy_existing_services.py"
   ],
   "context": [
     {
-      "path": "google-v0/lib/google-rest.mjs",
-      "reason": "Existing sanitized transport diagnostic boundary",
+      "path": "ops/deploy-reels-services.py",
+      "reason": "Existing bounded publication and stable snapshot checks",
       "sections": [
-        "providerDiagnostic",
-        "safeAnalysisFailureDiagnostic"
+        "selected_targets",
+        "Google.queues",
+        "rollout",
+        "run"
       ],
+      "max_chars": 6000
+    },
+    {
+      "path": ".github/workflows/google-deploy.yml",
+      "reason": "Route explicit analysis selector through same reviewed publisher",
+      "max_chars": 2500
+    },
+    {
+      "path": "ops/test_deploy_reels_services.py",
+      "reason": "Synthetic isolation and rollback regression coverage",
       "max_chars": 3000
-    },
-    {
-      "path": "google-v0/lib/reels-pipeline.mjs",
-      "reason": "Persist selected diagnosis without reclassifying results or finance",
-      "sections": [
-        "diagnosticFor",
-        "failure"
-      ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/reels-analysis-contract.mjs",
-      "reason": "Reduce wire grammar only, unchanged authoritative normalization",
-      "sections": [
-        "sourceAnchoredEvidenceContract",
-        "normalizeSourceAnchoredReport"
-      ],
-      "max_chars": 3500
     }
   ],
   "validation_commands": [
@@ -66,11 +57,11 @@
   "review": {
     "mode": "independent_agent",
     "status": "pending",
-    "reason": "Verify exact7source/testfiles plus task packet; CI and actual Google acceptance are distinct."
+    "reason": "Analysis-only mutation and preserved running non-target services/queues."
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 426,
+    "canonical_revision": 431,
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
     "authorized_by": "Current human correction request and persistent native coordination instructions",

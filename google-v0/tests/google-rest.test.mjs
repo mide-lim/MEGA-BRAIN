@@ -6,6 +6,28 @@ test('production project and unrelated endpoints are rejected before credential 
   const client=new GoogleREST({project:'megabrain-v0-isolated',tokenProvider:()=>{throw Error('must not run');}});
   await assert.rejects(()=>client.request('https://example.com/'));
 });
+
+test('analysis failure persistence selects bounded sanitized transport fields without forwarding raw errors',async()=>{
+ const {safeAnalysisFailureDiagnostic}=await import('../lib/google-rest.mjs');
+ const error={message:'RAW_PRIVATE_MESSAGE',stack:'RAW_PRIVATE_STACK',headers:{Authorization:'RAW_PRIVATE_HEADER'},request:{contents:'RAW_PRIVATE_VIDEO'},google_diagnostic:{api_service:'vertex_ai',operation_step:'submit_analysis',request_stage:'http_response_received',dispatch_attempted:true,response_received:true,response_body_complete:false,elapsed_ms:12,error_name:'Error',error_code:null,http_status:400,request_id:'12345678-1234-1234-1234-123456789012',model:'gemini-3.5-flash-lite',attempt:1,timeout_ms:120000,raw:'RAW_PRIVATE_DIAGNOSTIC'},provider_diagnostic:{status:'INVALID_ARGUMENT',message:'Invalid schema https://private.example/path Bearer private-token user@example.com',details:'RAW_PRIVATE_BODY'}};
+ const before=structuredClone(error),saved=safeAnalysisFailureDiagnostic(error);
+ assert.equal(saved.google_diagnostic.http_status,400);assert.equal(saved.google_diagnostic.request_stage,'http_response_received');assert.equal(saved.provider_diagnostic.status,'INVALID_ARGUMENT');assert.match(saved.provider_diagnostic.message,/Invalid schema/);
+ assert.ok(!JSON.stringify(saved).includes('RAW_PRIVATE'));assert.ok(!/private.example|private-token|user@example.com/.test(JSON.stringify(saved)));
+ assert.deepEqual(Object.keys(saved).sort(),['google_diagnostic','provider_diagnostic']);assert.deepEqual(Object.keys(saved.provider_diagnostic).sort(),['message','status']);assert.deepEqual(error,before);
+ const malformed={...error,google_diagnostic:{...error.google_diagnostic,elapsed_ms:-1,http_status:'400',request_id:'private-token',model:'PRIVATE_MODEL',attempt:100,timeout_ms:Infinity,request_stage:'PRIVATE_STAGE',error_name:'PRIVATE_NAME',error_code:'private-code'},provider_diagnostic:{status:'private-status',message:'x'.repeat(5000)}};
+ const bounded=safeAnalysisFailureDiagnostic(malformed);for(const key of ['elapsed_ms','http_status','request_id','model','attempt','timeout_ms','request_stage','error_name','error_code'])assert.equal(bounded.google_diagnostic[key],null);
+ assert.equal(bounded.provider_diagnostic.status,null);assert.equal(bounded.provider_diagnostic.message.length,1000);
+ assert.deepEqual(safeAnalysisFailureDiagnostic({provider_diagnostic:error.provider_diagnostic}),{});
+ assert.deepEqual(safeAnalysisFailureDiagnostic({...error,google_diagnostic:{...error.google_diagnostic,api_service:'speech'}}),{});
+});
+
+test('analysis timeout diagnostic preserves unknown response state without inventing a provider rejection',async()=>{
+ const {safeAnalysisFailureDiagnostic}=await import('../lib/google-rest.mjs');
+ const client=new GoogleREST({project:'megabrain-v0-test',tokenProvider:()=> 'test-token',fetchImpl:async()=>{throw Object.assign(Error('PRIVATE_TIMEOUT'),{name:'TimeoutError'});}});
+ await assert.rejects(()=>client.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/test',{method:'POST',json:{},operationStep:'submit_analysis',model:'gemini-3.5-flash-lite',attempt:1}),error=>{
+  const saved=safeAnalysisFailureDiagnostic(error);assert.equal(saved.google_diagnostic.http_status,null);assert.equal(saved.google_diagnostic.response_received,false);assert.equal(saved.google_diagnostic.error_name,'TimeoutError');assert.equal(saved.provider_diagnostic,null);assert.ok(!JSON.stringify(saved).includes('PRIVATE_TIMEOUT'));return true;
+ });
+});
 test('uncertain inference is registered once and never retried',async()=>{
   let calls=0,started=0,uncertain=0;
   const client=new GoogleREST({project:'megabrain-v0-isolated',tokenProvider:()=> 'test-token',fetchImpl:async()=>{calls++;throw Error('connection lost');}});

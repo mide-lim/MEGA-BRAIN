@@ -16,6 +16,18 @@ export function analysisTimeoutMs(value=defaultAnalysisTimeoutMs){
 const safeErrorName=value=>['Error','TypeError','SyntaxError','AbortError','TimeoutError','RangeError'].includes(value)?value:null;
 const safeErrorCode=value=>Number.isSafeInteger(value)?value:typeof value==='string'&&/^(?:ERR_[A-Z_]{1,48}|E[A-Z]{2,24}|UND_ERR_[A-Z_]{1,48})$/.test(value)?value:null;
 const safeRequestId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)?value:null;
+// Persist only bounded transport metadata already produced by GoogleREST.
+// Never copy Error.message/stack, request content, headers, or raw bodies.
+export function safeAnalysisFailureDiagnostic(error){
+ const d=error?.google_diagnostic;
+ if(!d||d.api_service!=='vertex_ai'||d.operation_step!=='submit_analysis')return {};
+ const stages=['credential','request_preparation','fetch_started','http_response_received','response_body_read','response_complete'];
+ const bounded=(v,max)=>Number.isSafeInteger(v)&&v>=0&&v<=max?v:null;
+ const google_diagnostic={api_service:'vertex_ai',operation_step:'submit_analysis',request_stage:stages.includes(d.request_stage)?d.request_stage:null,dispatch_attempted:typeof d.dispatch_attempted==='boolean'?d.dispatch_attempted:null,response_received:typeof d.response_received==='boolean'?d.response_received:null,response_body_complete:typeof d.response_body_complete==='boolean'?d.response_body_complete:null,elapsed_ms:bounded(d.elapsed_ms,maximumAnalysisTimeoutMs+60000),error_name:safeErrorName(d.error_name),error_code:safeErrorCode(d.error_code),http_status:Number.isInteger(d.http_status)&&d.http_status>=100&&d.http_status<=599?d.http_status:null,request_id:safeRequestId(d.request_id),model:typeof d.model==='string'&&/^gemini-[a-z0-9.-]{1,56}$/.test(d.model)?d.model:null,attempt:Number.isSafeInteger(d.attempt)&&d.attempt>=1&&d.attempt<=3?d.attempt:null,timeout_ms:Number.isSafeInteger(d.timeout_ms)&&d.timeout_ms>=1&&d.timeout_ms<=maximumAnalysisTimeoutMs?d.timeout_ms:null};
+ const p=error.provider_diagnostic;
+ const provider_diagnostic=p&&typeof p==='object'?{status:typeof p.status==='string'&&/^[A-Z_]{1,64}$/.test(p.status)?p.status:null,message:safeProviderMessage(p.message)}:null;
+ return {google_diagnostic,provider_diagnostic};
+}
 const forbiddenProject='megabrain-stt';
 export class GoogleREST {
   constructor({project,tokenProvider,fetchImpl=fetch,buckets=[]}) {

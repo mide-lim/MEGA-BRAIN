@@ -21,6 +21,24 @@ test('three-stage journey persists worker identity and filters events by the sam
  for(const execution of detail.executions){assert.equal(execution.worker,'reels-'+execution.stage);assert.equal(execution.attempt,1);assert.equal(execution.status,'completed');assert.ok(execution.queuedAt&&execution.startedAt&&execution.completedAt);assert.doesNotThrow(()=>encodeFields(execution));}
  const events=await x.repository.events({worker:'reels-transcription'});assert.equal(events.items.length,1);assert.equal(events.items[0].worker,'reels-transcription');assert.equal(events.items[0].stage,'transcription');
 });
+
+test('synthetic Google400 survives analysis failure persistence and replay without exposing credentials or changing publication',async()=>{
+ const {GoogleREST}=await import('../lib/google-rest.mjs');let calls=0;
+ const client=new GoogleREST({project:'megabrain-v0-test',tokenProvider:()=> 'PRIVATE_TEST_TOKEN',fetchImpl:async()=>{
+  calls++;return Response.json({error:{status:'INVALID_ARGUMENT',message:'Invalid responseSchema: nested enum limit. https://private.example/path Bearer PRIVATE_TEST_TOKEN owner@example.com'}},{status:400});
+ }});
+ const x=await setup('analysis',{analyze:()=>client.request('https://aiplatform.googleapis.com/v1/projects/megabrain-v0-test/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent',{method:'POST',json:{contents:[]},operationStep:'submit_analysis',model:'gemini-3.5-flash-lite',attempt:1})});
+ const initial=await x.store.get('videos/Reel_001');await x.store.patch('videos/Reel_001',pub(),{updateTime:initial.updateTime});
+ await x.store.create('reels_finance/preserved',{status:'uncertain',amount:5});const financial=await x.store.get('reels_finance/preserved');
+ const result=await x.pipeline.run({executionId:x.id}),saved=(await x.store.get('reels_executions/'+x.id)).data,video=(await x.store.get('videos/Reel_001')).data;
+ assert.equal(result.status,'uncertain');assert.equal(result.error.destination,'reconcile');assert.equal(result.error.retryable,false);
+ assert.equal(saved.error.google_diagnostic.http_status,400);assert.equal(saved.error.google_diagnostic.operation_step,'submit_analysis');assert.equal(saved.error.google_diagnostic.response_received,true);
+ assert.equal(saved.error.provider_diagnostic.status,'INVALID_ARGUMENT');assert.match(saved.error.provider_diagnostic.message,/Invalid responseSchema: nested enum limit/);
+ assert.deepEqual(video.reels_v2.error,saved.error);assert.equal(video.analysis_key,'saved');assert.equal(video.analysis.summary,'original');assert.deepEqual(await x.store.get('reels_finance/preserved'),financial);assert.doesNotThrow(()=>encodeFields(saved.error));
+ const detail=await x.repository.detail('Reel_001');assert.equal(detail.executions[0].error.google_diagnostic.http_status,400);
+ assert.ok(!/PRIVATE_TEST_TOKEN|private.example|owner@example.com/.test(JSON.stringify({result,saved,video,detail})));
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.equal(calls,1);assert.equal((await x.store.get('reels_executions/'+x.id)).data.error.provider_diagnostic.status,'INVALID_ARGUMENT');
+});
 test('failure metadata has a safe destination, stage and worker while provider diagnostics stay private',async()=>{
  for(const definitive of [false,true]){
   const x=await setup('analysis',{analyze:async()=>{throw Object.assign(Error('Bearer PRIVATE_API_KEY cookie=SECRET'),{code:'PROVIDER_UNAVAILABLE',definitive});}}),result=await x.pipeline.run({executionId:x.id});

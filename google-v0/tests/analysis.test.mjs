@@ -12,25 +12,27 @@ test('video and immutable transcript enter the same preset with a scoped GCS URI
   assert.equal(r.generationConfig.responseMimeType,'application/json');
 });
 
-test('gate-v2 evidence transport has finite time references, exact identities, and no caption timestamps',async()=>{
+test('gate-v2 provider evidence uses flat objects and finite time references with server-bound identities',async()=>{
  const {qualitySourceManifest}=await import('../lib/reels-quality-gate.mjs');
  const r={...record,video_key:'originals/test/video.mp4',video_generation:'11',transcript_key:'results/test/transcript.json',transcript_generation:'12',transcript_words:[{start_seconds:0.125,end_seconds:2.75,word:'Guardar'}],source_caption:{text:'Guardar a fonte.',capture_id:'capture-test'}};
  const args={record:r,bucket:'megabrain-v0-media',preset,qualityGateV2Enabled:true,taxonomySignalsEnabled:true};
  const request=buildAnalysisRequest(args),schema=request.generationConfig.responseSchema,payload=JSON.parse(request.contents[0].parts[1].text),manifest=qualitySourceManifest(r);
  assert.equal(request.generationConfig.maxOutputTokens,8192);
  assert.equal(payload.evidence_contract,'source-anchors-v1');assert.equal(payload.evidence_anchor_hash.length,64);
+ assert.deepEqual(payload.source_manifest,manifest);
  assert.deepEqual(payload.source_time_anchors.map(a=>a.seconds),[0,0.125,2.75,60]);
  const keys=[];const walk=value=>{if(!value||typeof value!=='object')return;keys.push(...Object.keys(value.properties??{}));for(const child of Object.values(value))if(typeof child==='object'){if(Array.isArray(child))child.forEach(walk);else walk(child);}};
  walk(schema);for(const key of ['start_seconds','end_seconds','startSeconds','endSeconds','timeRange'])assert.ok(!keys.includes(key),key);
  const paths=[schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.title,schema.properties.qualityEvidenceV2.properties.summary,schema.properties.qualityEvidenceV2.properties.applications.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.visualObservations.items.properties.evidence];
  for(const evidence of paths){
-  const caption=evidence.items.anyOf.find(b=>b.properties.source.enum[0]==='caption'),video=evidence.items.anyOf.find(b=>b.properties.source.enum[0]==='video');
-  assert.equal(caption.properties.start_ref,undefined);assert.equal(caption.properties.end_ref,undefined);
-  assert.deepEqual(caption.properties.sourceIdentity.required,['captureId']);
-  assert.deepEqual(video.properties.sourceIdentity.required,['key','generation']);
-  assert.deepEqual(video.properties.sourceIdentity.properties.generation.enum,[manifest.video.generation]);
-  assert.equal(video.properties.start_ref.type,'STRING');assert.deepEqual(video.properties.start_ref.enum,payload.source_time_anchors.map(a=>a.ref));
+  const item=evidence.items;assert.equal(item.type,'OBJECT');assert.equal(item.anyOf,undefined);
+  assert.deepEqual(item.properties.source.enum,['caption','transcript','video']);assert.ok(item.required.includes('sourceIdentity'));
+  assert.equal(item.properties.sourceIdentity.type,'OBJECT');
+  for(const property of Object.values(item.properties.sourceIdentity.properties)){assert.equal(property.type,'STRING');assert.equal(property.enum,undefined);}
+  assert.equal(item.properties.start_ref.type,'STRING');assert.deepEqual(item.properties.start_ref.enum,payload.source_time_anchors.map(a=>a.ref));
+  assert.deepEqual(item.properties.end_ref.enum,item.properties.start_ref.enum);
  }
+ const contextual=schema.properties.contextualSignals.properties.evidence.items;assert.equal(contextual.type,'OBJECT');assert.equal(contextual.anyOf,undefined);assert.deepEqual(contextual.properties.sourceKind.enum,['caption','transcript','video']);assert.equal(contextual.properties.sourceIdentity.type,'STRING');assert.equal(contextual.properties.sourceIdentity.enum,undefined);
  assert.deepEqual(buildAnalysisRequest(args),request);
  assert.equal(buildAnalysisRequest({record,bucket:'megabrain-v0-media',preset}).generationConfig.responseSchema.properties.evidence_contract,undefined);
 });
@@ -65,6 +67,7 @@ test('malformed numeric transport, mixed caption times and invented identities a
   {...valid,start_ref:'0.000000123456789'+'0'.repeat(1000)},
   {...valid,sourceIdentity:{key:manifest.video.key}},
   {...valid,sourceIdentity:{...manifest.video,generation:'99'}},
+  {source:'video',sourceIdentity:manifest.video,excerpt:'Guardar'},
   {...valid,start_ref:'t1',end_ref:'t0'},
   {source:'caption',sourceIdentity:manifest.caption,excerpt:'Guardar',start_ref:'t0',end_ref:'t1'},
   {...valid,timeRange:{startSeconds:0,endSeconds:60}}
@@ -99,20 +102,20 @@ test('factual transcript evidence requires saved timing while narrative gaps rem
  const requestFor=r=>buildAnalysisRequest({record:r,bucket:'megabrain-v0-media',preset,qualityGateV2Enabled:true,taxonomySignalsEnabled:true});
  const schema=requestFor(r).generationConfig.responseSchema;
  for(const family of [schema.properties.useful_information,schema.properties.knowledge.properties.fields,schema.properties.knowledge.properties.keywords]){
-  assert.ok(!family.items.properties.evidence.items.anyOf.some(b=>b.properties.source.enum[0]==='transcript'));
+  const item=family.items.properties.evidence.items;assert.equal(item.type,'OBJECT');assert.ok(!item.properties.source.enum.includes('transcript'));
  }
  assert.equal(schema.properties.taxonomySignals.properties.units.maxItems,0);
- const narrative=schema.properties.qualityEvidenceV2.properties.title.items.anyOf.find(b=>b.properties.source.enum[0]==='transcript');
- assert.ok(narrative);assert.ok(!narrative.required.includes('start_ref'));
+ const narrative=schema.properties.qualityEvidenceV2.properties.title.items;
+ assert.ok(narrative.properties.source.enum.includes('transcript'));assert.ok(!narrative.required.includes('start_ref'));
  const manifest=qualitySourceManifest(r),c=sourceAnchoredEvidenceContract(r,manifest),e={source:'transcript',sourceIdentity:manifest.transcript,excerpt:record.transcript};
  const raw={evidence_contract:c.version,evidence_anchor_hash:c.hash,qualityEvidenceV2:{version:2,title:[e],summary:[e]},useful_information:[]};
  assert.equal(normalizeSourceAnchoredReport(raw,r,manifest).qualityEvidenceV2.title[0].start_seconds,undefined);
  for(const extra of [{useful_information:[{evidence:[e]}]},{knowledge:{fields:[{evidence:[e]}]}},{knowledge:{keywords:[{evidence:[e]}]}},{taxonomySignals:{units:[{evidence:[e]}]}}])assert.throws(()=>normalizeSourceAnchoredReport({...raw,...extra},r,manifest),/factual/);
  const timed={...r,transcript_words:[{word:record.transcript,start_seconds:0.125,end_seconds:2.75}]},timedSchema=requestFor(timed).generationConfig.responseSchema,tc=sourceAnchoredEvidenceContract(timed,manifest);
  for(const family of [timedSchema.properties.useful_information,timedSchema.properties.knowledge.properties.fields,timedSchema.properties.knowledge.properties.keywords,timedSchema.properties.taxonomySignals.properties.units]){
-  const b=family.items.properties.evidence.items.anyOf.find(b=>b.properties.source.enum[0]==='transcript');
-  assert.ok(b.required.includes('start_ref'));assert.ok(b.required.includes('end_ref'));
+  const item=family.items.properties.evidence.items;assert.equal(item.type,'OBJECT');assert.ok(item.properties.source.enum.includes('transcript'));assert.ok(item.properties.start_ref.enum.length<=64);assert.ok(item.properties.end_ref.enum.length<=64);
  }
+ const unitEvidence=timedSchema.properties.taxonomySignals.properties.units.items.properties.evidence.items;assert.deepEqual(unitEvidence.properties.source.enum,['transcript']);assert.ok(unitEvidence.required.includes('start_ref'));assert.ok(unitEvidence.required.includes('end_ref'));
  const timedRaw={...raw,evidence_anchor_hash:tc.hash,useful_information:[{evidence:[{...e,start_ref:'t1',end_ref:'t2'}]}]};
  assert.equal(normalizeSourceAnchoredReport(timedRaw,timed,manifest).useful_information[0].evidence[0].start_seconds,0.125);
  assert.throws(()=>normalizeSourceAnchoredReport({...timedRaw,useful_information:[{evidence:[e]}]},timed,manifest),/factual/);

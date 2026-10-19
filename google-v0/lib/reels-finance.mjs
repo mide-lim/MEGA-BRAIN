@@ -29,6 +29,12 @@ export class ReelsFinance {
      creation.estimatedByCurrency??={};creation.estimatedByCurrency[estimate.currency]=(creation.estimatedByCurrency[estimate.currency]??0)+estimate.amount;estimates++;
     }
    }
+   // Independent validation is a distinct measured call, including rejected
+   // candidates. Never replace original analysis usage or turn unknown into 0.
+   if(finance.qualityValidation){
+    const validation=finance.qualityValidation,day=days.get(dayOf(validation.observedAt)),usage=validation.measurement;
+    if(day){if(measured(usage)){day.measuredUsd=(day.measuredUsd??0)+usage.list_price_micro_usd/1e6;measurements++;rates.add(usage.rate_version);if(!lastMeasurementAt||Date.parse(validation.observedAt)>Date.parse(lastMeasurementAt))lastMeasurementAt=validation.observedAt;}else unavailable++;}
+   }
    // Usage belongs to the day the result was recorded, including an applying
    // execution. A late STT collection must not move its USD usage to admission.
    const measurement=finance.measurement;

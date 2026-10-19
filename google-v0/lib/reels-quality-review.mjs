@@ -1,4 +1,4 @@
-import {qualityCandidateHash,qualityDigest,qualitySourceManifest} from './reels-quality-gate.mjs';
+import {qualityCandidateHash,qualityDigest,qualitySourceManifest,qualityReviewSourceContentHash} from './reels-quality-gate.mjs';
 import {contextualPropositionEntries,semanticQualityPolicyVersion} from './reels-quality-semantic-policy.mjs';
 import {sha256} from './storage.mjs';
 import {analysisReportOutcome} from './analysis.mjs';
@@ -36,10 +36,11 @@ export function qualityReviewBinding({record,originalReport,executionId,rawRespo
  return {executionId,reelId:record.id,rawResponseIdentity,originalCandidateIdentity,originalReportHash:qualityCandidateHash(originalReport),sourceManifest,sourceManifestHash:qualityDigest(sourceManifest)};
 }
 export const qualityReviewSelectionId=binding=>'source_review_'+qualityDigest({version:qualityReviewVersion,...binding});
-const bodyKeys=['version','createdBy','kind','policyVersion','executionId','reelId','rawResponseIdentity','originalCandidateIdentity','originalReportHash','sourceManifest','sourceManifestHash','report','reportHash','authorIdentity','reviewerIdentity','reviewerExecutor','method','observedAt','reviewEvidence','importEvidence','entries'];
+const bodyKeys=['version','createdBy','kind','policyVersion','executionId','reelId','rawResponseIdentity','originalCandidateIdentity','originalReportHash','sourceManifest','sourceManifestHash','report','reportHash','authorIdentity','reviewerIdentity','reviewerExecutor','method','observedAt','reviewEvidence','importEvidence','automaticEvidence','entries'];
 function validateBody(body,{binding,record}){
- need(keys(body,bodyKeys)&&body.version===qualityReviewVersion&&body.createdBy==='operator:source-review-v1'&&['human_source_review','independent_source_review'].includes(body.kind)&&body.policyVersion===semanticQualityPolicyVersion,'Origem ou versão da revisão independente inválida.');
+ need(keys(body,bodyKeys)&&body.version===qualityReviewVersion&&['operator:source-review-v1','server:saved-source-validation-v1'].includes(body.createdBy)&&['human_source_review','independent_source_review'].includes(body.kind)&&body.policyVersion===semanticQualityPolicyVersion,'Origem ou versão da revisão independente inválida.');
  for(const [key,value]of Object.entries(binding))need(same(body[key],value),'Revisão não corresponde à fonte original: '+key);
+ if(body.createdBy==='server:saved-source-validation-v1'){const a=body.automaticEvidence;need(keys(a,['requestArtifact','sourceContentHash','requestHash','validationId','model','promptHash'])&&artifactValid(a?.requestArtifact,binding)&&a.sourceContentHash===qualityReviewSourceContentHash(record)&&[a.requestHash,a.validationId,a.promptHash].every(v=>digestPattern.test(v??''))&&/^gemini-[a-z0-9.-]{1,80}$/.test(a.model??'')&&body.reviewerExecutor==='external'&&body.authorIdentity==='analysis:'+binding.executionId&&body.reviewerIdentity==='vertex:'+a.model+':'+a.validationId&&body.method==='saved-source-validation-v1'&&body.importEvidence===undefined,'Proveniência automática inválida.');}else need(body.automaticEvidence===undefined,'Evidência automática não pertence a recibo do operador.');
  need(text(body.authorIdentity,200)&&text(body.reviewerIdentity,200)&&body.authorIdentity!==body.reviewerIdentity&&['human','codex-native','external'].includes(body.reviewerExecutor)&&text(body.method,1000)&&text(body.observedAt,40)&&Number.isFinite(Date.parse(body.observedAt)),'Proveniência independente incompleta.');
  need(body.report&&typeof body.report==='object'&&!Array.isArray(body.report)&&body.reportHash===qualityCandidateHash(body.report),'Hash do relatório revisado divergente.');
  need(Buffer.byteLength(JSON.stringify(body),'utf8')<=700000&&Array.isArray(body.entries)&&body.entries.length>0&&body.entries.length<=256,'Revisão vazia ou acima do limite.');
@@ -72,14 +73,14 @@ export function sealQualitySourceReview({record,originalReport,executionId,rawRe
  const body={version:qualityReviewVersion,createdBy:'operator:source-review-v1',kind:'independent_source_review',policyVersion:semanticQualityPolicyVersion,...binding,report,reportHash:qualityCandidateHash(report),...provenance,entries};
  validateBody(body,{binding,record});
  const review={id:'review_'+qualityDigest(body),...body};
- const selection={id:qualityReviewSelectionId(binding),kind:'source_review_selection',createdBy:'operator:source-review-v1',reviewId:review.id,reviewHash:qualityDigest(review)};
+ const selection={id:qualityReviewSelectionId(binding),kind:'source_review_selection',createdBy:body.createdBy,reviewId:review.id,reviewHash:qualityDigest(review)};
  return {review,selection};
 }
 export function verifyQualitySourceReview({review,selection,record,originalReport,executionId,rawResponseIdentity,originalCandidateIdentity,requestedReviewId=null}={}){
  const binding=qualityReviewBinding({record,originalReport,executionId,rawResponseIdentity,originalCandidateIdentity});
  need(keys(review,['id',...bodyKeys])&&qualityReviewIdPattern.test(review?.id??''),'Identidade de revisão selada inválida.');
  const {id,...body}=review;need(id==='review_'+qualityDigest(body),'Conteúdo da revisão selada diverge.');validateBody(body,{binding,record});
- need(keys(selection,['id','kind','createdBy','reviewId','reviewHash'])&&selection.id===qualityReviewSelectionId(binding)&&selection.kind==='source_review_selection'&&selection.createdBy==='operator:source-review-v1'&&selection.reviewId===id&&selection.reviewHash===qualityDigest(review),'Seleção de revisão do servidor divergente.');
+ need(keys(selection,['id','kind','createdBy','reviewId','reviewHash'])&&selection.id===qualityReviewSelectionId(binding)&&selection.kind==='source_review_selection'&&selection.createdBy===body.createdBy&&selection.reviewId===id&&selection.reviewHash===qualityDigest(review),'Seleção de revisão do servidor divergente.');
  need(requestedReviewId===null||requestedReviewId===id,'A revisão selecionada mudou; confira antes de aplicar.');
  const common={kind:review.kind,policyVersion:review.policyVersion,reportHash:review.reportHash,sourceManifestHash:review.sourceManifestHash,method:review.method,observedAt:review.observedAt,reviewerIdentity:review.reviewerIdentity};
  return {report:structuredClone(review.report),trustedReviews:review.entries.map(entry=>({...common,...structuredClone(entry),receiptId:id+':'+entry.fieldPath})),reviewIdentity:{reviewId:id,reviewHash:selection.reviewHash,selectionId:selection.id}};
@@ -96,7 +97,7 @@ export async function loadQualitySourceReview({store,storage,...input}={}){
  need(text(selected.updateTime,100)&&text(saved.updateTime,100),'Versão persistida da revisão ausente.');
  const verified=verifyQualitySourceReview({...input,review:saved.data,selection:selected.data});
  const read=reviewArtifactReader(storage,binding);
- for(const artifact of [saved.data.reviewEvidence,...Object.values(saved.data.importEvidence??{}),...saved.data.entries.flatMap(e=>e.frameArtifacts?.map(f=>f.artifact)??(e.frameArtifact?[e.frameArtifact]:[]))])await read(artifact);
+ for(const artifact of [saved.data.reviewEvidence,...(saved.data.automaticEvidence?[saved.data.automaticEvidence.requestArtifact]:[]),...Object.values(saved.data.importEvidence??{}),...saved.data.entries.flatMap(e=>e.frameArtifacts?.map(f=>f.artifact)??(e.frameArtifact?[e.frameArtifact]:[]))])await read(artifact);
  return {...verified,sourceVersions:[{path:selectionPath,updateTime:selected.updateTime},{path:reviewPath,updateTime:saved.updateTime}]};
 }
 

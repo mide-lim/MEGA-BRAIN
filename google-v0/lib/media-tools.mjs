@@ -141,6 +141,18 @@ export function mediaTools({run=execute,maxBytes=100000000,downloadEnabled=false
         if(allEnded&&typeof onExecutionStopped==='function')await onExecutionStopped();
       }
     },
+    async extractFrames(bytes,times){
+      if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>maxBytes||!Array.isArray(times)||!times.length||times.length>16||times.some(t=>!Number.isFinite(t)||t<0))throw Error('Amostras visuais fora do limite.');
+      return temporary(async folder=>{
+        const source=join(folder,'video.mp4');await writeFile(source,bytes,{mode:0o600});const frames=[];
+        for(const [index,seconds]of times.entries()){
+          const output=join(folder,'frame-'+index+'.jpg');
+          await run('ffmpeg',['-nostdin','-v','error','-xerror','-threads','1','-i',source,'-ss',String(seconds),'-frames:v','1','-vf','scale=640:640:force_original_aspect_ratio=decrease','-q:v','4',output],{timeout:15000,maxBuffer:65536});
+          const info=await stat(output);if(!info.isFile()||info.size<1||info.size>500000)throw Error('Quadro fora do limite.');frames.push(await readFile(output));
+        }
+        return frames;
+      });
+    },
     async extractAudio(bytes){
       if(!Buffer.isBuffer(bytes)||!bytes.length||bytes.length>maxBytes)throw new Error('Vídeo inválido.');
       return temporary(async folder=>{

@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "6375a34e03a3c95dac9e9950f48e607ae8c72a68",
+  "objective": "Produce one independent saved-source validation for an explicitly allowlisted existing operation in the same analysis worker; preserve original analysis, strict recovery and no retry after uncertain submission. Implementation only, GitHub-only tests; no provider calls, Google writes, deployment or local product execution.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Default closed explicit operation allowlist and existing job/owner/pause fences before paid POST.",
+    "Persist original candidate before distinct validation; at most one submission per candidate/source/policy binding, immutable request/response/usage, no retry on uncertainty.",
+    "Separate real server provenance, exact source and candidate identities, literal quote validation and bounded actual saved-frame evidence; do not edit report or relax gate.",
+    "Recovery/import cannot start providers; accepted existing reviews reused. Negative reviews preserve evidence without blocking a future independent editorial selection.",
+    "GitHub Actions only: synthetic concurrency, timeout, source mutation, provenance, visual bounds, recovery and usage accounting; independent review pending."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/reels-quality-auto-review.mjs",
+    "google-v0/lib/reels-quality-review.mjs",
+    "google-v0/lib/reels-google-runtime.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/media-tools.mjs",
+    "google-v0/lib/reels-finance.mjs",
+    "google-v0/tests/reels-quality-auto-review.test.mjs",
+    "google-v0/tests/reels-finance.test.mjs",
+    "google-v0/docs/reels-quality-auto-review.md",
+    "tasks/MEG-109-auto-quality-validation.json",
+    "google-v0/Dockerfile.worker"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-quality-auto-review.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-quality-review.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-google-runtime.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/media-tools.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-finance.mjs",
+      "reason": "Existing source, publication and runtime contracts",
+      "sections": [
+        "quality validation integration"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Native independent reviewer and exact-head GitHub checks required before integration. Runtime activation is separately bound to original100 operation; no local product tests or live calls in this execution."
+  }
+}

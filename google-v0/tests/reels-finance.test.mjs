@@ -41,3 +41,9 @@ test('measured partial coverage includes saved rejected candidates and never fab
  const result=await finance.read();assert.equal(result.days[0].measuredUsd,0.00055);assert.equal(result.days[0].billed,null);assert.equal(result.days[0].published,0);assert.equal(result.coverage.measured.records,1);assert.equal(result.coverage.measured.unavailableRecords,2);
  const onlyUnknown=await finance.read({from:'2026-10-15',to:'2026-10-15'});assert.equal(onlyUnknown.days[0].measuredUsd,null);assert.equal(onlyUnknown.coverage.measured,null);
 });
+
+test('saved-source validation usage remains separate and adds to the correct BRT day without double counting analysis',async()=>{
+ const store=memory(),finance=new ReelsFinance({repository:new ReelsRepository({store,clock}),clock}),measurement=measureGeminiUsage({usageMetadata:{trafficType:'ON_DEMAND',promptTokenCount:100,candidatesTokenCount:50,totalTokenCount:150}},{model:'gemini-3.5-flash-lite'});
+ await store.create('reels_executions/validated',{id:'validated',reelId:'Reel_001',stage:'analysis',status:'failed',createdAt:'2026-10-16T02:00:00Z',resultSavedAt:'2026-10-16T02:59:59Z',rawResult:{finance:{measurement,qualityValidation:{validationId:'fixture',observedAt:'2026-10-16T03:00:01Z',measurement}}}});
+ const result=await finance.read({from:'2026-10-15',to:'2026-10-16'});assert.equal(result.days[0].measuredUsd,measurement.list_price_micro_usd/1e6);assert.equal(result.days[1].measuredUsd,measurement.list_price_micro_usd/1e6);assert.equal(result.coverage.measured.records,2);assert.equal(result.days[1].billed,null);
+});

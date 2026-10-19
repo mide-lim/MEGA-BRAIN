@@ -34,12 +34,19 @@
     {
       "path": ".github/workflows/google-deploy.yml",
       "reason": "Route explicit analysis selector through same reviewed publisher",
-      "max_chars": 2500
+      "max_chars": 2500,
+      "sections": [
+        "services:",
+        "DEPLOY_SERVICES"
+      ]
     },
     {
       "path": "ops/test_deploy_reels_services.py",
       "reason": "Synthetic isolation and rollback regression coverage",
-      "max_chars": 3000
+      "max_chars": 3000,
+      "sections": [
+        "analysis"
+      ]
     }
   ],
   "validation_commands": [
@@ -52,7 +59,7 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Legacy launcher compatibility only; current native execution identities recorded in canonical426; no launcher/background agent."
+    "note": "Legacy launcher compatibility only; actual current native execution input430 and rootstate432; no launcher/background agent."
   },
   "review": {
     "mode": "independent_agent",

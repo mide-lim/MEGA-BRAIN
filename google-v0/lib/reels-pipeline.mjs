@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {safeDownloadDiagnostic} from './media-tools.mjs';
+import {safeDownloadDiagnostic} from './download-diagnostic.mjs';
 import {qualityPublicationRevision,qualitySourceStateHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';

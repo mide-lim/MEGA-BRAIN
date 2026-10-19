@@ -10,7 +10,8 @@
     "Stopped acquisition proof binds exact execution, owner, Reel, stage and time; atomic source/control version checks release only technical capacity on failure, redelivery or next queued item. No proof/paid stages/superseded owners retain slots. No financial/status/provider change.",
     "Gate-v2 request has finite source-specific identities and finite source time references; caption evidence has no time; normalization rejects changed source/hash or invalid refs and preserves old saved response semantics. Token cap and semantic/visual support gates remain unchanged.",
     "Closed repair publication retains queued deliveries only in PAUSED stage queues, never purges/resumes them; nonempty legacy or running stage queues still rejected.",
-    "GitHub Actions regressions and existing integration/build required; fresh independent review of exact head; real same100-operation/web verification after publication. No new cohort, scaling, IAM, deletes or blind paid repeats."
+    "GitHub Actions regressions and existing integration/build required; fresh independent review of exact head; real same100-operation/web verification after publication. No new cohort, scaling, IAM, deletes or blind paid repeats.",
+    "Safe downloader diagnostic uses a dependency-free shared sanitizer; importing web pipeline never loads download subprocess/path resolution. Existing media-tools sanitizer export remains compatible."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
@@ -22,7 +23,9 @@
     "google-v0/lib/reels-analysis-contract.mjs",
     "google-v0/tests/analysis.test.mjs",
     "ops/deploy-reels-services.py",
-    "ops/test_deploy_reels_services.py"
+    "ops/test_deploy_reels_services.py",
+    "google-v0/lib/download-diagnostic.mjs",
+    "google-v0/lib/media-tools.mjs"
   ],
   "context": [
     {

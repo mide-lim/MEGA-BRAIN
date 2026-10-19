@@ -4,10 +4,10 @@
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "92e3d458161b99ca30b8501cd6589f6ddc4f750d",
-  "objective": "Repair original100-Reel operation: release only proven-stopped acquisition physical capacity; bound generated evidence times/source identities; preserve published/saved/uncertain and no blind retries. Same coherent flow correction, tests/build only GitHub Actions.",
+  "objective": "Repair original100-Reel operation: release only proven-stopped acquisition physical capacity; bound generated evidence times/source identities; preserve published/saved/uncertain and no blind retries. Same coherent flow correction, tests/build only GitHub Actions. Also apply the same separation to synchronous-analysis local adapter failure: local occupancy ends after awaited closure; unknown remote paid outcome and claim remain preserved.",
   "risk": "high",
   "acceptance_criteria": [
-    "Stopped acquisition proof binds exact execution, owner, Reel, stage and time; atomic source/control version checks release only technical capacity on failure, redelivery or next queued item. No proof/paid stages/superseded owners retain slots. No financial/status/provider change.",
+    "Stopped acquisition proof binds exact execution, owner, Reel, stage and time; atomic source/control version checks release only technical capacity on failure, redelivery or next queued item. No proof/paid stages/superseded owners retain slots. No financial/status/provider change. Synchronous analysis errors may release only physical local-worker occupancy with an intrinsic owner-bound awaited-adapter stop receipt. Remote Gemini outcome remains unknown, same execution is never resubmitted, and STT LRO stays occupied.",
     "Gate-v2 request has finite source-specific identities and finite source time references; caption evidence has no time; normalization rejects changed source/hash or invalid refs and preserves old saved response semantics. Token cap and semantic/visual support gates remain unchanged.",
     "Closed repair publication retains queued deliveries only in PAUSED stage queues, never purges/resumes them; nonempty legacy or running stage queues still rejected.",
     "GitHub Actions regressions and existing integration/build required; fresh independent review of exact head; real same100-operation/web verification after publication. No new cohort, scaling, IAM, deletes or blind paid repeats.",
@@ -26,7 +26,9 @@
     "ops/test_deploy_reels_services.py",
     "google-v0/lib/download-diagnostic.mjs",
     "google-v0/lib/media-tools.mjs",
-    "google-v0/Dockerfile.worker"
+    "google-v0/Dockerfile.worker",
+    "google-v0/lib/reels-google-runtime.mjs",
+    "google-v0/tests/reels-google-runtime.test.mjs"
   ],
   "context": [
     {
@@ -93,7 +95,7 @@
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 416,
+    "canonical_revision": 419,
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
     "authorized_by": "Current human correction request and persistent native coordination instructions",

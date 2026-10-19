@@ -14,30 +14,33 @@ export class ReelsPipeline {
   const path='reels_controls/'+job.stage;await ensure(this.store,path,{id:job.stage,paused:false,desiredConcurrency:1,effectiveConcurrency:0,active:[],appliedCommands:[]});
   // A download may stop before its failure acknowledgement is delivered. A
   // later queued Reel must be able to recover that physical slot as well.
-  if(job.stage==='acquisition'){
+  if(['acquisition','analysis'].includes(job.stage)){
    const control=await this.store.get(path);
    for(const id of new Set(control?.data.active??[])){
     if(id===job.id||!/^[a-f0-9]{64}$/.test(id))continue;
     const stopped=await this.store.get('reels_executions/'+id);
-    if(stopped?.data.status==='uncertain')await this.releaseStoppedAcquisition(stopped.data);
+    if(stopped?.data.status==='uncertain')await this.releaseStoppedCapacity(stopped.data);
    }
   }
   let allowed=false;await cas(this.store,path,data=>{allowed=false;const active=data.active??[],limit=Math.min(data.desiredConcurrency??1,this.effectiveCapacity[job.stage]??0);
    if(data.paused&&!collect)return null;if(active.includes(job.id)){allowed=true;return null;}if(active.length>=limit)return null;allowed=true;return {active:[...active,job.id],effectiveConcurrency:limit,observedAt:nowISO(this.clock)};});return allowed;
  }
  async release(job){await cas(this.store,'reels_controls/'+job.stage,data=>({active:(data.active??[]).filter(id=>id!==job.id),observedAt:nowISO(this.clock)}));}
- async releaseStoppedAcquisition(job){
-  if(job.stage!=='acquisition'||!job.owner||job.id!==executionId(job.operationId,job.reelId,job.stage)||typeof this.store.releaseStoppedAcquisitionCapacity!=='function')return false;
+ async releaseStoppedCapacity(job){
+  if(!['acquisition','analysis'].includes(job.stage)||!job.owner||job.id!==executionId(job.operationId,job.reelId,job.stage)||typeof this.store.releaseStoppedPhysicalCapacity!=='function')return false;
   const current=await this.store.get('reels_executions/'+job.id),data=current?.data;
   if(data?.status!=='uncertain'||data.id!==job.id||data.stage!==job.stage||data.operationId!==job.operationId||data.reelId!==job.reelId||data.owner!==job.owner||data.operationName||data.operationEvidence||data.rawResult||data.resultEvidence)return false;
-  const [stop,video,control]=await Promise.all([this.store.get('execution_stops/'+job.id),this.store.get('videos/'+job.reelId),this.store.get('reels_controls/acquisition')]);
+  const [stop,video,control]=await Promise.all([this.store.get('execution_stops/'+job.id),this.store.get('videos/'+job.reelId),this.store.get('reels_controls/'+job.stage)]);
   const proof=stop?.data,position=video?.data.reels_v2;
   const started=Date.parse(data.startedAt),submitted=Date.parse(data.submittedAt),ended=Date.parse(proof?.executorStoppedAt),failed=Date.parse(data.failedAt);
-  if(!proof||proof.id!==job.id||proof.reelId!==job.reelId||proof.stage!=='acquisition'||proof.owner!==job.owner||![started,submitted,ended,failed].every(Number.isFinite)||started>submitted||submitted>ended||ended>failed||failed>this.clock())return false;
-  if(position?.executionId!==job.id||position.operationId!==job.operationId||position.stage!=='acquisition'||!['running','submitting','uncertain'].includes(position.status)||!control?.data.active?.includes(job.id))return false;
+  if(!proof||proof.id!==job.id||proof.reelId!==job.reelId||proof.stage!==job.stage||proof.owner!==job.owner||![started,submitted,ended,failed].every(Number.isFinite)||started>submitted||submitted>ended||ended>failed||failed>this.clock())return false;
+  // A settled synchronous adapter proves only that this local execution ended.
+  // It does not prove Gemini stopped, charge settlement, or permit replay.
+  if(job.stage==='analysis'&&(proof.kind!=='analysis_adapter_settled'||proof.scope!=='local_adapter'||proof.remoteOutcome!=='unknown'))return false;
+  if(position?.executionId!==job.id||position.operationId!==job.operationId||position.stage!==job.stage||!['running','submitting','uncertain'].includes(position.status)||!control?.data.active?.includes(job.id))return false;
   // The commit verifies all three proofs and the capacity version atomically.
   // It changes no execution, video, stop receipt, reservation or provider state.
-  const released=await this.store.releaseStoppedAcquisitionCapacity({executionId:job.id,reelId:job.reelId,executionVersion:current.updateTime,stopVersion:stop.updateTime,videoVersion:video.updateTime,control,observedAt:nowISO(this.clock)});
+  const released=await this.store.releaseStoppedPhysicalCapacity({executionId:job.id,reelId:job.reelId,stage:job.stage,executionVersion:current.updateTime,stopVersion:stop.updateTime,videoVersion:video.updateTime,control,observedAt:nowISO(this.clock)});
   return released.released===true;
  }
  async run({executionId:id}){
@@ -52,7 +55,7 @@ export class ReelsPipeline {
    return this.failure(job,Object.assign(Error('Executor sem confirmação.'),{code:'EXECUTOR_INTERRUPTED_UNCONFIRMED'}),{submitted:true});
   }
   if(job.status==='waiting'&&job.operationName)await queueOutbox(this.store,job,{onQueued:this.onQueued,clock:this.clock,poll:true,sequence:job.pollSequence??0});
-  if(job.status==='uncertain')await this.releaseStoppedAcquisition(job);
+  if(job.status==='uncertain')await this.releaseStoppedCapacity(job);
   if(['completed','failed','uncertain'].includes(job.status))await this.emit(job,job.status==='completed'?'stage_completed':'stage_'+job.status,job.status==='completed'?'info':'error');
   if(job.status!=='queued')return {status:job.status,duplicate:true,executionId:id};
   if(!await this.capacity(job))return {status:'waiting',reason:'TECHNICAL_BACKPRESSURE',executionId:id};
@@ -188,7 +191,7 @@ export class ReelsPipeline {
   const status=error.requiresReconciliation===true||submitted&&error.definitive!==true?'uncertain':'failed',diagnostic=diagnosticFor(job,status,error);
   await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'||data.status==='applying'||data.status==='waiting'?null:{status,error:diagnostic,failedAt:nowISO(this.clock)});
   const current=await this.store.get('reels_executions/'+job.id);if(current.data.status==='completed')return {status:'completed',executionId:job.id};if(current.data.status==='waiting'){await queueOutbox(this.store,current.data,{onQueued:this.onQueued,clock:this.clock,poll:true,sequence:current.data.pollSequence??0});return {status:'waiting',operationName:current.data.operationName};}if(current.data.status==='applying')return {status:'applying',reason:'RESULT_SAVED_RECONCILIATION_REQUIRED'};
-  await this.markVideo(job,status,{error:{...diagnostic,uncertain:status==='uncertain',retryable:status==='failed'}});if(status==='failed')await this.release(job);else await this.releaseStoppedAcquisition(current.data);await this.emit(job,'stage_'+status,'error');return {status,executionId:job.id,error:diagnostic};
+  await this.markVideo(job,status,{error:{...diagnostic,uncertain:status==='uncertain',retryable:status==='failed'}});if(status==='failed')await this.release(job);else await this.releaseStoppedCapacity(current.data);await this.emit(job,'stage_'+status,'error');return {status,executionId:job.id,error:diagnostic};
  }
  async emit(job,type,level='info'){await event(this.store,{id:hash(job.id+':'+type),reelId:job.reelId,stage:job.stage,worker:job.worker??workerFor(job.stage),operationId:job.operationId,type,level,message:type==='stage_uncertain'?'Operação externa sem confirmação; não repetir.':'Estado da etapa atualizado.'},this.clock);}
 }

@@ -6,10 +6,10 @@ const clock=()=>Date.parse('2026-10-16T03:30:00Z');
 // Atomic four-version store seam; the real Firestore wire contract is covered
 // by reels-firestore.test.mjs. No provider is involved in these regressions.
 function stoppedCapacityStore(store){
- store.releaseStoppedAcquisitionCapacity=async({executionId:id,reelId,executionVersion,stopVersion,videoVersion,control,observedAt})=>{
-  const checks=[['reels_executions/'+id,executionVersion],['execution_stops/'+id,stopVersion],['videos/'+reelId,videoVersion],['reels_controls/acquisition',control.updateTime]];
+ store.releaseStoppedPhysicalCapacity=async({executionId:id,reelId,stage,executionVersion,stopVersion,videoVersion,control,observedAt})=>{
+  const checks=[['reels_executions/'+id,executionVersion],['execution_stops/'+id,stopVersion],['videos/'+reelId,videoVersion],['reels_controls/'+stage,control.updateTime]];
   if(checks.some(([path,version])=>store.docs.get(path)?.updateTime!==version))return {released:false};
-  await store.patch('reels_controls/acquisition',{active:control.data.active.filter(active=>active!==id),observedAt},{updateTime:control.updateTime});return {released:true};
+  await store.patch('reels_controls/'+stage,{active:control.data.active.filter(active=>active!==id),observedAt},{updateTime:control.updateTime});return {released:true};
  };return store;
 }
 const reel=(id='Reel_001',extra={})=>({id,status:'registered',created_at:'2026-10-16T03:00:00Z',...extra});
@@ -84,13 +84,25 @@ for(const invalid of ['absent','wrongId','wrongOwner','wrongReel','wrongStage','
 for(const stage of ['transcription','analysis'])test('a stop-shaped receipt never frees uncertain paid '+stage+' capacity',async()=>{
  const x=await stoppedUncertainFixture(stage);assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.deepEqual((await x.store.get('reels_controls/'+stage)).data.active,[x.id]);
 });
+test('settled local analysis adapter frees only physical occupancy, preserving paid uncertainty and preventing replay',async()=>{
+ let calls=0,x;x=await setup('analysis',{analyze:async({claim})=>{calls++;await x.store.create('execution_stops/'+x.id,{id:x.id,reelId:'Reel_001',stage:'analysis',owner:claim.owner,kind:'analysis_adapter_settled',scope:'local_adapter',remoteOutcome:'unknown',executorStoppedAt:new Date(clock()).toISOString()});throw Object.assign(Error('timeout'),{name:'TimeoutError'});}});stoppedCapacityStore(x.store);
+ await x.store.create('reservations/preserved',{status:'uncertain',amount:5});const reserved=await x.store.get('reservations/preserved');
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.deepEqual((await x.store.get('reels_controls/analysis')).data.active,[]);
+ const job=await x.store.get('reels_executions/'+x.id),proof=await x.store.get('execution_stops/'+x.id);assert.equal(job.data.error.retryable,false);assert.equal(proof.data.remoteOutcome,'unknown');
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.equal(calls,1);assert.deepEqual(await x.store.get('reels_executions/'+x.id),job);assert.deepEqual(await x.store.get('reservations/preserved'),reserved);
+});
+for(const mismatch of ['kind','scope','remoteOutcome','owner','operationName'])test('analysis local-slot release fails closed on '+mismatch+' mismatch',async()=>{
+ const x=await stoppedUncertainFixture('analysis'),path='execution_stops/'+x.id,stop=await x.store.get(path);await x.store.patch(path,{kind:'analysis_adapter_settled',scope:'local_adapter',remoteOutcome:'unknown',...(mismatch==='operationName'?{}:{[mismatch]:'wrong'})},{updateTime:stop.updateTime});
+ if(mismatch==='operationName'){const job=await x.store.get('reels_executions/'+x.id);await x.store.patch('reels_executions/'+x.id,{operationName:'external-operation'},{updateTime:job.updateTime});}
+ assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.deepEqual((await x.store.get('reels_controls/analysis')).data.active,[x.id]);
+});
 test('duplicate delivery repairs a proven stopped slot and does not remove concurrent active identities',async()=>{
  const x=await stoppedUncertainFixture(),control=await x.store.get('reels_controls/acquisition'),other='a'.repeat(64);await x.store.patch('reels_controls/acquisition',{active:[x.id,other]},{updateTime:control.updateTime});
  await Promise.all([x.pipeline.run({executionId:x.id}),x.pipeline.run({executionId:x.id})]);assert.deepEqual((await x.store.get('reels_controls/acquisition')).data.active,[other]);
 });
 for(const changed of ['execution','stop','video','control'])test('changed '+changed+' version atomically prevents stopped-slot release',async()=>{
- const x=await stoppedUncertainFixture(),release=x.store.releaseStoppedAcquisitionCapacity;
- x.store.releaseStoppedAcquisitionCapacity=async input=>{const path=changed==='execution'?'reels_executions/'+x.id:changed==='stop'?'execution_stops/'+x.id:changed==='video'?'videos/Reel_001':'reels_controls/acquisition';const current=await x.store.get(path);await x.store.patch(path,{testVersionChanged:true},{updateTime:current.updateTime});return release(input);};
+ const x=await stoppedUncertainFixture(),release=x.store.releaseStoppedPhysicalCapacity;
+ x.store.releaseStoppedPhysicalCapacity=async input=>{const path=changed==='execution'?'reels_executions/'+x.id:changed==='stop'?'execution_stops/'+x.id:changed==='video'?'videos/Reel_001':'reels_controls/acquisition';const current=await x.store.get(path);await x.store.patch(path,{testVersionChanged:true},{updateTime:current.updateTime});return release(input);};
  assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.deepEqual((await x.store.get('reels_controls/acquisition')).data.active,[x.id]);
 });
 test('saved raw result survives publication response loss and is reconciled without provider replay',async()=>{let calls=0;const x=await setup('analysis',{analyze:async()=>{calls++;return {valid:true,changes:{analysis:{summary:'new'},analysis_key:'new',analysis_generation:'2',analysis_quality_status:'accepted'}};}});const patch=x.store.patch;let lost=true;x.store.patch=async(p,d,o)=>{const r=await patch(p,d,o);if(p==='videos/Reel_001'&&d.analysis&&lost){lost=false;throw Error('response lost');}return r;};assert.equal((await x.pipeline.run({executionId:x.id})).status,'applying');assert.equal((await x.pipeline.run({executionId:x.id})).status,'completed');assert.equal(calls,1);assert.equal((await x.store.get('reels_executions/'+x.id)).data.rawResult.changes.analysis.summary,'new');});

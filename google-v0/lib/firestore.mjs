@@ -174,12 +174,13 @@ export class Firestore {
     }finally{if(!finished)await rollback();}
   }
 
-  // Acquisition-only physical capacity recovery. Proof documents are verified,
+  // Stopped acquisition or synchronous-analysis physical capacity recovery.
+  // STT long-running operations are excluded. Proof documents are verified,
   // never rewritten; a changed claim, receipt, Reel or control rejects all writes.
-  async releaseStoppedAcquisitionCapacity({executionId,reelId,executionVersion,stopVersion,videoVersion,control,observedAt}){
-    if(!/^[a-f0-9]{64}$/.test(executionId??'')||!/^[A-Za-z0-9_-]{5,32}$/.test(reelId??'')||![executionVersion,stopVersion,videoVersion,control?.updateTime].every(v=>typeof v==='string'&&v)||!Array.isArray(control?.data.active)||!control.data.active.includes(executionId)||!Number.isFinite(Date.parse(observedAt)))throw Error('Prova de capacidade de aquisição inválida.');
+  async releaseStoppedPhysicalCapacity({executionId,reelId,stage,executionVersion,stopVersion,videoVersion,control,observedAt}){
+    if(!['acquisition','analysis'].includes(stage)||!/^[a-f0-9]{64}$/.test(executionId??'')||!/^[A-Za-z0-9_-]{5,32}$/.test(reelId??'')||![executionVersion,stopVersion,videoVersion,control?.updateTime].every(v=>typeof v==='string'&&v)||!Array.isArray(control?.data.active)||!control.data.active.includes(executionId)||!Number.isFinite(Date.parse(observedAt)))throw Error('Prova de capacidade física inválida.');
     const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
-    const expected=new Map([['reels_executions/'+executionId,executionVersion],['execution_stops/'+executionId,stopVersion],['videos/'+reelId,videoVersion],['reels_controls/acquisition',control.updateTime]]);
+    const expected=new Map([['reels_executions/'+executionId,executionVersion],['execution_stops/'+executionId,stopVersion],['videos/'+reelId,videoVersion],['reels_controls/'+stage,control.updateTime]]);
     const begin=await this.api.request(this.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
     if(typeof transaction!=='string'||!transaction)throw Error('Transação de capacidade ausente.');
     let finished=false;const rollback=async()=>{try{await this.api.request(this.root+':rollback',{method:'POST',json:{transaction}});}catch{}};
@@ -197,7 +198,7 @@ export class Firestore {
       }
       if(observed.size!==expected.size)throw Error('Leitura de capacidade incompleta.');
       if([...expected].some(([path,version])=>observed.get(path)!==version)){await rollback();finished=true;return {released:false};}
-      const write={update:{name:prefix+'reels_controls/acquisition',fields:encodeFields({active:control.data.active.filter(id=>id!==executionId),observedAt})},updateMask:{fieldPaths:['active','observedAt']},currentDocument:{updateTime:control.updateTime}};
+      const write={update:{name:prefix+'reels_controls/'+stage,fields:encodeFields({active:control.data.active.filter(id=>id!==executionId),observedAt})},updateMask:{fieldPaths:['active','observedAt']},currentDocument:{updateTime:control.updateTime}};
       let result;try{result=await this.metadataWrite(this.root+':commit',{method:'POST',json:{transaction,writes:[write]}});}catch(error){if(rejectedVersion(error))return {released:false};throw error;}
       if(result?.writeResults?.length!==1||!result.writeResults[0].updateTime)throw Error('Liberação de capacidade não confirmada; conferir sem repetir operação.');
       finished=true;return {released:true};

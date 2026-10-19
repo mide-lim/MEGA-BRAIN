@@ -92,10 +92,16 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
    },
    async transcribe(input){const {adapter,video}=await scoped(input);const result=await adapter.transcription({...input,video});return result.operation_name?{pending:true,operationName:result.operation_name,changes:result.changes??{}}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
    async pollTranscription(input){const {adapter,video}=await scoped(input);const result=await adapter.pollTranscription({...input,video});return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
-   async analyze(input){const {adapter,video}=await scoped(input);const result=await adapter.analysis({...input,video});const quality=knowledgeReadiness(result.changes?.analysis);
+   async analyze(input){const {adapter,job,video}=await scoped(input);let completed=false;
+    try{const result=await adapter.analysis({...input,video});const quality=knowledgeReadiness(result.changes?.analysis);
     const valid=result.changes?.analysis_quality_status==='accepted'&&quality.accepted&&result.qualityGate?.accepted===true&&result.qualityPublication?.policyVersion==='gate_v2';
     const changes={...result.changes};if(!valid&&changes.analysis&&result.qualityGate?.accepted!==false){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';changes.candidate_quality_receipt=result.qualityPublication?.qualityReceipt??changes.candidate_quality_receipt??null;}
-    return {changes,valid,quality:result.qualityGate?{...result.qualityGate,accepted:valid,state:valid?'supported':result.qualityGate.state==='invalid'?'invalid':'inconclusive',readiness:quality}:{accepted:false,state:'inconclusive',checks:[],gaps:[],readiness:quality},qualityPublication:valid?result.qualityPublication:null,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
+    completed=true;return {changes,valid,quality:result.qualityGate?{...result.qualityGate,accepted:valid,state:valid?'supported':result.qualityGate.state==='invalid'?'invalid':'inconclusive',readiness:quality}:{accepted:false,state:'inconclusive',checks:[],gaps:[],readiness:quality},qualityPublication:valid?result.qualityPublication:null,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
+    }finally{
+     // This finally is reached only after awaited adapter work has settled.
+     // A timeout does not establish whether the remote paid call completed.
+     if(!completed)await ensure(store,'execution_stops/'+job.id,{id:job.id,reelId:job.reelId,stage:'analysis',owner:job.owner,kind:'analysis_adapter_settled',scope:'local_adapter',remoteOutcome:'unknown',executorStoppedAt:new Date().toISOString()});
+    }
    }
   };
   const taxonomy=new ReelsTaxonomy({repository});

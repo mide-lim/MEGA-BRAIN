@@ -2,34 +2,28 @@
   "schema_version": 1,
   "id": "MEG-109",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "6375a34e03a3c95dac9e9950f48e607ae8c72a68",
-  "objective": "Make existing persisted Reel batches discoverable after reload, with bounded original-membership execution detail and existing admission recovery only.",
-  "risk": "high",
+  "base_commit": "1232b079da9feed128b178f22e7721b4048ab08a",
+  "objective": "Synchronize the synthetic admission recovery browser check before draining controls so an earlier pending receipt cannot be mistaken for the post-drain poll.",
+  "risk": "low",
   "acceptance_criteria": [
-    "Persisted batch list with bounded pagination, no full catalogue scan, reloadable operation URL and direct ID lookup.",
-    "Separate admission from Reel completion; projected execution reads scoped to original selected IDs, three deterministic stages, counts explicitly scoped to page. Preserve missing/uncertain and saved quality failures without retries or new queue controls.",
-    "Only existing resume_operation action for applicable pending admission. Honest guidance for saved quality recovery and physically paused stages.",
-    "Expired authenticated session clearly offers login. All tests and builds only GitHub Actions; independent review before root merge/deploy."
+    "Await the receipt GET triggered by recovery before pumping synthetic controls. No sleeps or blind retry.",
+    "Assert persisted completion after draining and retain the subsequent browser poll, accepted Reel IDs and visible progress assertions.",
+    "Change only the browser harness and task packet; no product, provider, queue or deployment changes. Tests run exclusively in GitHub Actions."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
-    "google-v0/lib/reels-batches.mjs",
-    "google-v0/lib/reels-api.mjs",
-    "google-v0/web-google/app/reels/batches.jsx",
-    "google-v0/web-google/app/reels/workspace.jsx",
-    "google-v0/web-google/app/reels/shared.jsx",
-    "google-v0/tests/reels-batches.test.mjs",
-    "google-v0/tests/reels-api.test.mjs",
-    "google-v0/qa/reels-browser-check.mjs"
+    "google-v0/qa/reels-operations-browser-check.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/reels-api.mjs",
-      "reason": "Existing authenticated read router and command contract",
+      "path": "google-v0/qa/reels-operations-browser-check.mjs",
+      "reason": "Failure at the post-drain response assertion and missing recovery-read barrier",
       "sections": [
-        "reelsAPI"
+        "recovery POST",
+        "pumpControls",
+        "post-drain receipt poll"
       ],
-      "max_chars": 12000
+      "max_chars": 6000
     }
   ],
   "validation_commands": [
@@ -46,7 +40,7 @@
   "review": {
     "mode": "independent_agent",
     "status": "pending",
-    "reason": "Independent review of bounded persisted batch reads, original selection membership, admission-only action and session expiry UI."
+    "reason": "Independent review of the explicit recovery-read synchronization barrier and retained assertions."
   },
   "native_coordination": {
     "executor": "codex-native",
@@ -56,9 +50,7 @@
       "Desenvolvedor",
       "Revisor"
     ],
-    "input_revision": 457,
-    "entry_revision": 457,
-    "scope": "Persisted batch discovery and bounded execution details; existing admission recovery only. No processing, providers, quality-worker changes, queue changes or IAM changes.",
+    "scope": "Synthetic browser harness synchronization only; no product changes or real operations.",
     "ci_authorization": "All tests/builds GitHub Actions only",
     "identity_record": "Private operational ledger; native execution identifiers are not included in public source."
   },

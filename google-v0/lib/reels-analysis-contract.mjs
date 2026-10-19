@@ -40,24 +40,28 @@ export function sourceAnchoredEvidenceContract(record,manifest){
  const body={version:sourceAnchorsVersion,sourceManifest:manifest,anchors,hasTimedTranscript:!!hasTimedTranscript};
  const hash=createHash('sha256').update(JSON.stringify(body)).digest('hex');
  const refs=anchors.map(v=>v.ref);
- const branches=anchoredSources.filter(source=>manifest[source]).map(source=>{
-  const id=manifest[source],properties={source:enumString([source]),sourceIdentity:{type:'OBJECT',required:Object.keys(id),properties:Object.fromEntries(Object.entries(id).map(([k,v])=>[k,enumString([v])]))},excerpt:{type:'STRING'}};
-  const required=['source','sourceIdentity','excerpt'];
-  if(source!=='caption'){properties.start_ref=enumString(refs);properties.end_ref=enumString(refs);if(source==='video')required.push('start_ref','end_ref');}
-  return {type:'OBJECT',required,properties};
- });
- if(!branches.length)throw Error('Fontes identificadas ausentes para evidências.');
- const evidence={type:'ARRAY',items:{anyOf:branches}};
+ const sources=anchoredSources.filter(source=>manifest[source]);
+ if(!sources.length)throw Error('Fontes identificadas ausentes para evidências.');
+ // Flat provider objects avoid multiplying every time enum by source branch.
+ // Source-dependent identities/ranges remain exact checks in the normalizer.
+ const evidenceFor=(kinds,{factual=false,contextual=false}={})=>{
+  if(!kinds.length)return {type:'ARRAY',maxItems:0,items:{type:'STRING'}};
+  const identityProperties={};
+  if(kinds.some(s=>s!=='caption')){identityProperties.key={type:'STRING'};identityProperties.generation={type:'STRING'};}
+  if(kinds.includes('caption'))identityProperties.captureId={type:'STRING'};
+  const identity={type:'OBJECT',properties:identityProperties};
+  if(kinds.every(s=>s==='caption'))identity.required=['captureId'];
+  else if(kinds.every(s=>s!=='caption'))identity.required=['key','generation'];
+  const sourceKey=contextual?'sourceKind':'source',properties={[sourceKey]:enumString(kinds),sourceIdentity:contextual?{type:'STRING'}:identity,excerpt:{type:'STRING'}},required=[sourceKey,'sourceIdentity','excerpt'];
+  if(kinds.some(s=>s!=='caption')){properties.start_ref=enumString(refs);properties.end_ref=enumString(refs);if(kinds.every(s=>s!=='caption'&&(factual||s==='video')))required.push('start_ref','end_ref');}
+  if(contextual){properties.id={type:'STRING'};properties.verificationLevel=enumString(['source_present','literal_anchor_verified','semantic_support_reviewed','visual_support_independently_verified']);required.push('id','verificationLevel');}
+  return {type:'ARRAY',items:{type:'OBJECT',required,properties}};
+ };
+ const evidence=evidenceFor(sources);
  // Fact fields already require bounded times in the stored report contract.
  // Untimed transcript citations remain available only for narrative/context.
- const factualBranches=branches.filter(b=>b.properties.source.enum[0]!=='transcript'||hasTimedTranscript).map(b=>{
-  const branch=structuredClone(b);if(branch.properties.source.enum[0]==='transcript')branch.required.push('start_ref','end_ref');return branch;
- });
- const factualEvidence=factualBranches.length?{type:'ARRAY',items:{anyOf:factualBranches}}:{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
- const contextual={type:'ARRAY',items:{anyOf:branches.map(branch=>{
-  const source=branch.properties.source.enum[0],identity=manifest[source],{source:ignored,sourceIdentity:ignoredIdentity,...remaining}=branch.properties;
-  return {type:'OBJECT',required:['id','sourceKind','sourceIdentity','excerpt','verificationLevel',...(source==='video'?['start_ref','end_ref']:[])],properties:{id:{type:'STRING'},sourceKind:enumString([source]),sourceIdentity:enumString([source==='caption'?identity.captureId:identity.key+'@'+identity.generation]),...remaining,verificationLevel:enumString(['source_present','literal_anchor_verified','semantic_support_reviewed','visual_support_independently_verified'])}};
- })}};
+ const factualEvidence=evidenceFor(sources.filter(s=>s!=='transcript'||hasTimedTranscript),{factual:true});
+ const contextual=evidenceFor(sources,{contextual:true});
  return {version:sourceAnchorsVersion,hash,anchors,evidence,factualEvidence,hasTimedTranscript:!!hasTimedTranscript,contextual,manifest};
 }
 

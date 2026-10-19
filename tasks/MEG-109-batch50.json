@@ -3,77 +3,52 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "92e3d458161b99ca30b8501cd6589f6ddc4f750d",
-  "objective": "Repair original100-Reel operation: release only proven-stopped acquisition physical capacity; bound generated evidence times/source identities; preserve published/saved/uncertain and no blind retries. Same coherent flow correction, tests/build only GitHub Actions. Also apply the same separation to synchronous-analysis local adapter failure: local occupancy ends after awaited closure; unknown remote paid outcome and claim remain preserved.",
+  "base_commit": "54b70d22405d62835810a60b7df8d02f36e6a36c",
+  "objective": "Correct the current100-Reel Google analysis request rejection: preserve bounded sanitized provider diagnostics, flatten repeated source schema branches, and prove real provider acceptance without blind retry or new cohort.",
   "risk": "high",
   "acceptance_criteria": [
-    "Stopped acquisition proof binds exact execution, owner, Reel, stage and time; atomic source/control version checks release only technical capacity on failure, redelivery or next queued item. No proof/paid stages/superseded owners retain slots. No financial/status/provider change. Synchronous analysis errors may release only physical local-worker occupancy with an intrinsic owner-bound awaited-adapter stop receipt. Remote Gemini outcome remains unknown, same execution is never resubmitted, and STT LRO stays occupied.",
-    "Gate-v2 request has finite source-specific identities and finite source time references; caption evidence has no time; normalization rejects changed source/hash or invalid refs and preserves old saved response semantics. Token cap and semantic/visual support gates remain unchanged.",
-    "Closed repair publication retains queued deliveries only in PAUSED stage queues, never purges/resumes them; nonempty legacy or running stage queues still rejected.",
-    "GitHub Actions regressions and existing integration/build required; fresh independent review of exact head; real same100-operation/web verification after publication. No new cohort, scaling, IAM, deletes or blind paid repeats.",
-    "Safe downloader diagnostic uses a dependency-free shared sanitizer; importing web pipeline never loads download subprocess/path resolution. Existing media-tools sanitizer export remains compatible."
+    "Google GenerateContent400 diagnosis survives REST -> pipeline -> private saved execution/video through an explicit sanitized allowlist. Public detail preserves its existing sanitized summary and does not expose provider/google diagnostic fields. No raw error/request/body/header/token leakage; prior publications and finances unchanged.",
+    "Flatten wire evidence schema only. Source identities, anchor/hash generation, finite time refs, existing normalizer, factual source/timing validation, legacy response compatibility and publication quality gates remain unchanged. No claim that complexity is the specific400cause without actual provider proof.",
+    "GitHub Actions only: negative source/time/hash cases and diagnostic persistence/no duplicate submit, full existing builds/integration/entrypoint checks. Independent review exact head; real same100 Google response/production-web acceptance still required.",
+    "No new cohort, capacity/IAM changes, deletes or identical paid retry. Existing100-only processing authorization applies; any analysis-only pause remains pending direct owner answer after automatic-review rejection."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
+    "google-v0/lib/google-rest.mjs",
     "google-v0/lib/reels-pipeline.mjs",
-    "google-v0/lib/firestore.mjs",
+    "google-v0/tests/google-rest.test.mjs",
     "google-v0/tests/reels-pipeline.test.mjs",
-    "google-v0/tests/reels-firestore.test.mjs",
     "google-v0/lib/analysis.mjs",
     "google-v0/lib/reels-analysis-contract.mjs",
-    "google-v0/tests/analysis.test.mjs",
-    "ops/deploy-reels-services.py",
-    "ops/test_deploy_reels_services.py",
-    "google-v0/lib/download-diagnostic.mjs",
-    "google-v0/lib/media-tools.mjs",
-    "google-v0/Dockerfile.worker",
-    "google-v0/lib/reels-google-runtime.mjs",
-    "google-v0/tests/reels-google-runtime.test.mjs"
+    "google-v0/tests/analysis.test.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/reels-pipeline.mjs",
-      "reason": "Physical slot/failure/duplicate path",
+      "path": "google-v0/lib/google-rest.mjs",
+      "reason": "Existing sanitized transport diagnostic boundary",
       "sections": [
-        "capacity",
-        "failure",
-        "run"
-      ],
-      "max_chars": 3500
-    },
-    {
-      "path": "google-v0/lib/firestore.mjs",
-      "reason": "Bound multi-version atomic capacity release",
-      "sections": [
-        "releaseStoppedAcquisitionCapacity"
-      ],
-      "max_chars": 2000
-    },
-    {
-      "path": "google-v0/lib/analysis.mjs",
-      "reason": "Provider request and saved normalization boundary",
-      "sections": [
-        "buildAnalysisRequest",
-        "analysisOutcome"
+        "providerDiagnostic",
+        "safeAnalysisFailureDiagnostic"
       ],
       "max_chars": 3000
     },
     {
-      "path": "google-v0/lib/reels-analysis-contract.mjs",
-      "reason": "Finite evidence transport",
+      "path": "google-v0/lib/reels-pipeline.mjs",
+      "reason": "Persist selected diagnosis without reclassifying results or finance",
       "sections": [
-        "sourceAnchoredEvidenceContract",
-        "normalizeSourceAnchoredReport"
+        "diagnosticFor",
+        "failure"
       ],
       "max_chars": 2000
     },
     {
-      "path": "ops/deploy-reels-services.py",
-      "reason": "Preserve pending deliveries for closed repair rollout",
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Reduce wire grammar only, unchanged authoritative normalization",
       "sections": [
-        "Google.queues"
+        "sourceAnchoredEvidenceContract",
+        "normalizeSourceAnchoredReport"
       ],
-      "max_chars": 1500
+      "max_chars": 3500
     }
   ],
   "validation_commands": [
@@ -86,16 +61,16 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Legacy launcher compatibility fields; actual persistent user-authorized native role runs recorded canonical416, no launcher execution."
+    "note": "Legacy launcher compatibility only; current native execution identities recorded in canonical426; no launcher/background agent."
   },
   "review": {
     "mode": "independent_agent",
     "status": "pending",
-    "reason": "Verify exact bounded capacity, source-transport and paused-delivery correction; no gate relaxation or changed provider authority."
+    "reason": "Verify exact7source/testfiles plus task packet; CI and actual Google acceptance are distinct."
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 419,
+    "canonical_revision": 426,
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
     "authorized_by": "Current human correction request and persistent native coordination instructions",

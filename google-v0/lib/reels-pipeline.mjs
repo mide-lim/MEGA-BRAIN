@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {safeDownloadDiagnostic} from './download-diagnostic.mjs';
+import {safeAnalysisFailureDiagnostic} from './google-rest.mjs';
 import {qualityPublicationRevision,qualitySourceStateHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
@@ -7,7 +8,7 @@ export const STAGES=['acquisition','transcription','analysis'];
 export const executionId=(operationId,reelId,stage)=>hash({operationId,reelId,stage});
 const workerFor=stage=>STAGES.includes(stage)?'reels-'+stage:null;
 const publicationTags=analysis=>{const result=[],seen=new Set();for(const value of Array.isArray(analysis?.knowledge?.keywords)?analysis.knowledge.keywords:[]){const term=typeof value==='string'?value:value?.term;if(typeof term!=='string'||!term.trim()||term.trim().length>120)continue;const text=term.trim(),key=text.normalize('NFKC').toLocaleLowerCase('pt-BR');if(seen.has(key))continue;seen.add(key);result.push(text);if(result.length===100)break;}return result;};
-const diagnosticFor=(job,status,error)=>({...safeError(error),...(job.stage==='acquisition'&&error?.download_diagnostic&&typeof error.download_diagnostic==='object'?{download_diagnostic:safeDownloadDiagnostic(error.download_diagnostic)}:{}),stage:job.stage,worker:job.worker??workerFor(job.stage),destination:status==='uncertain'?'reconcile':'retry',uncertain:status==='uncertain',retryable:status==='failed'});
+const diagnosticFor=(job,status,error)=>({...safeError(error),...(job.stage==='acquisition'&&error?.download_diagnostic&&typeof error.download_diagnostic==='object'?{download_diagnostic:safeDownloadDiagnostic(error.download_diagnostic)}:{}),...(job.stage==='analysis'?safeAnalysisFailureDiagnostic(error):{}),stage:job.stage,worker:job.worker??workerFor(job.stage),destination:status==='uncertain'?'reconcile':'retry',uncertain:status==='uncertain',retryable:status==='failed'});
 export class ReelsPipeline {
  constructor({repository,store=repository.store,operations,processingEnabled=false,clock=Date.now,effectiveCapacity={acquisition:1,transcription:1,analysis:1},onQueued,onPublished,claimTimeoutMs=900000,requiredQualityPolicyVersion=null}){if(!Number.isInteger(claimTimeoutMs)||claimTimeoutMs<60000||claimTimeoutMs>3600000)throw Error('Prazo de claim inválido.');Object.assign(this,{repository,store,operations,clock,effectiveCapacity,onQueued,onPublished,claimTimeoutMs,requiredQualityPolicyVersion});this.processingEnabled=processingEnabled===true;}
  async capacity(job,{collect=false}={}){

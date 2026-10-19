@@ -59,10 +59,11 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
    schema.properties.knowledge.properties.keywords.items.properties.evidence=structuredClone(anchors.factualEvidence);
    schema.properties.contextualSignals.properties.evidence=anchors.contextual;
    if(taxonomySignalsEnabled){
-    const transcript=(anchors.factualEvidence.items.anyOf??[]).filter(branch=>branch.properties.source.enum[0]==='transcript');
+    const transcript=anchors.factualEvidence.items.properties?.source.enum.includes('transcript');
     const units=schema.properties.taxonomySignals.properties.units;
-    units.items.properties.evidence=transcript.length?{type:'ARRAY',items:{anyOf:transcript}}:{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
-    if(!transcript.length)units.maxItems=0;
+    units.items.properties.evidence=transcript?structuredClone(anchors.factualEvidence):{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
+    if(transcript){const item=units.items.properties.evidence.items;item.properties.source.enum=['transcript'];item.properties.sourceIdentity={type:'OBJECT',required:['key','generation'],properties:{key:{type:'STRING'},generation:{type:'STRING'}}};item.required=[...new Set([...item.required,'start_ref','end_ref'])];}
+    else units.maxItems=0;
    }
    if(contextCatalogSnapshot!==null&&(typeof contextCatalogSnapshot!=='object'||Array.isArray(contextCatalogSnapshot)||JSON.stringify(contextCatalogSnapshot).length>30000))throw Error('Catálogo contextual fora do limite.');
   }

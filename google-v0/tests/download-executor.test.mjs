@@ -243,10 +243,19 @@ test('selector initialization failures kill and reap the already-started child',
       ].join('\n');
       await writeFile(join(folder,'download-supervisor.py'),injected);
       const forks=failurePoint==='second_registration'?'if os.fork(): os._exit(1)\nos.setsid()\nif os.fork(): os._exit(0)\n':'';
-      const childScript='import os,time\n'+forks+'open('+JSON.stringify(pidFile)+',"w").write(str(os.getpid()))\nwhile not os.path.exists('+JSON.stringify(gate)+'): time.sleep(.01)';
+      // Existence must mean the complete PID is visible to both readiness readers.
+      const childScript=[
+        'import os,time',
+        forks,
+        'with open('+JSON.stringify(pidFile+'.tmp')+',"w") as stream:',
+        ' stream.write(str(os.getpid()))',
+        'os.replace('+JSON.stringify(pidFile+'.tmp')+','+JSON.stringify(pidFile)+')',
+        'while not os.path.exists('+JSON.stringify(gate)+'): time.sleep(.01)',
+      ].join('\n');
       const pending=failure(execute('python3',['-c',childScript],{timeout:3000}));
       setPending(pending);
       const pid=Number(await untilFile(pidFile));
+      assert.ok(Number.isSafeInteger(pid)&&pid>1,failurePoint+' requires a complete child PID');
       const error=await pending;
       assert.equal(error.code,'ERR_DOWNLOAD_SUPERVISOR',failurePoint);
       assert.equal(proved(error),false,failurePoint);

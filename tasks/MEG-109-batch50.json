@@ -3,7 +3,7 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "4ab08c51e2d36222443b3194c54c851d9e020b09",
+  "base_commit": "65c81af9d37afa668452a0fbcb13f60d5ee0e737",
   "objective": "Repair the same original100 analysis quality integration: consume genuine independent source reviews, preserve required references and negative verdicts, and recover an already saved rejected candidate without another provider call.",
   "risk": "high",
   "acceptance_criteria": [
@@ -12,7 +12,8 @@
     "Recovery is limited to failed QUALITY_VALIDATION_FAILED with a proved original saved result, exact current ownership and no live operation/active slot for that execution. Preserve original rawResult/resultEvidence/finance and immutable candidate/receipt; save the reviewed derivative by hash and use transactional version checks plus existing publication CAS and idempotency.",
     "Current successful projections clear rejected-candidate/error markers while the original failure and proof remain in an immutable reconciliation receipt. No new cohort, provider call, scale, queue/control mutation or IAM change.",
     "All regression tests and builds run exclusively in GitHub Actions with synthetic fixtures and provider ports forbidden; independent review of the final exact commit before integration/publication. Real private source approval is sealed/imported by the authenticated analysis service as the actual operational action after deploy, with analysis paused. Future original100 candidates without genuine independent support remain explicitly inconclusive and use the same generic import/recovery path.",
-    "Authenticated import checks the same final knowledgeReadiness used by the analysis runtime before creating any review or selection. Evidence-gate acceptance alone is insufficient; unexplained technical gaps remain rejected without an immutable selection."
+    "Authenticated import checks the same final knowledgeReadiness used by the analysis runtime before creating any review or selection. Evidence-gate acceptance alone is insufficient; unexplained technical gaps remain rejected without an immutable selection.",
+    "The selector-initialization failure fixture publishes the complete child PID atomically after closing a temporary file in the same directory and requires a safe integer PID greater than 1. Preserve all three failure points, detached double-fork coverage, the exact ESRCH and no_children assertions, and the unchanged production supervisor/executor. This fixes a statically demonstrated readiness race; the failed main CI did not record PID 0. Verify only in GitHub Actions as a direct dependency of this same delivery."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
@@ -33,7 +34,8 @@
     "google-v0/tests/firestore.test.mjs",
     "google-v0/lib/reels-quality-semantic-policy.mjs",
     "google-v0/Dockerfile.worker",
-    "google-v0/qa/reels-browser-check.mjs"
+    "google-v0/qa/reels-browser-check.mjs",
+    "google-v0/tests/download-executor.test.mjs"
   ],
   "context": [
     {

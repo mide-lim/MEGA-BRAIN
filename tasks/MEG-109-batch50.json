@@ -1,79 +1,39 @@
 {
   "schema_version": 1,
   "id": "MEG-109",
-  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "65c81af9d37afa668452a0fbcb13f60d5ee0e737",
-  "objective": "Repair the same original100 analysis quality integration: consume genuine independent source reviews, preserve required references and negative verdicts, and recover an already saved rejected candidate without another provider call.",
+  "base_commit": "6375a34e03a3c95dac9e9950f48e607ae8c72a68",
+  "objective": "Make existing persisted Reel batches discoverable after reload, with bounded original-membership execution detail and existing admission recovery only.",
   "risk": "high",
   "acceptance_criteria": [
-    "Server-owned immutable review envelopes bind original raw and candidate generations, execution/Reel, original and reviewed report hashes, exact source manifest, independent reviewer identity, method/date, field verdicts and reviewed artifacts. Model-owned review claims never authorize publication.",
-    "All nonempty claims and visual observations require their own valid source references; missing/foreign/invalid refs cannot be rescued by a review. Negative or conflicting exact reviews take precedence over lexical/typed apparent support. Translation, paraphrase and typed roles may pass only with genuine independent support.",
-    "Recovery is limited to failed QUALITY_VALIDATION_FAILED with a proved original saved result, exact current ownership and no live operation/active slot for that execution. Preserve original rawResult/resultEvidence/finance and immutable candidate/receipt; save the reviewed derivative by hash and use transactional version checks plus existing publication CAS and idempotency.",
-    "Current successful projections clear rejected-candidate/error markers while the original failure and proof remain in an immutable reconciliation receipt. No new cohort, provider call, scale, queue/control mutation or IAM change.",
-    "All regression tests and builds run exclusively in GitHub Actions with synthetic fixtures and provider ports forbidden; independent review of the final exact commit before integration/publication. Real private source approval is sealed/imported by the authenticated analysis service as the actual operational action after deploy, with analysis paused. Future original100 candidates without genuine independent support remain explicitly inconclusive and use the same generic import/recovery path.",
-    "Authenticated import checks the same final knowledgeReadiness used by the analysis runtime before creating any review or selection. Evidence-gate acceptance alone is insufficient; unexplained technical gaps remain rejected without an immutable selection.",
-    "The selector-initialization failure fixture publishes the complete child PID atomically after closing a temporary file in the same directory and requires a safe integer PID greater than 1. Preserve all three failure points, detached double-fork coverage, the exact ESRCH and no_children assertions, and the unchanged production supervisor/executor. This fixes a statically demonstrated readiness race; the failed main CI did not record PID 0. Verify only in GitHub Actions as a direct dependency of this same delivery."
+    "Persisted batch list with bounded pagination, no full catalogue scan, reloadable operation URL and direct ID lookup.",
+    "Separate admission from Reel completion; projected execution reads scoped to original selected IDs, three deterministic stages, counts explicitly scoped to page. Preserve missing/uncertain and saved quality failures without retries or new queue controls.",
+    "Only existing resume_operation action for applicable pending admission. Honest guidance for saved quality recovery and physically paused stages.",
+    "Expired authenticated session clearly offers login. All tests and builds only GitHub Actions; independent review before root merge/deploy."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
-    "google-v0/lib/google-operations.mjs",
-    "google-v0/lib/reels-quality-gate.mjs",
-    "google-v0/lib/reels-quality-review.mjs",
-    "google-v0/lib/reels-google-runtime.mjs",
-    "google-v0/lib/reels-analysis-contract.mjs",
-    "google-v0/lib/analysis.mjs",
-    "google-v0/lib/reels-pipeline.mjs",
-    "google-v0/tests/google-operations.test.mjs",
-    "google-v0/tests/reels-quality-gate.test.mjs",
-    "google-v0/tests/reels-quality-review.test.mjs",
-    "google-v0/tests/reels-google-runtime.test.mjs",
-    "google-v0/tests/analysis.test.mjs",
-    "google-v0/tests/reels-pipeline.test.mjs",
-    "google-v0/lib/firestore.mjs",
-    "google-v0/tests/firestore.test.mjs",
-    "google-v0/lib/reels-quality-semantic-policy.mjs",
-    "google-v0/Dockerfile.worker",
-    "google-v0/qa/reels-browser-check.mjs",
-    "google-v0/tests/download-executor.test.mjs"
+    "google-v0/lib/reels-batches.mjs",
+    "google-v0/lib/reels-api.mjs",
+    "google-v0/web-google/app/reels/batches.jsx",
+    "google-v0/web-google/app/reels/workspace.jsx",
+    "google-v0/web-google/app/reels/shared.jsx",
+    "google-v0/tests/reels-batches.test.mjs",
+    "google-v0/tests/reels-api.test.mjs",
+    "google-v0/qa/reels-browser-check.mjs"
   ],
   "context": [
     {
-      "path": "google-v0/lib/google-operations.mjs",
-      "reason": "Quality context, immutable candidate persistence and saved raw restoration",
+      "path": "google-v0/lib/reels-api.mjs",
+      "reason": "Existing authenticated read router and command contract",
       "sections": [
-        "qualityContext",
-        "qualityChanges",
-        "restoreAnalysisResult"
+        "reelsAPI"
       ],
-      "max_chars": 4000
-    },
-    {
-      "path": "google-v0/lib/reels-quality-gate.mjs",
-      "reason": "Exact source references, independent verdict precedence and durable publication receipt",
-      "sections": [
-        "verifiedReview",
-        "evaluateClaim",
-        "prepareQualityCandidateV2"
-      ],
-      "max_chars": 4000
-    },
-    {
-      "path": "google-v0/lib/reels-pipeline.mjs",
-      "reason": "Saved result proof, terminal failed recovery and CAS publication",
-      "sections": [
-        "recover",
-        "apply",
-        "rejectCandidate"
-      ],
-      "max_chars": 4000
+      "max_chars": 12000
     }
   ],
   "validation_commands": [
-    "GitHub Actions only: node --test tests/*.test.mjs, including synthetic independent-source import, actual runtime recovery, byte integrity, multi-frame coverage, negative verdicts and transactional publication fences; all provider ports forbidden.",
-    "GitHub Actions only: existing deployment/image/entrypoint gates and repository packet/link validation. Independent exact-commit review before deployment.",
-    "After approved deployment: authenticated real source-review import and separate CAS recovery from private persisted evidence, without new inference or queue/control changes. This is the authorized production action, not a VPS test or rehearsal.",
-    "GitHub Actions only: existing worker packaging and image smokes include the new review module; real Workspace/API browser QA anchors its fixed cache clock to the synthetic source timestamp so financial date filters retain the fixture."
+    "GitHub Actions only: existing google-v0 unit suites, frontend build/browser QA and task packet checks."
   ],
   "execution_budget": {
     "worker_runs": 1,
@@ -81,37 +41,32 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Legacy launcher compatibility only; actual codex-native developer and independent reviewer below, input revision437/current442. No launcher/background model; same coherent correction through acceptance."
+    "note": "Legacy launcher compatibility only. Native roles and private execution identities are recorded in the operational ledger; no scheduler or background model."
   },
   "review": {
     "mode": "independent_agent",
     "status": "pending",
-    "reason": "Strict quality authority and proof-bound recovery of an already saved candidate; independent source and exact-code review required."
+    "reason": "Independent review of bounded persisted batch reads, original selection membership, admission-only action and session expiry UI."
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 442,
-    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
-    "authorized_by": "Current human correction request and persistent native coordination instructions",
-    "processing": "Original100 only; recover existing saved response without any paid redo",
+    "roles": [
+      "Orquestrador",
+      "Desenvolvedor",
+      "Revisor"
+    ],
+    "input_revision": 457,
+    "entry_revision": 457,
+    "scope": "Persisted batch discovery and bounded execution details; existing admission recovery only. No processing, providers, quality-worker changes, queue changes or IAM changes.",
     "ci_authorization": "All tests/builds GitHub Actions only",
-    "max_concurrent_slots": 4,
-    "real_deletion": false,
-    "input_revision": 437,
-    "developer": "/root/desenvolvedor_qualidade",
-    "reviewer": "/root/revisor_qualidade",
-    "developer_native_thread_id": "01a15251-b310-701a-a4d9-a6a7938f6006",
-    "developer_native_session_id": "01a1524c-80d3-7307-a7dd-658037612038",
-    "reviewer_native_thread_id": "01a15252-3103-759a-8229-973bfbac3022",
-    "reviewer_native_session_id": "01a1524c-80d3-7307-a7dd-658037612038",
-    "entry_revision": 437
+    "identity_record": "Private operational ledger; native execution identifiers are not included in public source."
   },
   "replay_privacy": {
     "repository_visibility": "public",
     "real_source_transport_to_ci": false,
-    "ci_scope": "synthetic fixtures, complete regressions and builds only",
-    "actual_source_action": "Authenticated create-only package import and separate recovery in the existing analysis service after approved deploy; private GCS bytes remain private; analysis stays paused.",
-    "status": "resolved_using_authenticated_operational_import"
-  }
+    "ci_scope": "Synthetic fixtures only; no original batch IDs, private review artifacts or production payloads.",
+    "actual_source_action": "None in this code change."
+  },
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871"
 }

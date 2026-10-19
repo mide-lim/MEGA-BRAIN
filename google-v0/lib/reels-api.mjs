@@ -1,3 +1,4 @@
+import {ReelsBatches} from './reels-batches.mjs';
 import {ReelsSemanticDomains} from './reels-semantic-domain-service.mjs';
 import {ReelsSemanticCurator} from './reels-semantic-curator.mjs';
 import {ReelsCatalogueRuntime,catalogueManifestActive,catalogueManifestPath} from './reels-contextual-catalogue-runtime.mjs';
@@ -48,6 +49,8 @@ export function reelsAPI({repository,authorize,sameOrigin,processingEnabled=fals
     if(path==='summary')return response({...await repository.summary(),...controls});
     if(path==='items')return response(await repository.list(q));
     if(parts[0]==='items'&&parts.length===2){const item=await repository.detail(decodeURIComponent(parts[1]));if(!item)throw fail('NOT_FOUND','Reel não encontrado.',404);return response({item});}
+    if(path==='batches')return response(await new ReelsBatches({store:repository.store,clock}).list(q));
+    if(parts[0]==='batches'&&parts.length===2)return response(await new ReelsBatches({store:repository.store,clock}).detail(decodeURIComponent(parts[1]),q));
     if(path==='queues')return response({...await repository.queues(),...controls});
      if(path==='curation/catalogue')return response(await getCatalogue().overview());
      if(path==='curation/calibration')return response(await getCalibration().overview());

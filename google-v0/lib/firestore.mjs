@@ -174,6 +174,37 @@ export class Firestore {
     }finally{if(!finished)await rollback();}
   }
 
+  // Stopped acquisition or synchronous-analysis physical capacity recovery.
+  // STT long-running operations are excluded. Proof documents are verified,
+  // never rewritten; a changed claim, receipt, Reel or control rejects all writes.
+  async releaseStoppedPhysicalCapacity({executionId,reelId,stage,executionVersion,stopVersion,videoVersion,control,observedAt}){
+    if(!['acquisition','analysis'].includes(stage)||!/^[a-f0-9]{64}$/.test(executionId??'')||!/^[A-Za-z0-9_-]{5,32}$/.test(reelId??'')||![executionVersion,stopVersion,videoVersion,control?.updateTime].every(v=>typeof v==='string'&&v)||!Array.isArray(control?.data.active)||!control.data.active.includes(executionId)||!Number.isFinite(Date.parse(observedAt)))throw Error('Prova de capacidade física inválida.');
+    const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
+    const expected=new Map([['reels_executions/'+executionId,executionVersion],['execution_stops/'+executionId,stopVersion],['videos/'+reelId,videoVersion],['reels_controls/'+stage,control.updateTime]]);
+    const begin=await this.api.request(this.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
+    if(typeof transaction!=='string'||!transaction)throw Error('Transação de capacidade ausente.');
+    let finished=false;const rollback=async()=>{try{await this.api.request(this.root+':rollback',{method:'POST',json:{transaction}});}catch{}};
+    try{
+      const rows=await this.api.request(this.root+':batchGet',{method:'POST',json:{transaction,documents:[...expected.keys()].map(path=>prefix+documentPath(path)),mask:{fieldPaths:['id']}}});
+      if(!Array.isArray(rows))throw Error('Leitura de capacidade incompleta.');
+      const observed=new Map();
+      for(const row of rows){
+        if(!row.found&&!row.missing)continue;
+        const name=row.found?.name??row.missing;
+        if(typeof name!=='string'||!name.startsWith(prefix)||row.found&&row.missing)throw Error('Prova de capacidade fora do projeto.');
+        const path=documentPath(name.slice(prefix.length));
+        if(!expected.has(path)||observed.has(path)||row.found&&typeof row.found.updateTime!=='string')throw Error('Prova de capacidade inesperada.');
+        observed.set(path,row.found?row.found.updateTime:null);
+      }
+      if(observed.size!==expected.size)throw Error('Leitura de capacidade incompleta.');
+      if([...expected].some(([path,version])=>observed.get(path)!==version)){await rollback();finished=true;return {released:false};}
+      const write={update:{name:prefix+'reels_controls/'+stage,fields:encodeFields({active:control.data.active.filter(id=>id!==executionId),observedAt})},updateMask:{fieldPaths:['active','observedAt']},currentDocument:{updateTime:control.updateTime}};
+      let result;try{result=await this.metadataWrite(this.root+':commit',{method:'POST',json:{transaction,writes:[write]}});}catch(error){if(rejectedVersion(error))return {released:false};throw error;}
+      if(result?.writeResults?.length!==1||!result.writeResults[0].updateTime)throw Error('Liberação de capacidade não confirmada; conferir sem repetir operação.');
+      finished=true;return {released:true};
+    }finally{if(!finished)await rollback();}
+  }
+
   async commit(writes){
     if(!Array.isArray(writes)||!writes.length||writes.length>450)throw Error('Commit inválido.');
     const prefix=`projects/${this.api.project}/databases/(default)/documents/`;
@@ -234,4 +265,3 @@ export async function mutateDocument(store,path,calculate,{sleep=ms=>new Promise
   }
  }
 }
-

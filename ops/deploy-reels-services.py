@@ -54,7 +54,10 @@ class Google(existing.Google):
             result[stage] = {field: raw.get(field) for field in ('name', 'state', 'rateLimits', 'retryConfig', 'httpTarget', 'appEngineRoutingOverride', 'purgeTime')}
             tasks = self.request('GET', url + '/tasks?pageSize=1&responseView=BASIC&fields=tasks(name),nextPageToken')
             if tasks.get('tasks') or tasks.get('nextPageToken'):
-                raise DeploymentError('Closed publication requires empty queues')
+                # A paused stage retains pending deliveries during a repair release.
+                # The closed revision cannot process them; never purge or resume here.
+                if stage not in STAGES or raw.get('state') != 'PAUSED':
+                    raise DeploymentError('Pending deliveries require a paused stage queue')
         if result['processing']['state'] != 'PAUSED':
             raise DeploymentError('Legacy processing queue must remain paused')
         return result

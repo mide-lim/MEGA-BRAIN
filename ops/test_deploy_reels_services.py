@@ -198,8 +198,8 @@ class ConfigurationContracts(OfflineCase):
 
 
 class QueueAndPatchContracts(OfflineCase):
-    def queue_api(self, mutate=None, tasks=None):
-        api = deployment.Google(deployment.expanded_config(CONFIG), 'synthetic')
+    def queue_api(self, mutate=None, tasks=None, selection='web_stages'):
+        api = deployment.Google(deployment.expanded_config(CONFIG), 'synthetic', services=selection)
         def request(method, url, body=None):
             self.assertEqual(method, 'GET')
             self.assertIsNone(body)
@@ -242,6 +242,27 @@ class QueueAndPatchContracts(OfflineCase):
             actual = api.queues()
         self.assertEqual(actual['processing']['state'], 'PAUSED')
         self.assertTrue(all(actual[stage]['state'] == 'RUNNING' for stage in deployment.STAGES))
+
+    def test_analysis_only_preserves_running_acquisition_and_stt_with_pending_deliveries(self):
+        tasks = {stage: {'tasks': [{'name': 'synthetic-task'}], 'nextPageToken': 'synthetic-next'} for stage in deployment.STAGES}
+        api, fake = self.queue_api(selection='analysis', tasks=tasks,
+                                   mutate=lambda stage, value: value.update(state='RUNNING') if stage in ('acquisition', 'transcription') else None)
+        with patch.object(api, 'request', side_effect=fake) as calls:
+            actual = api.queues()
+        self.assertEqual(actual['analysis']['state'], 'PAUSED')
+        self.assertEqual(actual['processing']['state'], 'PAUSED')
+        self.assertTrue(all(actual[stage]['state'] == 'RUNNING' for stage in ('acquisition', 'transcription')))
+        self.assertTrue(all(call.args[0] == 'GET' for call in calls.call_args_list))
+
+    def test_analysis_only_requires_paused_analysis_even_without_tasks(self):
+        api, fake = self.queue_api(selection='analysis', mutate=lambda stage, value: value.update(state='RUNNING') if stage == 'analysis' else None)
+        with patch.object(api, 'request', side_effect=fake), self.assertRaisesRegex(deployment.DeploymentError, 'paused analysis'):
+            api.queues()
+
+    def test_analysis_only_still_rejects_pending_legacy_processing(self):
+        api, fake = self.queue_api(selection='analysis', tasks={'processing': {'tasks': [{'name': 'synthetic-task'}]}})
+        with patch.object(api, 'request', side_effect=fake), self.assertRaises(deployment.DeploymentError):
+            api.queues()
 
     def test_legacy_running_or_stage_unknown_state_is_rejected(self):
         for kind, state in [('processing', 'RUNNING'), ('acquisition', 'DISABLED'), ('transcription', None), ('analysis', 'STATE_UNSPECIFIED')]:
@@ -314,11 +335,69 @@ class ReleaseContracts(OfflineCase):
         with patch.object(deployment, 'Google', return_value=api), patch.object(deployment.existing, 'publish', return_value=images()) as publish, patch.object(deployment, 'rollout', return_value=original) as rollout:
             result = deployment.run('deploy', CONFIG, COMMIT, deployment.baseline_digest(original, queues()), 'synthetic')
         publish.assert_called_once_with(CONFIG, 'synthetic', COMMIT, services='all')
-        rollout.assert_called_once_with(api, CONFIG, original, images(), queues())
+        rollout.assert_called_once_with(api, CONFIG, original, images(), queues(), services='web_stages')
         self.assertTrue(result['legacy_worker_preserved'])
         self.assertTrue(result['queues_preserved'])
         self.assertEqual(set(result['target_revisions']), set(deployment.TARGETS))
         self.assertNotIn('worker', [k for k, _, _ in api.calls])
+
+    def test_analysis_only_review_validates_only_analysis_and_keeps_all_other_services_untouched(self):
+        original, api = services(), FakeGoogle()
+        for stage in ('acquisition', 'transcription'):
+            api.queue_values[stage]['state'] = 'RUNNING'
+        baseline = deployment.baseline_digest(original, api.queue_values)
+        with patch.object(deployment, 'Google', return_value=api) as google, patch.object(deployment.existing, 'publish') as publish:
+            result = deployment.run('review', CONFIG, COMMIT, baseline, 'synthetic', services='analysis')
+        google.assert_called_once_with(deployment.expanded_config(CONFIG), 'synthetic', services='analysis')
+        publish.assert_not_called()
+        self.assertEqual([(kind, validate_only) for kind, _, validate_only in api.calls], [('analysis', True)])
+        self.assertEqual(api.values, original)
+        self.assertEqual(result['services'], 'analysis')
+        self.assertFalse(result['target_processing_enabled'])
+        self.assertNotIn('processing_enabled', result)
+
+    def test_analysis_only_deploy_updates_only_analysis_and_reports_only_its_revision(self):
+        original, api = services(), FakeGoogle()
+        for stage in ('acquisition', 'transcription'):
+            api.queue_values[stage]['state'] = 'RUNNING'
+        queue_values = copy.deepcopy(api.queue_values)
+        baseline = deployment.baseline_digest(original, queue_values)
+        with patch.object(deployment, 'Google', return_value=api), patch.object(deployment.existing, 'publish', return_value=images()) as publish:
+            # Explicit injected smoke keeps this synthetic rollout entirely offline.
+            real_rollout = deployment.rollout
+            with patch.object(deployment, 'rollout', side_effect=lambda *args, **kwargs: real_rollout(*args, **kwargs, smoke=lambda origin: None)):
+                result = deployment.run('deploy', CONFIG, COMMIT, baseline, 'synthetic', services='analysis')
+        publish.assert_called_once_with(CONFIG, 'synthetic', COMMIT, services='all')
+        self.assertEqual([(kind, validate_only) for kind, _, validate_only in api.calls], [('analysis', True), ('analysis', False)])
+        self.assertEqual(set(result['target_revisions']), {'analysis'})
+        self.assertFalse(result['target_processing_enabled'])
+        self.assertNotIn('processing_enabled', result)
+        self.assertEqual(api.queue_values, queue_values)
+        for kind in ('worker', 'web', 'acquisition', 'transcription'):
+            self.assertEqual(api.values[kind], original[kind])
+
+    def test_analysis_only_still_validates_untouched_stage_entrypoints(self):
+        api = FakeGoogle()
+        api.values['acquisition']['template']['containers'][0]['args'] = ['/app/scripts/serve-worker.mjs']
+        baseline = deployment.baseline_digest(api.values, api.queue_values)
+        with patch.object(deployment, 'Google', return_value=api), patch.object(deployment.existing, 'publish') as publish:
+            with self.assertRaises(deployment.DeploymentError):
+                deployment.run('deploy', CONFIG, COMMIT, baseline, 'synthetic', services='analysis')
+        self.assertEqual(api.calls, [])
+        publish.assert_not_called()
+
+    def test_analysis_only_rejects_drift_of_untouched_running_queue_before_any_real_patch(self):
+        api = FakeGoogle()
+        api.queue_values['acquisition']['state'] = 'RUNNING'
+        baseline = deployment.baseline_digest(api.values, api.queue_values)
+        def publish(*args, **kwargs):
+            api.queue_values['acquisition']['rateLimits']['maxConcurrentDispatches'] = 2
+            return images()
+        with patch.object(deployment, 'Google', return_value=api), patch.object(deployment.existing, 'publish', side_effect=publish), patch.object(deployment, 'rollout') as rollout:
+            with self.assertRaises(deployment.DeploymentError):
+                deployment.run('deploy', CONFIG, COMMIT, baseline, 'synthetic', services='analysis')
+        self.assertTrue(all(validate_only for _, _, validate_only in api.calls))
+        rollout.assert_not_called()
 
     def test_drift_during_image_publication_prevents_any_real_patch(self):
         for changed in ('worker', 'analysis', 'queue', 'fence'):
@@ -355,6 +434,30 @@ class ReleaseContracts(OfflineCase):
 
 
 class RolloutContracts(OfflineCase):
+    def test_analysis_only_failure_rolls_back_only_analysis(self):
+        original, api = services(), FakeGoogle()
+        for stage in ('acquisition', 'transcription'):
+            api.queue_values[stage]['state'] = 'RUNNING'
+        queue_values = copy.deepcopy(api.queue_values)
+        def smoke(origin):
+            raise deployment.DeploymentError('synthetic smoke failure')
+        with self.assertRaises(deployment.DeploymentError):
+            deployment.rollout(api, CONFIG, original, images(), queue_values, smoke=smoke, services='analysis')
+        self.assertEqual([kind for kind, _, _ in api.calls], ['analysis', 'analysis'])
+        self.assert_baseline_equal(api.values, original)
+        self.assertEqual(api.queue_values, queue_values)
+
+    def test_analysis_only_drift_in_untouched_web_stops_without_overwriting_it(self):
+        original, api = services(), FakeGoogle()
+        def smoke(origin):
+            api.values['web']['template']['containers'][0]['env'].append({'name': 'CONCURRENT', 'value': 'preserve'})
+        with self.assertRaises(deployment.DeploymentError):
+            deployment.rollout(api, CONFIG, original, images(), queues(), smoke=smoke, services='analysis')
+        self.assertEqual([kind for kind, _, _ in api.calls], ['analysis', 'analysis'])
+        self.assertEqual(api.values['web']['template']['containers'][0]['env'][-1], {'name': 'CONCURRENT', 'value': 'preserve'})
+        for kind in ('worker', 'acquisition', 'transcription'):
+            self.assertEqual(api.values[kind], original[kind])
+
     def test_success_preserves_legacy_args_secrets_scaling_and_queues(self):
         original, api, smokes = services(), FakeGoogle(), []
         final = deployment.rollout(api, CONFIG, original, images(), queues(), smoke=smokes.append)
@@ -457,7 +560,13 @@ class CLIAndWorkflowContracts(OfflineCase):
         outcome = {'status': 'closed_review_passed'}
         with patch.object(deployment.sys, 'argv', argv), patch.dict(deployment.os.environ, {'MEGABRAIN_DEPLOY_CONFIG': json.dumps(CONFIG), 'GOOGLE_ACCESS_TOKEN': 'synthetic'}, clear=True), patch.object(deployment, 'run', return_value=outcome) as run, patch.object(deployment.Path, 'write_text'), patch('builtins.print'):
             self.assertEqual(deployment.main(), 0)
-        run.assert_called_once_with('review', {**CONFIG, 'runtime_max_instances': {'worker': 1, 'web': 1}}, COMMIT, 'e' * 64, 'synthetic')
+        run.assert_called_once_with('review', {**CONFIG, 'runtime_max_instances': {'worker': 1, 'web': 1}}, COMMIT, 'e' * 64, 'synthetic', services='web_stages')
+
+    def test_cli_analysis_selection_is_forwarded_to_the_same_publisher(self):
+        argv = ['deploy-reels-services.py', '--mode', 'review', '--services', 'analysis', '--commit', COMMIT, '--baseline', 'e' * 64, '--output', 'unused.json']
+        with patch.object(deployment.sys, 'argv', argv), patch.dict(deployment.os.environ, {'MEGABRAIN_DEPLOY_CONFIG': json.dumps(CONFIG), 'GOOGLE_ACCESS_TOKEN': 'synthetic'}, clear=True), patch.object(deployment, 'run', return_value={'status': 'closed_review_passed'}) as run, patch.object(deployment.Path, 'write_text'), patch('builtins.print'):
+            self.assertEqual(deployment.main(), 0)
+        self.assertEqual(run.call_args.kwargs, {'services': 'analysis'})
 
     def test_cli_rejects_other_selections_before_cloud_access(self):
         for selection in ('all', 'web', 'worker'):
@@ -469,9 +578,9 @@ class CLIAndWorkflowContracts(OfflineCase):
 
     def test_workflow_routes_only_explicit_web_stages_to_closed_helper(self):
         workflow = (Path(__file__).parents[1] / '.github/workflows/google-deploy.yml').read_text()
-        self.assertIn('options: [all, web, web_stages]', workflow)
+        self.assertIn('options: [all, web, web_stages, analysis]', workflow)
         self.assertIn('DEPLOY_SERVICES: ${{ inputs.services }}', workflow)
-        branch = re.search(r'if \[ "\$DEPLOY_SERVICES" = "web_stages" \]; then\n(.*?)\n\s*else\n(.*?)\n\s*fi', workflow, re.S)
+        branch = re.search(r'if \[ "\$DEPLOY_SERVICES" = "web_stages" \] \|\| \[ "\$DEPLOY_SERVICES" = "analysis" \]; then\n(.*?)\n\s*else\n(.*?)\n\s*fi', workflow, re.S)
         self.assertIsNotNone(branch)
         self.assertIn('python3 ops/deploy-reels-services.py', branch.group(1))
         self.assertNotIn('deploy-existing-services.py', branch.group(1))

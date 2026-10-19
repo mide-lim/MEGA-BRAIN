@@ -1,4 +1,4 @@
-"""Closed publication of exactly web + three existing Reels stage services.
+"""Closed publication of web + three Reels stages, or analysis alone.
 
 Reuses image publication and authenticated transport, but never deploys the
 legacy worker. No queue/IAM/data mutation or provider request is implemented.
@@ -27,6 +27,14 @@ QUEUES = ('processing', *STAGES)
 FENCE = 'MEGABRAIN_REELS_CLOSED_RELEASE'
 
 
+def selected_targets(services):
+    if services == 'web_stages':
+        return TARGETS
+    if services == 'analysis':
+        return ('analysis',)
+    raise DeploymentError('Explicit web_stages or analysis publication required')
+
+
 def expanded_config(config):
     existing.validate_config(config)
     if config['project'] != PROJECT or config['region'] != REGION or config['queue'] != 'v0-processing':
@@ -43,6 +51,11 @@ def expanded_config(config):
 
 
 class Google(existing.Google):
+    def __init__(self, config, token, services='web_stages'):
+        selected_targets(services)
+        super().__init__(config, token)
+        self.publication_services = services
+
     def queues(self):
         result = {}
         for stage in QUEUES:
@@ -54,12 +67,16 @@ class Google(existing.Google):
             result[stage] = {field: raw.get(field) for field in ('name', 'state', 'rateLimits', 'retryConfig', 'httpTarget', 'appEngineRoutingOverride', 'purgeTime')}
             tasks = self.request('GET', url + '/tasks?pageSize=1&responseView=BASIC&fields=tasks(name),nextPageToken')
             if tasks.get('tasks') or tasks.get('nextPageToken'):
-                # A paused stage retains pending deliveries during a repair release.
-                # The closed revision cannot process them; never purge or resume here.
-                if stage not in STAGES or raw.get('state') != 'PAUSED':
+                # Target-stage deliveries stay paused during a closed repair.
+                # Analysis-only publication leaves acquisition/STT running as-is.
+                # This publisher never purges, pauses or resumes any queue.
+                untouched_running = self.publication_services == 'analysis' and stage in ('acquisition', 'transcription')
+                if stage not in STAGES or (raw.get('state') != 'PAUSED' and not untouched_running):
                     raise DeploymentError('Pending deliveries require a paused stage queue')
         if result['processing']['state'] != 'PAUSED':
             raise DeploymentError('Legacy processing queue must remain paused')
+        if self.publication_services == 'analysis' and result['analysis']['state'] != 'PAUSED':
+            raise DeploymentError('Analysis-only publication requires paused analysis queue')
         return result
 
 
@@ -132,12 +149,13 @@ def verify_snapshot(api, expected, queues):
     return current
 
 
-def rollout(api, config, originals, images, queues, smoke=existing.smoke_web):
+def rollout(api, config, originals, images, queues, smoke=existing.smoke_web, services='web_stages'):
+    targets = selected_targets(services)
     expected = copy.deepcopy(originals)
     touched = []
     phase = 'preflight'
     try:
-        for kind in TARGETS:
+        for kind in targets:
             phase = kind + '_preflight'
             current = verify_snapshot(api, expected, queues)[kind]
             image = images['web' if kind == 'web' else 'worker']
@@ -171,33 +189,36 @@ def rollout(api, config, originals, images, queues, smoke=existing.smoke_web):
     return expected
 
 
-def run(mode, config, commit, expected_baseline, token):
+def run(mode, config, commit, expected_baseline, token, services='web_stages'):
+    targets = selected_targets(services)
     if mode not in ('review', 'deploy') or not re.fullmatch(r'[a-f0-9]{40}', commit) or not re.fullmatch(r'[a-f0-9]{64}', expected_baseline):
         raise DeploymentError('Exact mode, commit and baseline required')
     expanded = expanded_config(config)
-    api = Google(expanded, token)
+    api = Google(expanded, token, services=services)
     queues = api.queues()
     originals = {kind: api.service(kind) for kind in KINDS}
     validate_services(originals, config)
     if baseline_digest(originals, queues) != expected_baseline:
         raise DeploymentError('Production differs from reviewed closed baseline')
     # Validate the exact fence/environment payload, without changing services.
-    for kind in TARGETS:
+    for kind in targets:
         original = originals[kind]
         api.update(kind, original, closed_containers(original, original['template']['containers'][0]['image']), validate_only=True)
     if mode == 'review':
-        return {'commit': commit, 'status': 'closed_review_passed', 'services': 'web_stages', 'deployed': False, 'processing_enabled': False}
+        return {'commit': commit, 'status': 'closed_review_passed', 'services': services, 'deployed': False,
+                **({'processing_enabled': False} if services == 'web_stages' else {'target_processing_enabled': False})}
     images = existing.publish(config, token, commit, services='all')
     verify_snapshot(api, originals, queues)
-    final = rollout(api, config, originals, images, queues)
-    return {'commit': commit, 'status': 'closed_deployed_and_checked', 'services': 'web_stages', 'deployed': True, 'processing_enabled': False,
-            'images': images, 'target_revisions': {kind: final[kind].get('latestReadyRevision') for kind in TARGETS}, 'legacy_worker_preserved': True, 'queues_preserved': True}
+    final = rollout(api, config, originals, images, queues, services=services)
+    return {'commit': commit, 'status': 'closed_deployed_and_checked', 'services': services, 'deployed': True,
+            **({'processing_enabled': False} if services == 'web_stages' else {'target_processing_enabled': False}),
+            'images': images, 'target_revisions': {kind: final[kind].get('latestReadyRevision') for kind in targets}, 'legacy_worker_preserved': True, 'queues_preserved': True}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['review', 'deploy'], required=True)
-    parser.add_argument('--services', choices=['web_stages'], required=True)
+    parser.add_argument('--services', choices=['web_stages', 'analysis'], required=True)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--baseline', required=True)
     parser.add_argument('--output', required=True)
@@ -208,7 +229,7 @@ def main():
         if 'runtime_max_instances' in config and config['runtime_max_instances'] != limits:
             raise DeploymentError('Protected runtime limit conflict')
         config = {**config, 'runtime_max_instances': limits}
-        result = run(args.mode, config, args.commit, args.baseline, os.environ['GOOGLE_ACCESS_TOKEN'])
+        result = run(args.mode, config, args.commit, args.baseline, os.environ['GOOGLE_ACCESS_TOKEN'], services=args.services)
         Path(args.output).write_text(json.dumps(result, indent=2) + '\n')
         print(result['status'])
         return 0

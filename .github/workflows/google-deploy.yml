@@ -17,11 +17,11 @@ on:
         type: choice
         options: [review, deploy]
       services:
-        description: 'Services to publish (web_stages keeps legacy worker and forces processing off)'
+        description: 'Services to publish (analysis closes only analysis; web_stages closes web and stages)'
         required: true
         default: all
         type: choice
-        options: [all, web, web_stages]
+        options: [all, web, web_stages, analysis]
 permissions:
   contents: read
 concurrency:
@@ -142,7 +142,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/megabrain-public-result"
-          if [ "$DEPLOY_SERVICES" = "web_stages" ]; then
+          if [ "$DEPLOY_SERVICES" = "web_stages" ] || [ "$DEPLOY_SERVICES" = "analysis" ]; then
             python3 ops/deploy-reels-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"
           else
             python3 ops/deploy-existing-services.py --mode "$DEPLOY_MODE" --services "$DEPLOY_SERVICES" --commit "$SOURCE_COMMIT" --baseline "$REVIEWED_BASELINE" --output "$RUNNER_TEMP/megabrain-public-result/result.json"

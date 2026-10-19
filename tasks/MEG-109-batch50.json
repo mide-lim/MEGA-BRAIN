@@ -25,7 +25,8 @@
     "ops/deploy-reels-services.py",
     "ops/test_deploy_reels_services.py",
     "google-v0/lib/download-diagnostic.mjs",
-    "google-v0/lib/media-tools.mjs"
+    "google-v0/lib/media-tools.mjs",
+    "google-v0/Dockerfile.worker"
   ],
   "context": [
     {

@@ -11,7 +11,8 @@
     "All nonempty claims and visual observations require their own valid source references; missing/foreign/invalid refs cannot be rescued by a review. Negative or conflicting exact reviews take precedence over lexical/typed apparent support. Translation, paraphrase and typed roles may pass only with genuine independent support.",
     "Recovery is limited to failed QUALITY_VALIDATION_FAILED with a proved original saved result, exact current ownership and no live operation/active slot for that execution. Preserve original rawResult/resultEvidence/finance and immutable candidate/receipt; save the reviewed derivative by hash and use transactional version checks plus existing publication CAS and idempotency.",
     "Current successful projections clear rejected-candidate/error markers while the original failure and proof remain in an immutable reconciliation receipt. No new cohort, provider call, scale, queue/control mutation or IAM change.",
-    "All regression tests and builds run exclusively in GitHub Actions with synthetic fixtures and provider ports forbidden; independent review of the final exact commit before integration/publication. Real private source approval is sealed/imported by the authenticated analysis service as the actual operational action after deploy, with analysis paused. Future original100 candidates without genuine independent support remain explicitly inconclusive and use the same generic import/recovery path."
+    "All regression tests and builds run exclusively in GitHub Actions with synthetic fixtures and provider ports forbidden; independent review of the final exact commit before integration/publication. Real private source approval is sealed/imported by the authenticated analysis service as the actual operational action after deploy, with analysis paused. Future original100 candidates without genuine independent support remain explicitly inconclusive and use the same generic import/recovery path.",
+    "Authenticated import checks the same final knowledgeReadiness used by the analysis runtime before creating any review or selection. Evidence-gate acceptance alone is insufficient; unexplained technical gaps remain rejected without an immutable selection."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
@@ -30,7 +31,9 @@
     "google-v0/tests/reels-pipeline.test.mjs",
     "google-v0/lib/firestore.mjs",
     "google-v0/tests/firestore.test.mjs",
-    "google-v0/lib/reels-quality-semantic-policy.mjs"
+    "google-v0/lib/reels-quality-semantic-policy.mjs",
+    "google-v0/Dockerfile.worker",
+    "google-v0/qa/reels-browser-check.mjs"
   ],
   "context": [
     {
@@ -67,7 +70,8 @@
   "validation_commands": [
     "GitHub Actions only: node --test tests/*.test.mjs, including synthetic independent-source import, actual runtime recovery, byte integrity, multi-frame coverage, negative verdicts and transactional publication fences; all provider ports forbidden.",
     "GitHub Actions only: existing deployment/image/entrypoint gates and repository packet/link validation. Independent exact-commit review before deployment.",
-    "After approved deployment: authenticated real source-review import and separate CAS recovery from private persisted evidence, without new inference or queue/control changes. This is the authorized production action, not a VPS test or rehearsal."
+    "After approved deployment: authenticated real source-review import and separate CAS recovery from private persisted evidence, without new inference or queue/control changes. This is the authorized production action, not a VPS test or rehearsal.",
+    "GitHub Actions only: existing worker packaging and image smokes include the new review module; real Workspace/API browser QA anchors its fixed cache clock to the synthetic source timestamp so financial date filters retain the fixture."
   ],
   "execution_budget": {
     "worker_runs": 1,
@@ -75,7 +79,7 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Legacy launcher compatibility only; actual codex-native developer and independent reviewer below, input revision437/current441. No launcher/background model; same coherent correction through acceptance."
+    "note": "Legacy launcher compatibility only; actual codex-native developer and independent reviewer below, input revision437/current442. No launcher/background model; same coherent correction through acceptance."
   },
   "review": {
     "mode": "independent_agent",
@@ -84,7 +88,7 @@
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 441,
+    "canonical_revision": 442,
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
     "authorized_by": "Current human correction request and persistent native coordination instructions",

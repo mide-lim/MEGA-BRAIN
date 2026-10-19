@@ -2,6 +2,7 @@ import {qualityCandidateHash,qualityDigest,qualitySourceManifest} from './reels-
 import {contextualPropositionEntries,semanticQualityPolicyVersion} from './reels-quality-semantic-policy.mjs';
 import {sha256} from './storage.mjs';
 import {analysisReportOutcome} from './analysis.mjs';
+import {knowledgeReadiness} from './reels-quality.mjs';
 
 // An authenticated operator seals an actual independent review. These helpers
 // never produce editorial verdicts or call a model. The authenticated import
@@ -163,6 +164,8 @@ export async function importQualitySourceReview({store,storage,packageIdentity,.
  const outcome=analysisReportOutcome(verified.report,input.record,{requireKnowledge:true,qualityGateV2:{mediaInspection:input.record.media_inspection_receipt,transcriptionReceipt:input.record.transcription_receipt,trustedReviews:verified.trustedReviews},contextCatalogSnapshot:input.contextCatalogSnapshot??null});
  need(outcome.report&&qualityCandidateHash(outcome.report)===qualityCandidateHash(verified.report),'Relatório revisado altera fontes salvas.');
  if(!outcome.accepted)throw Object.assign(Error('Parecer preservado em GCS; revisão não aceita pelo contrato de qualidade.'),{code:'QUALITY_REVIEW_NOT_ACCEPTED',status:409});
+ const readiness=knowledgeReadiness(outcome.report);
+ if(!readiness.accepted)throw Object.assign(Error('Prontidão final não aceita; nenhuma seleção de revisão criada.'),{code:readiness.reasons[0]??'QUALITY_REVIEW_NOT_ACCEPTED',status:409});
  // Do not select an inadmissible review permanently. Every accepted import is
  // create-only; a prior different selection is a conflict, never an overwrite.
  for(const data of [sealed.review,sealed.selection]){

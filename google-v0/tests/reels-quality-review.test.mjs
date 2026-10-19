@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {sealQualitySourceReview,verifyQualitySourceReview,loadQualitySourceReview,qualityReviewBinding} from '../lib/reels-quality-review.mjs';
 import {qualityCandidateHash,qualityDigest,qualitySourceManifest} from '../lib/reels-quality-gate.mjs';
-import {analysisOutcome} from '../lib/analysis.mjs';
+import {analysisOutcome,analysisReportOutcome} from '../lib/analysis.mjs';
 import {createMediaInspectionReceipt} from '../lib/google-operations.mjs';
 import {reelsGoogleRuntime} from '../lib/reels-google-runtime.mjs';
 import {executionId} from '../lib/reels-pipeline.mjs';
@@ -36,7 +36,7 @@ async function fixture({ordinal=1,entriesTransform,reportTransform}={}){
  record.media_inspection_receipt=createMediaInspectionReceipt({video:record,media:{hasVideo:true,hasAudio:true,audio_status:'present',duration_seconds:20},bytes:media});
  const manifest=qualitySourceManifest(record);record.transcription_receipt={operationIdentity:'synchronous:'+id,sourceAudioIdentity:manifest.audio,resultIdentity:manifest.transcript,rawResultIdentity:manifest.transcript,words:[]};
  const ref={source:'caption',sourceIdentity:manifest.caption,excerpt:record.source_caption.text};
- const inputReport={title:'Um portfólio com HTML',summary:'Build a portfolio with HTML.',categories:['desenvolvimento-software'],useful_information:[{claim:'Build a portfolio with HTML.',application:'Referência editorial para organizar um portfólio.',classification:'author_claim',evidence:[ref]}],visual_observations:['A página mostra um portfólio.'],limitations:['Fonte sintética de teste.'],transcript_quality:{assessment:'Texto salvo sem medição de fidelidade.',uncertain_segments:[]},knowledge:{context:'technology',fields:[{kind:'tool',name:'HTML',value:'HTML',evidence:[ref]}],keywords:[{term:'HTML',evidence:[ref]}],missing_information:[]},qualityEvidenceV2:{version:2,title:[ref],summary:[ref]}};
+ const inputReport={title:'Um portfólio com HTML',summary:'Build a portfolio with HTML.',categories:['desenvolvimento-software'],useful_information:[{claim:'Build a portfolio with HTML.',application:'Referência editorial para organizar um portfólio.',classification:'author_claim',evidence:[ref]}],visual_observations:['A página mostra um portfólio.'],limitations:['Fonte sintética de teste.'],transcript_quality:{assessment:'Texto salvo sem medição de fidelidade.',uncertain_segments:[]},knowledge:{context:'technology',fields:[{kind:'tool',name:'HTML',value:'HTML',evidence:[ref]}],keywords:[{term:'HTML',evidence:[ref]}],missing_information:['Procedimentos técnicos não estão descritos nesta fonte sintética.']},qualityEvidenceV2:{version:2,title:[ref],summary:[ref]}};
  const response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(inputReport)}]}}]},raw={preset_version:'fixture',model:'gemini-fixture',response};
  const qualityContext={mediaInspection:record.media_inspection_receipt,transcriptionReceipt:record.transcription_receipt};
  const initial=analysisOutcome(response,record,{requireKnowledge:true,qualityGateV2:qualityContext});
@@ -217,4 +217,12 @@ test('resume checks reviewed source content again after interruption before publ
  assert.equal((await f.deliver()).status,503);assert.equal((await f.store.get('reels_executions/'+f.id)).data.status,'applying');
  const path='videos/'+f.reelId,current=clone(f.store.docs.get(path).data);current.source_caption.text+=' changed text';f.store.put(path,current);
  const response=await f.deliver({evidenceVersion:'original'});assert.equal(response.status,200);assert.equal((await response.json()).status,'failed');assert.equal((await f.store.get('videos/'+f.reelId)).data.analysis_key,null);assert.deepEqual((await f.store.get('reels_executions/'+f.id)).data.rawResult,f.job.rawResult);
+});
+
+test('accepted evidence gate with unexplained technical readiness never creates review or selection',async()=>{
+ const f=await fixture({reportTransform:report=>{report.knowledge.missing_information=[];}}),m=importMaterial(f);
+ const verified=verifyQualitySourceReview({...f.binding,...f.sealed}),outcome=analysisReportOutcome(verified.report,f.record,{requireKnowledge:true,qualityGateV2:{mediaInspection:f.record.media_inspection_receipt,transcriptionReceipt:f.record.transcription_receipt,trustedReviews:verified.trustedReviews}});
+ assert.equal(outcome.accepted,true,'regression specifically requires evidence gate accepted');
+ const before=await f.store.get('reels_executions/'+f.id),response=await f.importDelivery(m.packageIdentity);assert.equal(response.status,409);assert.equal((await response.json()).code,'UNEXPLAINED_CONTEXT_GAPS');
+ assert.equal(await f.store.get('reels_quality_receipts/'+f.sealed.selection.id),null);assert.equal([...f.store.docs.keys()].filter(p=>p.startsWith('reels_quality_receipts/')).length,0);assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);assert.equal(f.writes.length,0);
 });

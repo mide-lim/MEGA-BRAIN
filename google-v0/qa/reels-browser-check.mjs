@@ -105,8 +105,8 @@ try {
  await record('two_curations_saved_publications_real_api_context_filters_and_unknown_units',async()=>{
   const writeCount=server.calls.filter(x=>['/api/reels/commands','/api/reels/categories'].includes(x.path)&&x.method==='POST').length;
   const curate=await context.newPage();
-  // Freeze Date.now (not timers) so cache reuse is deterministic even on a slow CI runner.
-  await curate.clock.setFixedTime(new Date('2026-10-18T12:00:00.000Z'));await curate.goto(server.origin);await navigate(curate,'Filas');
+  // Freeze Date.now (not timers) at the source fixture time; shared pages keep the same financial day.
+  await curate.clock.setFixedTime(new Date(server.fixture.at));await curate.goto(server.origin);await navigate(curate,'Filas');
   const quality=curate.getByRole('region',{name:'Curadoria até o acervo',exact:true});
   const result=responseFor(curate,'/api/reels/quality',url=>url.searchParams.get('q')==='Receita publicada');
   await quality.getByLabel('Buscar Reel na curadoria',{exact:true}).fill('Receita publicada');const qualityData=await (await result).json();
@@ -145,7 +145,7 @@ try {
   await server.store.create('videos/'+id,fish);await server.seedSavedContributions([id]);
   const orPage=await context.newPage();
   try {
-   await orPage.clock.setFixedTime(new Date('2026-10-18T12:00:00.000Z'));await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
+   await orPage.clock.setFixedTime(new Date(server.fixture.at));await orPage.goto(server.origin);await navigate(orPage,'Biblioteca');await orPage.locator('.library-card').filter({hasText:'Receita de peixe publicada'}).waitFor();
    const filters=await openLibraryElements(orPage);
    await filters.getByLabel('Dimensão 1',{exact:true}).selectOption('ingredient');
    const chicken=responseFor(orPage,'/api/reels/items',url=>(url.searchParams.get('facets')||'').includes('"value":"frango"'));

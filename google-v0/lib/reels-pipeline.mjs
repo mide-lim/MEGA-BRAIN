@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {safeDownloadDiagnostic} from './download-diagnostic.mjs';
 import {safeAnalysisFailureDiagnostic} from './google-rest.mjs';
-import {qualityPublicationRevision,qualitySourceStateHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
+import {qualityPublicationRevision,qualitySourceStateHash,qualityReviewSourceContentHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
 export const STAGES=['acquisition','transcription','analysis'];
@@ -127,19 +127,84 @@ export class ReelsPipeline {
   await queueOutbox(this.store,resumed.data,{onQueued:this.onQueued,clock:this.clock,poll:true,sequence:resumed.data.pollSequence??0});
   return {status:'waiting',executionId:id,collectionQueued:true};
  }
+ async qualityRecoveryResult(job){
+  const pointer=job.qualityReviewRecovery;
+  if(!pointer)return null;
+  if(!/^[a-f0-9]{64}$/.test(pointer.id??'')||!/^review_[a-f0-9]{64}$/.test(pointer.reviewId??''))throw fail('EVIDENCE_UNPROVEN','Recuperação de qualidade sem identidade.',409);
+  const saved=(await this.store.get('reels_reconciliations/'+pointer.id))?.data;
+  if(!saved)throw fail('EVIDENCE_UNPROVEN','Recibo de recuperação ausente.',409);
+  const {id,receiptHash,...body}=saved;
+  const expectedId=hash({kind:'quality_review_recovery',executionId:job.id,reviewId:pointer.reviewId,originalResultHash:job.resultEvidence?.resultHash});
+  if(id!==expectedId||id!==pointer.id||receiptHash!==pointer.receiptHash||hash(body)!==receiptHash||body.kind!=='quality_review_recovery'||body.schemaVersion!==1||body.executionId!==job.id||body.reelId!==job.reelId||body.operationId!==job.operationId||body.owner!==job.owner||!reconciliationEvidence(job).result||body.originalResultHash!==job.resultEvidence.resultHash||body.resultHash!==hash(body.result)||body.result?.qualityReview?.reviewId!==pointer.reviewId)throw fail('EVIDENCE_UNPROVEN','Vínculo da recuperação de qualidade divergente.',409);
+  const versions=body.result.qualityReview.sourceVersions;
+  if(!Array.isArray(versions)||versions.length!==2)throw fail('EVIDENCE_UNPROVEN','Versões da revisão ausentes.',409);
+  for(const source of versions){
+   if(!['reels_quality_receipts/'+pointer.reviewId,'reels_quality_receipts/'+body.result.qualityReview.selectionId].includes(source.path)||(await this.store.get(source.path))?.updateTime!==source.updateTime)throw fail('QUALITY_REVIEW_CHANGED','Revisão independente mudou; publicação preservada.',409);
+  }
+  return body.result;
+ }
+ async failedQualitySource(job,snapshot,evidenceVersion){
+  if(typeof evidenceVersion!=='string'||snapshot.updateTime!==evidenceVersion)throw fail('EVIDENCE_CHANGED','Evidência mudou; confira novamente.',409);
+  if(job.status!=='failed'||job.error?.code!=='QUALITY_VALIDATION_FAILED'||!job.owner||job.operationName||job.operationEvidence||job.rawResult?.valid!==false||job.rawResult?.qualityPublication!=null||!reconciliationEvidence(job).result)throw fail('QUALITY_RESULT_NOT_RECOVERABLE','Somente candidato de qualidade salvo e terminal pode ser revisado.',409);
+  const [videoSnapshot,control]=await Promise.all([this.store.get('videos/'+job.reelId),this.store.get('reels_controls/analysis')]);
+  const video=videoSnapshot?.data,position=video?.reels_v2;
+  if(!video||video.import_hold?.active===true||position?.operationId!==job.operationId||position.executionId!==job.id||position.stage!=='analysis'||position.status!=='failed'||!Array.isArray(control?.data.active)||control.data.active.includes(job.id))throw fail('QUALITY_RECOVERY_OWNERSHIP','Posse, estado ou ocupação da análise mudaram.',409);
+  const originalCandidateIdentity={key:job.rawResult.changes?.candidate_analysis_key??null,generation:job.rawResult.changes?.candidate_analysis_generation??null};
+  if(originalCandidateIdentity.key!==`results/instagram/${job.reelId}/${job.id}/quality-candidate.json`||!/^\d+$/.test(originalCandidateIdentity.generation??'')||video.candidate_analysis_key!==originalCandidateIdentity.key||video.candidate_analysis_generation!==originalCandidateIdentity.generation)throw fail('EVIDENCE_UNPROVEN','Candidato original não corresponde à projeção atual.',409);
+  return {videoSnapshot,control,video,originalCandidateIdentity};
+ }
+ async importQuality({executionId:id,evidenceVersion,packageIdentity}){
+  if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
+  if(this.requiredQualityPolicyVersion!=='gate_v2')throw fail('QUALITY_REVIEW_INVALID','Contrato de revisão indisponível.',409);
+  const snapshot=await this.store.get('reels_executions/'+id),job=snapshot?.data;
+  if(!job||job.id!==id||job.id!==executionId(job.operationId,job.reelId,'analysis')||job.stage!=='analysis')throw fail('EVIDENCE_UNPROVEN','Execução de análise não corresponde.',409);
+  const {video,originalCandidateIdentity}=await this.failedQualitySource(job,snapshot,evidenceVersion);
+  if(typeof this.operations?.importQuality!=='function')throw fail('RECOVERY_ADAPTER_REQUIRED','Importação de revisão indisponível.',503);
+  const result=await this.operations.importQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,packageIdentity});
+  if(result.valid!==true||!/^review_[a-f0-9]{64}$/.test(result.qualityReview?.reviewId??''))throw fail('QUALITY_REVIEW_NOT_ACCEPTED','Revisão importada não passou pelo contrato.',409);
+  return {status:'review_imported',executionId:id,reviewId:result.qualityReview.reviewId,accepted:true,publicationPerformed:false,evidenceVersion:snapshot.updateTime};
+ }
+ async recoverQuality({executionId:id,reviewId,evidenceVersion}){
+  if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
+  if(this.requiredQualityPolicyVersion!=='gate_v2'||!/^review_[a-f0-9]{64}$/.test(reviewId??''))throw fail('QUALITY_REVIEW_INVALID','Revisão de qualidade obrigatória.',409);
+  const path='reels_executions/'+id,snapshot=await this.store.get(path),job=snapshot?.data;
+  if(!job||job.id!==id||job.id!==executionId(job.operationId,job.reelId,'analysis')||job.stage!=='analysis')throw fail('EVIDENCE_UNPROVEN','Execução de análise não corresponde.',409);
+  if(job.qualityReviewRecovery?.reviewId===reviewId&&['applying','completed'].includes(job.status)){
+   await this.qualityRecoveryResult(job);
+   return job.status==='completed'?{status:'completed',executionId:id,reviewId,duplicate:true}:this.apply(job);
+  }
+  const {videoSnapshot,control,video,originalCandidateIdentity}=await this.failedQualitySource(job,snapshot,evidenceVersion);
+  if(typeof this.operations?.restoreQuality!=='function'||typeof this.store.beginQualityRecovery!=='function')throw fail('RECOVERY_ADAPTER_REQUIRED','Recuperação de qualidade indisponível.',503);
+  const restored=await this.operations.restoreQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,requestedReviewId:reviewId});
+  const result={...restored,estimatedCents:job.rawResult.estimatedCents??null,finance:job.rawResult.finance??null};
+  if(result.valid!==true||result.qualityPublication?.policyVersion!=='gate_v2')return {status:'failed',published:false,reason:'QUALITY_REVIEW_NOT_ACCEPTED',qualityState:result.quality?.state??'inconclusive',reviewId};
+  if(result.qualityReview?.reviewId!==reviewId||result.qualityReview.sourceContentHash!==qualityReviewSourceContentHash(video)||!Array.isArray(result.qualityReview.sourceVersions)||result.qualityReview.sourceVersions.length!==2||qualitySourceStateHash(video)!==result.qualityPublication.expectedSourceStateHash||qualityPublicationRevision(video)!==result.qualityPublication.expectedPublicationRevision)throw fail('EVIDENCE_CHANGED','Resultado revisado não corresponde à versão atual.',409);
+  const qualityReceipt=(await this.store.get('reels_quality_receipts/'+result.qualityPublication.qualityReceipt?.receiptId))?.data;
+  const proposed={...video,...result.changes,publication:{...(video.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:result.qualityPublication.qualityReceipt}};
+  if(!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)throw fail('QUALITY_RECEIPT_UNVERIFIED','Recibo de publicação revisada não foi confirmado.',409);
+  const body={schemaVersion:1,kind:'quality_review_recovery',executionId:job.id,reelId:job.reelId,operationId:job.operationId,owner:job.owner,originalResultHash:job.resultEvidence.resultHash,originalCandidateIdentity,originalFailure:{status:job.status,error:job.error,failedAt:job.failedAt??null},result,resultHash:hash(result),createdAt:nowISO(this.clock)};
+  const receipt={id:hash({kind:body.kind,executionId:job.id,reviewId,originalResultHash:body.originalResultHash}),...body,receiptHash:hash(body)};
+  let committed;
+  try{committed=await this.store.beginQualityRecovery({executionId:job.id,reelId:job.reelId,executionVersion:snapshot.updateTime,videoVersion:videoSnapshot.updateTime,controlVersion:control.updateTime,reviewVersions:result.qualityReview.sourceVersions,receipt});}
+  catch(error){const current=(await this.store.get(path))?.data;if(current?.qualityReviewRecovery?.id===receipt.id&&['applying','completed'].includes(current.status)){await this.qualityRecoveryResult(current);return current.status==='completed'?{status:'completed',executionId:id,reviewId,duplicate:true}:this.apply(current);}throw error;}
+  const current=(await this.store.get(path))?.data;
+  if(committed?.applied!==true&&current?.qualityReviewRecovery?.id!==receipt.id)throw fail('EVIDENCE_CHANGED','Versões mudaram durante a recuperação; nenhuma publicação aplicada.',409);
+  if(!current||current.qualityReviewRecovery?.id!==receipt.id)throw fail('EVIDENCE_UNPROVEN','Ativação da recuperação não confirmada.',409);
+  return this.apply(current);
+ }
  async apply(job){
   if(job.status==='completed')return {status:'completed',executionId:job.id,duplicate:true};
   const video=await this.repository.raw(job.reelId),ownership=await reconciliationOwnership(this.store,job,video);
   if(!video||video.import_hold?.active===true||!ownership.exact&&!ownership.successor)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
   if(!reconciliationEvidence(job).result)throw fail('EVIDENCE_UNPROVEN','Resultado sem vínculo demonstrado.',409);
-  const result=job.rawResult;if(!result)throw fail('RESULT_MISSING','Resultado preservado ausente.',409);
+  const result=await this.qualityRecoveryResult(job)??job.rawResult;if(!result)throw fail('RESULT_MISSING','Resultado preservado ausente.',409);
   let qualityReceipt=null,qualityProposal=null;
   if(job.stage==='analysis'&&this.requiredQualityPolicyVersion==='gate_v2'){
    qualityProposal=result.qualityPublication;
    if(result.valid!==true||qualityProposal?.policyVersion!=='gate_v2'||!qualityProposal.qualityReceipt?.receiptId)return this.rejectCandidate(job,result,{state:result.quality?.state==='invalid'?'invalid':'inconclusive'});
    qualityReceipt=(await this.store.get('reels_quality_receipts/'+qualityProposal.qualityReceipt.receiptId))?.data;
    const proposed={...video,...result.changes,publication:{...(video.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
-   if(qualitySourceStateHash(video)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)return this.rejectCandidate(job,result,{reason:'QUALITY_RECEIPT_UNVERIFIED',state:'inconclusive'});
+   if(qualitySourceStateHash(video)!==qualityProposal.expectedSourceStateHash||result.qualityReview&&result.qualityReview.sourceContentHash!==qualityReviewSourceContentHash(video)||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted)return this.rejectCandidate(job,result,{reason:'QUALITY_RECEIPT_UNVERIFIED',state:'inconclusive'});
   }
   if(job.stage==='analysis'&&result.valid!==true)return this.rejectCandidate(job,result,{state:result.quality?.state==='inconclusive'?'inconclusive':'invalid'});
   // Publication fields require explicit valid proof. A candidate never replaces them.
@@ -158,10 +223,10 @@ export class ReelsPipeline {
    if(qualityProposal){
     const proposed={...current,...changes,publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt}};
     const already=current.analysis_key===qualityProposal.publicationIdentity?.key&&String(current.analysis_generation)===String(qualityProposal.publicationIdentity?.generation)&&current.publication?.qualityReceipt?.receiptId===qualityProposal.qualityReceipt.receiptId&&verifyPublicationQualityReceipt({video:current,receipt:qualityReceipt}).trusted;
-    if(qualitySourceStateHash(current)!==qualityProposal.expectedSourceStateHash||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
+    if(qualitySourceStateHash(current)!==qualityProposal.expectedSourceStateHash||result.qualityReview&&result.qualityReview.sourceContentHash!==qualityReviewSourceContentHash(current)||!verifyPublicationQualityReceipt({video:proposed,receipt:qualityReceipt}).trusted||!already&&qualityPublicationRevision(current)!==qualityProposal.expectedPublicationRevision){publicationConflict=true;return null;}
    }
    const video=current;
-   return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id,contextual_catalogue_event:{id:job.id,type:'publicationAccepted',reelId:job.reelId,status:'pending',analysisKey:changes.analysis_key??current.analysis_key??null,analysisGeneration:changes.analysis_generation??current.analysis_generation??null}}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock)}};
+   return {...changes,...(qualityProposal?{publication:{...(current.publication??{}),qualityPolicyVersion:'gate_v2',qualityReceipt:qualityProposal.qualityReceipt},candidate_quality_receipt:null}:{}),...(job.stage==='analysis'?{taxonomy_baseline_execution_id:job.id,contextual_catalogue_event:{id:job.id,type:'publicationAccepted',reelId:job.reelId,status:'pending',analysisKey:changes.analysis_key??current.analysis_key??null,analysisGeneration:changes.analysis_generation??current.analysis_generation??null}}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id?{published_tags:publicationTags(changes.analysis)}:{}),...(job.stage==='analysis'&&video.taxonomy_baseline_execution_id!==job.id&&video.taxonomy_override?.manual!==true&&Array.isArray(changes.analysis?.categories)?{categoryIds:[...new Set(changes.analysis.categories.filter(id=>typeof id==='string'))]}:{}),...(!qualityProposal&&job.stage==='analysis'&&result.publication?{publication:result.publication}:{}),reels_v2:{...(video.reels_v2??{}),status:'completed',stage:job.stage,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock),...(job.qualityReviewRecovery?{error:null,candidate:null}: {})}};
   });
   if(ownershipConflict)throw fail('EXECUTION_SUPERSEDED','Execução não possui mais o Reel.',409);
   if(publicationConflict)return this.rejectCandidate(job,result,{reason:'QUALITY_PUBLICATION_REVISION_CONFLICT',state:'inconclusive'});
@@ -174,8 +239,8 @@ export class ReelsPipeline {
    try{const indexed=await this.onPublished(job);catalogueIndex={eventId:job.id,status:indexed?.pending===true?'pending':'completed'};}
    catch{catalogueIndex={eventId:job.id,status:'pending'};}
   }
-  await this.release(job);await this.emit(job,'stage_completed');
-  await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock),...(catalogueIndex?{catalogueIndex}:{})});
+  if(!job.qualityReviewRecovery)await this.release(job);await this.emit(job,'stage_completed');
+  await cas(this.store,'reels_executions/'+job.id,data=>data.status==='completed'?null:{status:'completed',completedAt:nowISO(this.clock),...(job.qualityReviewRecovery?{error:null}:{}),...(catalogueIndex?{catalogueIndex}:{})});
   return {status:'completed',executionId:job.id,nextStage:nextStage??null};
  }
  async rejectCandidate(job,result,{reason='QUALITY_VALIDATION_FAILED',state='invalid'}={}){
@@ -184,7 +249,7 @@ export class ReelsPipeline {
   if(result.qualityPublication){Object.assign(candidateChanges,{analysis_candidate:result.changes?.analysis??null,candidate_analysis_key:result.changes?.analysis_key??null,candidate_analysis_generation:result.changes?.analysis_generation??null,candidate_quality_receipt:result.qualityPublication.qualityReceipt??null});}
   if(Object.keys(candidateChanges).length)await cas(this.store,'videos/'+job.reelId,video=>video.reels_v2?.operationId&&(video.reels_v2.operationId!==job.operationId||video.reels_v2.executionId!==job.id)?null:candidateChanges);
   await this.markVideo(job,'failed',{candidate:{available:true,state,reason,executionId:job.id},error:diagnostic});
-  await this.release(job);await this.emit(job,'candidate_rejected');await cas(this.store,'reels_executions/'+job.id,()=>({status:'failed',failedAt:nowISO(this.clock),error:diagnostic}));
+  if(!job.qualityReviewRecovery)await this.release(job);await this.emit(job,'candidate_rejected');await cas(this.store,'reels_executions/'+job.id,()=>({status:'failed',failedAt:nowISO(this.clock),error:diagnostic}));
   return {status:'failed',published:false,reason,qualityState:state};
  }
  async markVideo(job,status,extra={},predecessorId=null){await cas(this.store,'videos/'+job.reelId,video=>{const current=video.reels_v2;if(current?.operationId&&(current.operationId!==job.operationId||current.executionId!==job.id&&current.executionId!==predecessorId))return null;if(current?.executionId===job.id&&status==='queued'&&current.status!=='queued')return null;return {reels_v2:{...(video.reels_v2??{}),status,stage:job.stage,worker:job.worker===workerFor(job.stage)?job.worker:null,executionId:job.id,operationId:job.operationId,updatedAt:nowISO(this.clock),...extra}};});await this.repository.refresh?.(job.reelId);}

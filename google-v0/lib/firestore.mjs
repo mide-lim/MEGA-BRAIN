@@ -205,6 +205,39 @@ export class Firestore {
     }finally{if(!finished)await rollback();}
   }
 
+  // Activate one already-received quality result. Originals, source records,
+  // controls and independent reviews are read with versions, never rewritten.
+  async beginQualityRecovery({executionId,reelId,executionVersion,videoVersion,controlVersion,reviewVersions,receipt}){
+    const review=receipt?.result?.qualityReview,pointer={id:receipt?.id,receiptHash:receipt?.receiptHash,reviewId:review?.reviewId};
+    if(!/^[a-f0-9]{64}$/.test(executionId??'')||!/^[-A-Za-z0-9_]{5,32}$/.test(reelId??'')||!/^review_[a-f0-9]{64}$/.test(review?.reviewId??'')||!/^source_review_[a-f0-9]{64}$/.test(review?.selectionId??'')||!/^[a-f0-9]{64}$/.test(receipt?.id??'')||!/^[a-f0-9]{64}$/.test(receipt?.receiptHash??'')||receipt.kind!=='quality_review_recovery'||receipt.executionId!==executionId||receipt.reelId!==reelId||![executionVersion,videoVersion,controlVersion].every(v=>typeof v==='string'&&v)||!Array.isArray(reviewVersions)||reviewVersions.length!==2)throw Error('Transação de revisão fora do resultado comprovado.');
+    const reviewPaths=new Set(['reels_quality_receipts/'+review.reviewId,'reels_quality_receipts/'+review.selectionId]);
+    const expected=new Map([['reels_executions/'+executionId,executionVersion],['videos/'+reelId,videoVersion],['reels_controls/analysis',controlVersion]]);
+    for(const entry of reviewVersions){if(!reviewPaths.has(entry.path)||expected.has(entry.path)||typeof entry.updateTime!=='string'||!entry.updateTime)throw Error('Versão da revisão independente ausente.');expected.set(entry.path,entry.updateTime);}
+    const receiptPath='reels_reconciliations/'+receipt.id;expected.set(receiptPath,null);
+    const prefix=`projects/${this.api.project}/databases/(default)/documents/`,begin=await this.api.request(this.root+':beginTransaction',{method:'POST',json:{options:{readWrite:{}}}}),transaction=begin?.transaction;
+    if(typeof transaction!=='string'||!transaction)throw Error('Transação de revisão ausente.');
+    let finished=false;const rollback=async()=>{try{await this.api.request(this.root+':rollback',{method:'POST',json:{transaction}});}catch{}};
+    try{
+      const rows=await this.api.request(this.root+':batchGet',{method:'POST',json:{transaction,documents:[...expected.keys()].map(path=>prefix+documentPath(path)),mask:{fieldPaths:['id']}}});
+      if(!Array.isArray(rows))throw Error('Leitura de revisão incompleta.');
+      const observed=new Map();
+      for(const row of rows){
+        if(!row.found&&!row.missing)continue;
+        const name=row.found?.name??row.missing;
+        if(typeof name!=='string'||!name.startsWith(prefix)||row.found&&row.missing)throw Error('Leitura de revisão fora do projeto.');
+        const path=documentPath(name.slice(prefix.length));
+        if(!expected.has(path)||observed.has(path)||row.found&&typeof row.found.updateTime!=='string')throw Error('Leitura de revisão inesperada.');observed.set(path,row.found?row.found.updateTime:null);
+      }
+      if(observed.size!==expected.size)throw Error('Leitura de revisão incompleta.');
+      if([...expected].some(([path,version])=>observed.get(path)!==version)){await rollback();finished=true;return {applied:false};}
+      const changes={status:'applying',qualityReviewRecovery:pointer};
+      const writes=[{update:{name:prefix+receiptPath,fields:encodeFields(receipt)},currentDocument:{exists:false}},{update:{name:prefix+'reels_executions/'+executionId,fields:encodeFields(changes)},updateMask:{fieldPaths:Object.keys(changes)},currentDocument:{updateTime:executionVersion}}];
+      let result;try{result=await this.metadataWrite(this.root+':commit',{method:'POST',json:{transaction,writes}});}catch(error){if(rejectedVersion(error))return {applied:false};throw error;}
+      if(result?.writeResults?.length!==2||!result.writeResults.every(v=>v.updateTime))throw Error('Recuperação de qualidade não confirmada; conferir o mesmo recibo.');
+      finished=true;return {applied:true};
+    }finally{if(!finished)await rollback();}
+  }
+
   async commit(writes){
     if(!Array.isArray(writes)||!writes.length||writes.length>450)throw Error('Commit inválido.');
     const prefix=`projects/${this.api.project}/databases/(default)/documents/`;

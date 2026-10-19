@@ -17,6 +17,7 @@ import {ReelsService} from './reels-service.mjs';
 import {ReelsCommandRunner} from './reels-command-runner.mjs';
 import {reelsProcessingEnabled} from './reels-runtime-policy.mjs';
 import {qualityDigest} from './reels-quality-gate.mjs';
+import {loadQualitySourceReview,importQualitySourceReview,qualityReviewIdPattern} from './reels-quality-review.mjs';
 import {knowledgeReadiness} from './reels-quality.mjs';
 import {ReelsTaxonomy} from './reels-taxonomy.mjs';
 import {ensure} from './reels-runtime.mjs';
@@ -43,10 +44,12 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
   const storage=dependencies.storage??new Storage(api,PROJECT+'-media',{maxBytes:100000000});
   const tools=dependencies.tools??mediaTools({downloadEnabled:true});
   const dispatcher=dependencies.dispatcher??new ReelsDispatcher({api,store,routes:config.stage_routes,enabled});
-  async function scoped(input){
+  async function scoped(input,{restoringQuality=false,importingQuality=false}={}){
    const snapshot=await store.get('reels_executions/'+input.executionId),job=snapshot?.data;
-   if(!job||job.reelId!==input.videoId||job.stage!==stage||job.owner!==input.claim?.owner||!['submitting','collecting'].includes(job.status))throw Error('Claim não autoriza esta operação.');
+   const allowedStatus=restoringQuality?job?.status==='failed'&&job.error?.code==='QUALITY_VALIDATION_FAILED'&&snapshot.updateTime===input.claim?.updateTime:['submitting','collecting'].includes(job?.status);
+   if(!job||job.reelId!==input.videoId||job.stage!==stage||job.owner!==input.claim?.owner||!allowedStatus||restoringQuality&&stage!=='analysis')throw Error('Claim não autoriza esta operação.');
    const check=async({executionId:id,stage:adapterStage,videoId})=>{
+    if(restoringQuality)throw Error('Recuperação de revisão não autoriza submissão a provedor.');
     const current=(await store.get('reels_executions/'+job.id))?.data;
     if(!enabled||id!==job.id||videoId!==job.reelId||adapterStage!==legacy[job.stage]||current?.owner!==job.owner||!['submitting','collecting'].includes(current.status))throw Error('Execução não autorizada.');
     const video=await repository.raw(job.reelId);
@@ -56,17 +59,26 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
    // Preparation may take time. Fence each paid POST again at the transport
    // boundary so a pause after audio preparation cannot submit new STT/Gemini.
    const adapterAPI={project:api.project,request:async(url,options)=>{
+    if(restoringQuality)throw Error('Porta de provedor proibida na recuperação de qualidade.');
     if(options?.method==='POST'&&/^https:\/\/(?:[a-z0-9-]+-)?(?:speech|aiplatform)\.googleapis\.com\//.test(url))await check({executionId:job.id,stage:legacy[job.stage],videoId:job.reelId});
     return api.request(url,options);
    }};
    const video=input.video??await repository.raw(job.reelId);
-   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true,reels_quality_policy_version:'gate_v2'},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null,inspect:dependencies.inspect??inspectMedia,loadContextCatalog:()=>loadLiveContextCatalogue(repository),qualityEvidence:{mediaInspection:video?.media_inspection_receipt??null,transcriptionReceipt:video?.transcription_receipt??null},saveQualityReceipt:async receipt=>{
+   const adapter=(dependencies.operationsFactory??googleOperations)({api:adapterAPI,storage,tools:restoringQuality?{}:tools,preset,config:{...config,enabled:true,uploads_enabled:true,worker_stage:legacy[stage],single_reel_pipeline_enabled:true,reels_taxonomy_signals_enabled:true,reels_quality_policy_version:'gate_v2'},executionAuthorization:check,executionIds:(id,s)=>executionId(job.operationId,id,s==='upload'?'acquisition':s),preparedAudioKey:id=>id===job.reelId&&video?.audio_key?video.audio_key:null,inspect:dependencies.inspect??inspectMedia,loadContextCatalog:()=>loadLiveContextCatalogue(repository),loadQualityReview:qualityInput=>importingQuality?importQualitySourceReview({store,storage,...qualityInput,packageIdentity:input.packageIdentity}):loadQualitySourceReview({store,storage,...qualityInput}),qualityEvidence:{mediaInspection:video?.media_inspection_receipt??null,transcriptionReceipt:video?.transcription_receipt??null},saveQualityReceipt:async receipt=>{
     const path='reels_quality_receipts/'+receipt.id,receiptHash=qualityDigest(receipt);
     const created=await store.create(path,receipt),saved=created.created?created:await store.get(path);
     if(!saved?.data||qualityDigest(saved.data)!==receiptHash)throw Error('Recibo de qualidade salvo diverge; ponteiro preservado.');
     return {id:receipt.id,receiptHash};
    }});
    return {adapter,job,video};
+  }
+  function analysisResult(result,video){
+   const candidate=result.changes?.analysis_candidate??(result.changes?.analysis_quality_status==='accepted'?result.changes?.analysis:null),readiness=knowledgeReadiness(candidate);
+   const valid=result.changes?.analysis_quality_status==='accepted'&&readiness.accepted&&result.qualityGate?.accepted===true&&result.qualityPublication?.policyVersion==='gate_v2';
+   const changes={...result.changes};
+   if(!valid&&changes.analysis&&result.qualityGate?.accepted!==false){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';changes.candidate_quality_receipt=result.qualityPublication?.qualityReceipt??changes.candidate_quality_receipt??null;}
+   const quality=result.qualityGate?{...result.qualityGate,accepted:valid,state:valid?'supported':result.qualityGate.state==='invalid'?'invalid':'inconclusive',readiness,readinessBasis:'received_candidate'}:{accepted:false,state:'inconclusive',checks:[],gaps:[],readiness,readinessBasis:'received_candidate'};
+   return {changes,valid,quality,qualityReview:result.qualityReview??null,qualityPublication:valid?result.qualityPublication:null,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
   }
   const operations={
    async acquire(input){const {adapter,job,video}=await scoped(input);
@@ -93,16 +105,15 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
    async transcribe(input){const {adapter,video}=await scoped(input);const result=await adapter.transcription({...input,video});return result.operation_name?{pending:true,operationName:result.operation_name,changes:result.changes??{}}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
    async pollTranscription(input){const {adapter,video}=await scoped(input);const result=await adapter.pollTranscription({...input,video});return result.pending?{pending:true}:{changes:result.changes,estimatedCents:result.actual_cents??null,finance:result.finance??null};},
    async analyze(input){const {adapter,job,video}=await scoped(input);let completed=false;
-    try{const result=await adapter.analysis({...input,video});const quality=knowledgeReadiness(result.changes?.analysis);
-    const valid=result.changes?.analysis_quality_status==='accepted'&&quality.accepted&&result.qualityGate?.accepted===true&&result.qualityPublication?.policyVersion==='gate_v2';
-    const changes={...result.changes};if(!valid&&changes.analysis&&result.qualityGate?.accepted!==false){changes.analysis_candidate=changes.analysis;changes.candidate_analysis_key=changes.analysis_key;changes.candidate_analysis_generation=changes.analysis_generation;changes.analysis=video.analysis??null;changes.analysis_key=video.analysis_key??null;changes.analysis_generation=video.analysis_generation??null;changes.analysis_quality_status='review_required';changes.candidate_quality_receipt=result.qualityPublication?.qualityReceipt??changes.candidate_quality_receipt??null;}
-    completed=true;return {changes,valid,quality:result.qualityGate?{...result.qualityGate,accepted:valid,state:valid?'supported':result.qualityGate.state==='invalid'?'invalid':'inconclusive',readiness:quality}:{accepted:false,state:'inconclusive',checks:[],gaps:[],readiness:quality},qualityPublication:valid?result.qualityPublication:null,artifact:{key:result.changes?.candidate_analysis_key??result.changes?.analysis_key??null,generation:result.changes?.candidate_analysis_generation??result.changes?.analysis_generation??null},estimatedCents:result.actual_cents??null,finance:result.finance??null};
+    try{const result=await adapter.analysis({...input,video});completed=true;return analysisResult(result,video);
     }finally{
      // This finally is reached only after awaited adapter work has settled.
      // A timeout does not establish whether the remote paid call completed.
      if(!completed)await ensure(store,'execution_stops/'+job.id,{id:job.id,reelId:job.reelId,stage:'analysis',owner:job.owner,kind:'analysis_adapter_settled',scope:'local_adapter',remoteOutcome:'unknown',executorStoppedAt:new Date().toISOString()});
     }
-   }
+   },
+   async restoreQuality(input){const {adapter,video}=await scoped(input,{restoringQuality:true});return analysisResult(await adapter.restoreAnalysisResult({...input,video}),video);},
+   async importQuality(input){const {adapter,video}=await scoped(input,{restoringQuality:true,importingQuality:true});return analysisResult(await adapter.restoreAnalysisResult({...input,video}),video);}
   };
   const taxonomy=new ReelsTaxonomy({repository});
   const pipeline=new ReelsPipeline({repository,store,operations,processingEnabled:enabled,requiredQualityPolicyVersion:'gate_v2',effectiveCapacity:config.reels_effective_capacity??{acquisition:1,transcription:1,analysis:1},onPublished:job=>new ReelsCatalogueRuntime({repository}).project(job.reelId,{type:'publicationAccepted',eventId:job.id}),onQueued:async job=>{const receipt=await dispatcher.enqueue(job);if(receipt.status!=='sent')throw Error('Entrega à fila não confirmada; retomar pelo outbox.');return receipt;}});
@@ -120,12 +131,15 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
   }
   if(!enabled)return denied();
   if(await auth?.(request)!==true)return Response.json({error:'Acesso negado.'},{status:401});
-  const route=new URL(request.url).pathname,control=route==='/tasks/control';
-  if(request.method!=='POST'||!['/tasks/run','/tasks/control'].includes(route))return Response.json({error:'Rota inválida.'},{status:405});
+  const route=new URL(request.url).pathname,control=route==='/tasks/control',qualityReview=route==='/tasks/quality-review',qualityImport=route==='/tasks/quality-review/import';
+  if(request.method!=='POST'||!['/tasks/run','/tasks/control','/tasks/quality-review','/tasks/quality-review/import'].includes(route))return Response.json({error:'Rota inválida.'},{status:405});
+  if((qualityReview||qualityImport)&&stage!=='analysis')return Response.json({error:'Revisão exige serviço de análise.'},{status:409});
   if(control&&stage!=='acquisition')return Response.json({error:'Controle exige serviço de aquisição.'},{status:409});
   let body;try{
    const text=await request.text();if(Buffer.byteLength(text)>2048)throw Error();body=JSON.parse(text);
-   const allowed=control?['operationId','sequence','outboxId']:['executionId','poll','outboxId'];
+   const allowed=qualityImport?['executionId','evidenceVersion','packageIdentity']:qualityReview?['executionId','reviewId','evidenceVersion']:control?['operationId','sequence','outboxId']:['executionId','poll','outboxId'];
+   if(qualityImport&&(!body?.packageIdentity||Object.keys(body.packageIdentity).some(k=>!['key','generation','sha256'].includes(k))||typeof body.packageIdentity.key!=='string'||body.packageIdentity.key.length>512||!/^\d{1,30}$/.test(body.packageIdentity.generation??'')||!/^[a-f0-9]{64}$/.test(body.packageIdentity.sha256??'')||typeof body.evidenceVersion!=='string'||!body.evidenceVersion||body.evidenceVersion.length>100))throw Error();
+   if(qualityReview&&(!qualityReviewIdPattern.test(body?.reviewId??'')||typeof body.evidenceVersion!=='string'||!body.evidenceVersion||body.evidenceVersion.length>100))throw Error();
    if(!body||Object.keys(body).some(k=>!allowed.includes(k))||!/^[a-f0-9]{64}$/.test((control?body.operationId:body.executionId)??'')||body.outboxId!==undefined&&!/^[a-f0-9]{64}$/.test(body.outboxId)||control&&(!Number.isSafeInteger(body.sequence)||body.sequence<0)||!control&&body.poll!==undefined&&typeof body.poll!=='boolean')throw Error();
   }catch{return Response.json({error:'Tarefa inválida.'},{status:400});}
   try{
@@ -137,9 +151,11 @@ export function reelsGoogleRuntime(config,preset,{stage,authorize,dependencies={
     return Response.json(await runner.run(body),{headers:{'Cache-Control':'no-store'}});
    }
    const saved=await store.get('reels_executions/'+body.executionId);if(!saved||saved.data.stage!==stage||body.poll&&stage!=='transcription')return Response.json({error:'Tarefa fora da etapa fixa.'},{status:409});
+   if(qualityImport)return Response.json(await pipeline.importQuality(body),{headers:{'Cache-Control':'no-store'}});
+   if(qualityReview)return Response.json(await pipeline.recoverQuality(body),{headers:{'Cache-Control':'no-store'}});
    if(body.outboxId)await dispatcher.acknowledge({...body,poll:Boolean(body.poll),stage});
    const result=body.poll?await pipeline.collect(body):await pipeline.run(body);
    const retryable=['TECHNICAL_BACKPRESSURE','EXECUTION_IN_PROGRESS'].includes(result.reason)||result.status==='applying';return Response.json(result,{status:retryable?503:200,headers:{'Cache-Control':'no-store'}});
-  }catch{return Response.json({error:'Execução requer conferência; estado preservado.'},{status:503,headers:{'Cache-Control':'no-store'}});}
+  }catch(error){return Response.json({error:'Execução requer conferência; estado preservado.',...((qualityReview||qualityImport)?{code:/^[A-Z0-9_]{1,64}$/.test(error.code??'')?error.code:'QUALITY_REVIEW_UNAVAILABLE'}:{})},{status:(qualityReview||qualityImport)&&error.status>=400&&error.status<500?error.status:503,headers:{'Cache-Control':'no-store'}});}
  };
 }

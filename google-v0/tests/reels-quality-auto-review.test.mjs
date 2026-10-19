@@ -14,7 +14,7 @@ function fixture({visual=false,timeout=false,verdict='supported',mutateResponse}
  const manifest=qualitySourceManifest(record);record.transcription_receipt={operationIdentity:'saved_stt',sourceAudioIdentity:manifest.audio,resultIdentity:manifest.transcript,rawResultIdentity:manifest.transcript,words:[]};
  const e={source:'caption',sourceIdentity:manifest.caption,excerpt:record.source_caption.text},v={source:'video',sourceIdentity:manifest.video,start_seconds:1,end_seconds:3};
  const originalReport={title:'Um portfólio com HTML',summary:'Build a portfolio with HTML.',categories:['desenvolvimento-software'],useful_information:[],visual_observations:visual?['Uma página aparece no quadro.']:[],limitations:[],transcript_quality:{assessment:'Unmeasured',uncertain_segments:[]},knowledge:{context:'technology',fields:[{kind:'other',name:'Outro',value:'HTML',evidence:[e]}],keywords:[],missing_information:['Procedimentos técnicos não informados.']},qualityEvidenceV2:{version:2,title:[e],summary:[e],...(visual?{visualObservations:[{index:0,evidence:[v]}]}:{})}};
- const input={record,originalReport,executionId,rawResponseIdentity:{key:prefix+'analysis.json',generation:'10'},originalCandidateIdentity:{key:prefix+'quality-candidate.json',generation:'11'}};
+ const input={record,originalReport,executionId,requestedReviewId:null,contextCatalogSnapshot:null,rawResponseIdentity:{key:prefix+'analysis.json',generation:'10'},originalCandidateIdentity:{key:prefix+'quality-candidate.json',generation:'11'}};
  const docs=new Map(),objects=new Map();let version=0,calls=0,extractions=0,checks=0,lastRequest;
  const store={get:async key=>structuredClone(docs.get(key)??null),create:async(key,data)=>{encodeFields(data);if(docs.has(key))return {created:false};const saved={data:structuredClone(data),updateTime:String(++version)};docs.set(key,saved);return {created:true,...structuredClone(saved)};}};
  function save(key,bytes,generation=String(100+objects.size)){const value={bytes:Buffer.from(bytes),generation,sha256:sha256(bytes)};objects.set(key,value);return {key,generation,sha256:value.sha256,size:bytes.length};}
@@ -36,7 +36,7 @@ test('independent saved text validation seals actual server provenance and reuse
  assert.equal(f.calls(),1);assert.ok(f.checks()>=3);assert.equal(f.extractions(),0);assert.deepEqual(f.input,before);
  assert.ok(review.trustedReviews.some(e=>e.fieldPath==='title'));assert.equal(review.sourceVersions.length,2);
  const sealed=f.docs.get('reels_quality_receipts/'+review.reviewIdentity.reviewId).data;
- assert.equal(sealed.createdBy,'server:saved-source-validation-v1');assert.equal(sealed.reviewerExecutor,'external');assert.notEqual(sealed.authorIdentity,sealed.reviewerIdentity);
+ assert.equal(sealed.createdBy,'server:saved-source-validation-v1');assert.equal(Object.hasOwn(sealed,'requestedReviewId'),false);assert.equal(Object.hasOwn(sealed,'contextCatalogSnapshot'),false);assert.equal(sealed.reviewerExecutor,'external');assert.notEqual(sealed.authorIdentity,sealed.reviewerIdentity);
  assert.equal(evaluateQualityGateV2({record:f.record,report:f.originalReport,mediaInspection:f.record.media_inspection_receipt,transcriptionReceipt:f.record.transcription_receipt,trustedReviews:review.trustedReviews}).accepted,true);
  await f.reviewer.generate(f.input);await f.reviewer.load(f.input);assert.equal(f.calls(),1);
  const usage=await f.reviewer.usage(f.input);assert.equal(usage.measurement.status,'measured');assert.equal(usage.validationId,automaticValidationId(f.input));
@@ -83,4 +83,17 @@ test('first analysis saves candidate before validation; saved-result restoration
  await operations.analysis({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);
  await operations.restoreAnalysisResult({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);
  await operations.analysis({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);
+});
+
+
+test('downgraded verdict bounds final reason and malformed null entries/quotes are classified evidence errors',()=>{
+ const f=fixture({visual:true}),targets=automaticReviewTargets(f.record,f.originalReport),response=f.responseFor(targets),body=JSON.parse(response.candidates[0].content.parts[0].text),visual=body.entries.find(e=>e.fieldPath==='visual_observations.0');
+ visual.reason='x'.repeat(4000);visual.visualStatic=false;
+ response.candidates[0].content.parts[0].text=JSON.stringify(body);
+ const entries=automaticReviewEntries({response,targets,frames:[{seconds:2,artifact:{key:'synthetic',generation:'1'}}],record:f.record,report:f.originalReport}),entry=entries.find(e=>e.fieldPath===visual.fieldPath);
+ assert.equal(entry.verdict,'inconclusive');assert.equal(entry.reason.length,4000);
+ for(const edit of [rows=>rows[0]=null,rows=>rows[0].quotes=[null]]){
+  const fresh=f.responseFor(targets),parsed=JSON.parse(fresh.candidates[0].content.parts[0].text);edit(parsed.entries);fresh.candidates[0].content.parts[0].text=JSON.stringify(parsed);
+  assert.throws(()=>automaticReviewEntries({response:fresh,targets,frames:[],record:f.record,report:f.originalReport}),e=>e.code==='QUALITY_VALIDATION_EVIDENCE_INVALID');
+ }
 });

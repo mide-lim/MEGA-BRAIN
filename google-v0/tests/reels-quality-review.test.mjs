@@ -94,7 +94,9 @@ test('loader fails closed on changed bytes, size limits, selection and absent re
  }
 });
 test('real analysis runtime recovers saved candidate with no providers, no original rewrite and preserved financial proof',async()=>{
- const f=await fixture(),originalRaw=clone(f.objects.get(f.binding.rawResponseIdentity.key)),originalCandidate=clone(f.objects.get(f.binding.originalCandidateIdentity.key)),control=await f.store.get('reels_controls/analysis'),finance=await f.store.get('reels_finance/preserved');
+ // structuredClone turns Buffer into Uint8Array; preserve the type and independent bytes.
+ const snapshot=object=>({...clone(object),bytes:Buffer.from(object.bytes)});
+ const f=await fixture(),originalRaw=snapshot(f.objects.get(f.binding.rawResponseIdentity.key)),originalCandidate=snapshot(f.objects.get(f.binding.originalCandidateIdentity.key)),control=await f.store.get('reels_controls/analysis'),finance=await f.store.get('reels_finance/preserved');
  const response=await f.deliver();assert.equal(response.status,200);const outcome=await response.json();assert.equal(outcome.status,'completed');
  const job=(await f.store.get('reels_executions/'+f.id)).data,video=(await f.store.get('videos/'+f.reelId)).data,recovery=(await f.store.get('reels_reconciliations/'+job.qualityReviewRecovery.id)).data;
  assert.deepEqual(job.rawResult,f.job.rawResult);assert.deepEqual(job.resultEvidence,f.job.resultEvidence);assert.equal(job.attempt,1);assert.equal(job.error,null);assert.equal(video.reels_v2.error,null);assert.equal(video.reels_v2.candidate,null);assert.equal(video.analysis_candidate,null);assert.equal(video.candidate_analysis_key,null);

@@ -35,7 +35,7 @@ test('synthetic Google400 survives analysis failure persistence and replay witho
  assert.equal(saved.error.google_diagnostic.http_status,400);assert.equal(saved.error.google_diagnostic.operation_step,'submit_analysis');assert.equal(saved.error.google_diagnostic.response_received,true);
  assert.equal(saved.error.provider_diagnostic.status,'INVALID_ARGUMENT');assert.match(saved.error.provider_diagnostic.message,/Invalid responseSchema: nested enum limit/);
  assert.deepEqual(video.reels_v2.error,saved.error);assert.equal(video.analysis_key,'saved');assert.equal(video.analysis.summary,'original');assert.deepEqual(await x.store.get('reels_finance/preserved'),financial);assert.doesNotThrow(()=>encodeFields(saved.error));
- const detail=await x.repository.detail('Reel_001');assert.equal(detail.executions[0].error.google_diagnostic.http_status,400);
+ const detail=await x.repository.detail('Reel_001');assert.equal(detail.executions[0].error.google_diagnostic,undefined);assert.equal(detail.executions[0].error.provider_diagnostic,undefined);
  assert.ok(!/PRIVATE_TEST_TOKEN|private.example|owner@example.com/.test(JSON.stringify({result,saved,video,detail})));
  assert.equal((await x.pipeline.run({executionId:x.id})).status,'uncertain');assert.equal(calls,1);assert.equal((await x.store.get('reels_executions/'+x.id)).data.error.provider_diagnostic.status,'INVALID_ARGUMENT');
 });

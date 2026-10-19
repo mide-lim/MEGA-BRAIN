@@ -7,7 +7,7 @@
   "objective": "Correct the current100-Reel Google analysis request rejection: preserve bounded sanitized provider diagnostics, flatten repeated source schema branches, and prove real provider acceptance without blind retry or new cohort.",
   "risk": "high",
   "acceptance_criteria": [
-    "Google GenerateContent400 diagnosis survives REST -> pipeline -> saved execution/video/detail through an explicit sanitized allowlist. No raw error, request/body/header/token leakage; prior publications and finances unchanged.",
+    "Google GenerateContent400 diagnosis survives REST -> pipeline -> private saved execution/video through an explicit sanitized allowlist. Public detail preserves its existing sanitized summary and does not expose provider/google diagnostic fields. No raw error/request/body/header/token leakage; prior publications and finances unchanged.",
     "Flatten wire evidence schema only. Source identities, anchor/hash generation, finite time refs, existing normalizer, factual source/timing validation, legacy response compatibility and publication quality gates remain unchanged. No claim that complexity is the specific400cause without actual provider proof.",
     "GitHub Actions only: negative source/time/hash cases and diagnostic persistence/no duplicate submit, full existing builds/integration/entrypoint checks. Independent review exact head; real same100 Google response/production-web acceptance still required.",
     "No new cohort, capacity/IAM changes, deletes or identical paid retry. Existing100-only processing authorization applies; any analysis-only pause remains pending direct owner answer after automatic-review rejection."

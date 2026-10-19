@@ -23,7 +23,8 @@
     "google-v0/tests/reels-quality-auto-review.test.mjs",
     "google-v0/tests/reels-finance.test.mjs",
     "google-v0/docs/reels-quality-auto-review.md",
-    "tasks/MEG-109-auto-quality-validation.json"
+    "tasks/MEG-109-auto-quality-validation.json",
+    "google-v0/Dockerfile.worker"
   ],
   "context": [
     {

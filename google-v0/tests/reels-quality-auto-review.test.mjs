@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {automaticQualityReviewer,automaticReviewScope,automaticReviewTargets,automaticFrameTimes,automaticReviewEntries,automaticValidationId} from '../lib/reels-quality-auto-review.mjs';
-import {qualitySourceManifest,evaluateQualityGateV2} from '../lib/reels-quality-gate.mjs';
+import {qualitySourceManifest,evaluateQualityGateV2,qualityDigest} from '../lib/reels-quality-gate.mjs';
 import {sha256} from '../lib/storage.mjs';
 import {createMediaInspectionReceipt} from '../lib/google-operations.mjs';
 import {verifyQualitySourceReview} from '../lib/reels-quality-review.mjs';
@@ -79,7 +79,7 @@ import {googleOperations} from '../lib/google-operations.mjs';
 import {readFileSync} from 'node:fs';
 test('first analysis saves candidate before validation; saved-result restoration never invokes generation',async()=>{
  const f=fixture(),preset=JSON.parse(readFileSync(new URL('../config/analysis-preset.json',import.meta.url))),storage={...f.storage,bucket:project+'-media'};let originals=0,validations=0;
- const operations=googleOperations({api:{project,request:async()=>{originals++;return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(f.originalReport)}]}}]};}},storage,tools:{},preset,config:{enabled:true,uploads_enabled:true,gemini_model:'gemini-3.5-flash-lite',reels_quality_policy_version:'gate_v2'},executionAuthorization:async()=>{},loadQualityReview:async()=>null,generateQualityReview:async input=>{validations++;assert.ok(await storage.metadata(input.originalCandidateIdentity.key));assert.ok(await storage.metadata(input.rawResponseIdentity.key));return null;},saveQualityReceipt:async receipt=>({id:receipt.id,receiptHash:'fixture'})});
+ const operations=googleOperations({api:{project,request:async()=>{originals++;return {candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(f.originalReport)}]}}]};}},storage,tools:{},preset,config:{enabled:true,uploads_enabled:true,gemini_model:'gemini-3.5-flash-lite',reels_quality_policy_version:'gate_v2'},executionAuthorization:async()=>{},loadQualityReview:async()=>null,generateQualityReview:async input=>{validations++;assert.ok(await storage.metadata(input.originalCandidateIdentity.key));assert.ok(await storage.metadata(input.rawResponseIdentity.key));return null;},saveQualityReceipt:async receipt=>({id:receipt.id,receiptHash:qualityDigest(receipt)})});
  await operations.analysis({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);
  await operations.restoreAnalysisResult({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);
  await operations.analysis({video:f.record,executionId});assert.equal(originals,1);assert.equal(validations,1);

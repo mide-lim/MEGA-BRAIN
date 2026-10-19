@@ -23,7 +23,8 @@ export function literalClaimSupport(value,excerpt){
  return 'literal';
 }
 function receiptFor(entry,reviews,reportHash,sourceManifestHash){
- return list(reviews).find(r=>r&&r.fieldPath===entry.fieldPath&&r.propositionHash===entry.propositionHash&&r.reportHash===reportHash&&r.sourceManifestHash===sourceManifestHash&&r.policyVersion===semanticQualityPolicyVersion&&['human_source_review','independent_source_review'].includes(r.kind)&&present(r.receiptId)&&present(r.method)&&present(r.observedAt)&&Number.isFinite(Date.parse(r.observedAt)));
+ const exact=list(reviews).filter(r=>r&&r.fieldPath===entry.fieldPath&&r.propositionHash===entry.propositionHash&&r.reportHash===reportHash&&r.sourceManifestHash===sourceManifestHash&&r.policyVersion===semanticQualityPolicyVersion&&['human_source_review','independent_source_review'].includes(r.kind)&&present(r.receiptId)&&present(r.method)&&present(r.observedAt)&&Number.isFinite(Date.parse(r.observedAt)));
+ return exact.find(r=>r.verdict==='invalid')??exact.find(r=>r.verdict==='inconclusive')??exact.find(r=>r.verdict==='supported');
 }
 export function evaluateContextualPropositions({report={},reportHash,sourceManifestHash,contextualEvidence=[],trustedReviews=[]}={}){
  const evidence=new Map(list(contextualEvidence).map(e=>[e.id,e])),result={policyVersion:semanticQualityPolicyVersion,attributes:[],units:[],primaryContext:null};

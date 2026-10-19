@@ -148,6 +148,12 @@ export function analysisOutcome(response,record,{requireKnowledge=false,sourceGr
  try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
  catch{return {accepted:false,reasons:['invalid_json']};}
  if(qualityGateV2!==null){try{parsed=normalizeSourceAnchoredReport(parsed,record,qualitySourceManifest(record));}catch{return {accepted:false,reasons:['invalid_evidence_transport']};}}
+ return analysisReportOutcome(parsed,record,{requireKnowledge,sourceGroundedPublication,qualityGateV2,contextCatalogSnapshot});
+}
+
+// Reviews contain the stored, normalized report contract. Never wrap one in a
+// pretend provider response or normalize its saved numeric references again.
+export function analysisReportOutcome(parsed,record,{requireKnowledge=false,sourceGroundedPublication=false,qualityGateV2=null,contextCatalogSnapshot=null}={}){
  const additionalCategoryIds=qualityGateV2!==null?analysisCategoryOptions(contextCatalogSnapshot).filter(c=>!categoryIds.includes(c.id)).map(c=>c.id):[];
  const categories=normalizedCategoryIds(parsed?.categories);
  if(qualityGateV2===null&&categories!==parsed?.categories)parsed={...parsed,categories,limitations:Array.isArray(parsed.limitations)?[...parsed.limitations,'Categoria geral de tecnologia redundante omitida; a resposta original foi preservada.']:parsed.limitations};

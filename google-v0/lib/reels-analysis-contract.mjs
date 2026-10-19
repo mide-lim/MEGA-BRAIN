@@ -11,7 +11,7 @@ export const taxonomySignalsInstruction=' Quando houver receitas completas, forn
 const sourceIdentitySchema={type:'OBJECT',properties:{key:{type:'STRING'},generation:{type:'STRING'},captureId:{type:'STRING'}}};
 const qualityEvidenceSchema={type:'ARRAY',items:{type:'OBJECT',required:['source','sourceIdentity','excerpt'],properties:{source:{type:'STRING',enum:['caption','transcript','video']},sourceIdentity:sourceIdentitySchema,excerpt:{type:'STRING'},start_seconds:{type:'NUMBER'},end_seconds:{type:'NUMBER'}}}};
 const indexedQualityEvidenceSchema={type:'ARRAY',items:{type:'OBJECT',required:['index','evidence'],properties:{index:{type:'INTEGER'},evidence:qualityEvidenceSchema}}};
-export const qualityEvidenceV2Schema={type:'OBJECT',required:['version','title','summary'],properties:{version:{type:'INTEGER'},title:qualityEvidenceSchema,summary:qualityEvidenceSchema,applications:indexedQualityEvidenceSchema,visualObservations:indexedQualityEvidenceSchema}};
+export const qualityEvidenceV2Schema={type:'OBJECT',required:['version','title','summary','applications','visualObservations'],properties:{version:{type:'INTEGER'},title:qualityEvidenceSchema,summary:qualityEvidenceSchema,applications:indexedQualityEvidenceSchema,visualObservations:indexedQualityEvidenceSchema}};
 export const contextualSignalsSchema={type:'OBJECT',required:['version','primaryContext','units','attributes','evidence'],properties:{
  version:{type:'INTEGER'},
  primaryContext:{type:'OBJECT',required:['categoryId','purpose','evidenceRefs'],properties:{categoryId:{type:'STRING'},purpose:{type:'STRING'},evidenceRefs:{type:'ARRAY',items:{type:'STRING'}}}},

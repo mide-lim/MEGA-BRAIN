@@ -3,55 +3,71 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "2ab82cb312f3c40722b1ea49de84c2958cdbac2b",
-  "objective": "Publish the reviewed Google analysis correction to the analysis service only, honoring explicit owner analysis-only pause while acquisition and transcription remain running. Extend the same existing publisher selector; no new deployment framework.",
+  "base_commit": "4ab08c51e2d36222443b3194c54c851d9e020b09",
+  "objective": "Repair the same original100 analysis quality integration: consume genuine independent source reviews, preserve required references and negative verdicts, and recover an already saved rejected candidate without another provider call.",
   "risk": "high",
   "acceptance_criteria": [
-    "services=analysis selects only analysis for validation-only PATCH, rollout, readiness, rollback and target_revisions. Other four service configurations and all four queue stable configurations remain bound to reviewed fingerprint; no queue/control/IAM/data mutation in publisher.",
-    "Target analysis queue must be PAUSED; legacy processing queue PAUSED and empty. Acquisition/STT may stay RUNNING with pending work only in analysis selector. Original web_stages and legacy publisher behavior preserved.",
-    "Root proves analysis control paused and active[] immediately before publication. Publish analysis fenced, retain same100 queued deliveries; verify candidate source image and non-target configuration equality before removing analysis fence for one real corrected request. No new cohort/scaling/IAM or blind repeats.",
-    "Regression tests, builds and image/entrypoint checks exclusively GitHub Actions; independent exact-head review before integration/publication."
+    "Server-owned immutable review envelopes bind original raw and candidate generations, execution/Reel, original and reviewed report hashes, exact source manifest, independent reviewer identity, method/date, field verdicts and reviewed artifacts. Model-owned review claims never authorize publication.",
+    "All nonempty claims and visual observations require their own valid source references; missing/foreign/invalid refs cannot be rescued by a review. Negative or conflicting exact reviews take precedence over lexical/typed apparent support. Translation, paraphrase and typed roles may pass only with genuine independent support.",
+    "Recovery is limited to failed QUALITY_VALIDATION_FAILED with a proved original saved result, exact current ownership and no live operation/active slot for that execution. Preserve original rawResult/resultEvidence/finance and immutable candidate/receipt; save the reviewed derivative by hash and use transactional version checks plus existing publication CAS and idempotency.",
+    "Current successful projections clear rejected-candidate/error markers while the original failure and proof remain in an immutable reconciliation receipt. No new cohort, provider call, scale, queue/control mutation or IAM change.",
+    "All regression tests and builds run exclusively in GitHub Actions with synthetic fixtures and provider ports forbidden; independent review of the final exact commit before integration/publication. Real private source approval is sealed/imported by the authenticated analysis service as the actual operational action after deploy, with analysis paused. Future original100 candidates without genuine independent support remain explicitly inconclusive and use the same generic import/recovery path."
   ],
   "allowed_paths": [
     "tasks/MEG-109-batch50.json",
-    ".github/workflows/google-deploy.yml",
-    "ops/deploy-reels-services.py",
-    "ops/test_deploy_reels_services.py",
-    "ops/test_deploy_existing_services.py"
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/lib/reels-quality-gate.mjs",
+    "google-v0/lib/reels-quality-review.mjs",
+    "google-v0/lib/reels-google-runtime.mjs",
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/reels-pipeline.mjs",
+    "google-v0/tests/google-operations.test.mjs",
+    "google-v0/tests/reels-quality-gate.test.mjs",
+    "google-v0/tests/reels-quality-review.test.mjs",
+    "google-v0/tests/reels-google-runtime.test.mjs",
+    "google-v0/tests/analysis.test.mjs",
+    "google-v0/tests/reels-pipeline.test.mjs",
+    "google-v0/lib/firestore.mjs",
+    "google-v0/tests/firestore.test.mjs",
+    "google-v0/lib/reels-quality-semantic-policy.mjs"
   ],
   "context": [
     {
-      "path": "ops/deploy-reels-services.py",
-      "reason": "Existing bounded publication and stable snapshot checks",
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Quality context, immutable candidate persistence and saved raw restoration",
       "sections": [
-        "selected_targets",
-        "Google.queues",
-        "rollout",
-        "run"
+        "qualityContext",
+        "qualityChanges",
+        "restoreAnalysisResult"
       ],
-      "max_chars": 6000
+      "max_chars": 4000
     },
     {
-      "path": ".github/workflows/google-deploy.yml",
-      "reason": "Route explicit analysis selector through same reviewed publisher",
-      "max_chars": 2500,
+      "path": "google-v0/lib/reels-quality-gate.mjs",
+      "reason": "Exact source references, independent verdict precedence and durable publication receipt",
       "sections": [
-        "services:",
-        "DEPLOY_SERVICES"
-      ]
+        "verifiedReview",
+        "evaluateClaim",
+        "prepareQualityCandidateV2"
+      ],
+      "max_chars": 4000
     },
     {
-      "path": "ops/test_deploy_reels_services.py",
-      "reason": "Synthetic isolation and rollback regression coverage",
-      "max_chars": 3000,
+      "path": "google-v0/lib/reels-pipeline.mjs",
+      "reason": "Saved result proof, terminal failed recovery and CAS publication",
       "sections": [
-        "analysis"
-      ]
+        "recover",
+        "apply",
+        "rejectCandidate"
+      ],
+      "max_chars": 4000
     }
   ],
   "validation_commands": [
-    "GitHub Actions only: node --test tests/*.test.mjs, deployment guard tests, images and entrypoint smokes.",
-    "GitHub Actions only: python3 scripts/check_task_packets.py and check_links.py; independent exact-head review; actual production same100 operation/web observation after publication."
+    "GitHub Actions only: node --test tests/*.test.mjs, including synthetic independent-source import, actual runtime recovery, byte integrity, multi-frame coverage, negative verdicts and transactional publication fences; all provider ports forbidden.",
+    "GitHub Actions only: existing deployment/image/entrypoint gates and repository packet/link validation. Independent exact-commit review before deployment.",
+    "After approved deployment: authenticated real source-review import and separate CAS recovery from private persisted evidence, without new inference or queue/control changes. This is the authorized production action, not a VPS test or rehearsal."
   ],
   "execution_budget": {
     "worker_runs": 1,
@@ -59,22 +75,37 @@
     "fix_runs": 0,
     "timeout_minutes": 15,
     "reasoning": "high",
-    "note": "Legacy launcher compatibility only; actual current native execution input430 and rootstate432; no launcher/background agent."
+    "note": "Legacy launcher compatibility only; actual codex-native developer and independent reviewer below, input revision437/current441. No launcher/background model; same coherent correction through acceptance."
   },
   "review": {
     "mode": "independent_agent",
     "status": "pending",
-    "reason": "Analysis-only mutation and preserved running non-target services/queues."
+    "reason": "Strict quality authority and proof-bound recovery of an already saved candidate; independent source and exact-code review required."
   },
   "native_coordination": {
     "executor": "codex-native",
-    "canonical_revision": 431,
+    "canonical_revision": 441,
     "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
     "task": "MEG-109-web-batch100-request",
     "authorized_by": "Current human correction request and persistent native coordination instructions",
-    "processing": "Original100 only; paid redo only after concrete changed correction, no blind identical retries",
+    "processing": "Original100 only; recover existing saved response without any paid redo",
     "ci_authorization": "All tests/builds GitHub Actions only",
     "max_concurrent_slots": 4,
-    "real_deletion": false
+    "real_deletion": false,
+    "input_revision": 437,
+    "developer": "/root/desenvolvedor_qualidade",
+    "reviewer": "/root/revisor_qualidade",
+    "developer_native_thread_id": "01a15251-b310-701a-a4d9-a6a7938f6006",
+    "developer_native_session_id": "01a1524c-80d3-7307-a7dd-658037612038",
+    "reviewer_native_thread_id": "01a15252-3103-759a-8229-973bfbac3022",
+    "reviewer_native_session_id": "01a1524c-80d3-7307-a7dd-658037612038",
+    "entry_revision": 437
+  },
+  "replay_privacy": {
+    "repository_visibility": "public",
+    "real_source_transport_to_ci": false,
+    "ci_scope": "synthetic fixtures, complete regressions and builds only",
+    "actual_source_action": "Authenticated create-only package import and separate recovery in the existing analysis service after approved deploy; private GCS bytes remain private; analysis stays paused.",
+    "status": "resolved_using_authenticated_operational_import"
   }
 }

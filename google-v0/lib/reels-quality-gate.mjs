@@ -60,9 +60,21 @@ export function checkTemporalUnits(units,duration){
  }
  return {state:units.length?'present_unverified':'not_recorded',count:units.length};
 }
-function verifiedReview(path,reportHash,manifestHash,reviews,{visual=false}={}){
+function matchingReviews(path,reportHash,manifestHash,reviews){
+ return list(reviews).filter(r=>r&&r.fieldPath===path&&r.reportHash===reportHash&&r.sourceManifestHash===manifestHash&&present(r.receiptId)&&['human_source_review','independent_source_review'].includes(r.kind));
+}
+function negativeReview(path,reportHash,manifestHash,reviews){
+ const exact=matchingReviews(path,reportHash,manifestHash,reviews),negative=exact.find(r=>r.verdict==='invalid')??exact.find(r=>r.verdict==='inconclusive');
+ return negative?check(negative.verdict==='invalid'?'INDEPENDENT_REVIEW_INVALID':'INDEPENDENT_REVIEW_INCONCLUSIVE',negative.verdict,present(negative.reason)?negative.reason:'Revisão independente não confirmou a afirmação integral.',{fieldPath:path,reviewReceiptId:negative.receiptId}):null;
+}
+function reviewedFrames(r){
+ if(r.frameArtifacts!==undefined)return Array.isArray(r.frameArtifacts)&&r.frameArtifacts.length>0&&r.frameArtifacts.length<=32&&r.frameArtifact===undefined&&r.frameArtifacts.every(f=>resultIdentity(f?.artifact)&&/^[a-f0-9]{64}$/.test(f.artifact.sha256??'')&&Array.isArray(f.sampleSeconds)&&f.sampleSeconds.length>0&&f.sampleSeconds.every(t=>Number.isFinite(t)&&t>=0));
+ return !!resultIdentity(r.frameArtifact);
+}
+function verifiedReview(path,reportHash,manifestHash,reviews,{visual=false,evidence=[]}={}){
  // Only a separately loaded server record may review meaning or pixels.
- return list(reviews).find(r=>r&&r.fieldPath===path&&r.reportHash===reportHash&&r.sourceManifestHash===manifestHash&&r.verdict==='supported'&&present(r.receiptId)&&['human_source_review','independent_source_review'].includes(r.kind)&&(!visual||r.visualPixelsReviewed===true&&resultIdentity(r.frameArtifact)&&r.sourceManifestHash===qualityDigest(r.sourceManifest)&&same(r.videoIdentity,r.sourceManifest?.video)));
+ if(negativeReview(path,reportHash,manifestHash,reviews))return null;
+ return matchingReviews(path,reportHash,manifestHash,reviews).find(r=>r.verdict==='supported'&&(!visual||r.visualPixelsReviewed===true&&reviewedFrames(r)&&r.sourceManifestHash===qualityDigest(r.sourceManifest)&&same(r.videoIdentity,r.sourceManifest?.video)&&(!evidence.length||(r.frameArtifacts?.flatMap(f=>f.sampleSeconds)??r.frameSampleSeconds??[]).every(t=>evidence.some(e=>e.source==='video'&&t>=e.start_seconds&&t<=e.end_seconds)))));
 }
 function temporalAnchor(e,record,transcriptionReceipt){
  if(e.start_seconds===undefined&&e.end_seconds===undefined)return {state:'not_recorded',verified:false};
@@ -78,6 +90,7 @@ function temporalAnchor(e,record,transcriptionReceipt){
 function evaluateClaim(path,value,evidence,record,manifest,reportHash,manifestHash,reviews,transcriptionReceipt){
  if(!present(value))return check('CLAIM_EMPTY','invalid','Afirmação vazia.',{fieldPath:path});
  const refs=list(evidence);
+ if(!refs.length)return check('CLAIM_EVIDENCE_MISSING','inconclusive','Afirmação sem referências próprias; recibo independente não substitui a fonte.',{fieldPath:path});
  let literal=false,invalid=false,visual=path.startsWith('visual_observations.'),negated=false,temporalUnknown=false;
  for(const e of refs){
   if(!e||!['caption','transcript','video'].includes(e.source)){invalid=true;continue;}
@@ -99,9 +112,10 @@ function evaluateClaim(path,value,evidence,record,manifest,reportHash,manifestHa
  }
  if(literal&&['caption','transcript'].some(source=>literalClaimSupport(value,sourceText(record,source))==='negated_context'))negated=true;
  if(invalid)return check('CLAIM_EVIDENCE_INVALID','invalid','Referência inválida, tempo contraditório ou identidade incompatível com a fonte salva.',{fieldPath:path});
+ const rejected=negativeReview(path,reportHash,manifestHash,reviews);if(rejected)return rejected;
  if(negated)return check('CLAIM_NEGATED_CONTEXT','inconclusive','O valor foi extraído de contexto negativo; citação parcial não confirma afirmação positiva.',{fieldPath:path});
  if(literal&&!temporalUnknown&&!visual)return check('LITERAL_CLAIM_SUPPORTED','supported','Afirmação integral ancorada como texto da fonte identificada; não comprova alegação externa ou fidelidade do STT.',{fieldPath:path,verificationLevel:'literal_anchor_verified'});
- const review=verifiedReview(path,reportHash,manifestHash,reviews,{visual});
+ const review=(!visual||refs.some(e=>e.source==='video'))?verifiedReview(path,reportHash,manifestHash,reviews,{visual,evidence:refs}):null;
  if(review)return check(visual?'VISUAL_REVIEW_SUPPORTED':'SEMANTIC_REVIEW_SUPPORTED','supported','Revisão independente vinculada à afirmação e às fontes.',{fieldPath:path,verificationLevel:visual?'visual_support_independently_verified':'semantic_support_reviewed',reviewReceiptId:review.receiptId});
  return check(visual?'VISUAL_SUPPORT_UNVERIFIED':temporalUnknown?'TRANSCRIPT_ANCHOR_UNALIGNED':'CLAIM_SUPPORT_UNVERIFIED','inconclusive',visual?'Janela, texto ou booleano não comprovam pixels; apoio visual independente ausente.':temporalUnknown?'Intervalo citado sem palavras ou segmentos que comprovem o trecho nesse intervalo.':'A citação presente não comprova o significado da afirmação completa.',{fieldPath:path});
 }
@@ -120,9 +134,9 @@ function contextualEvidenceReview(report,record,manifest,reportHash,manifestHash
    temporal=temporalAnchor(range,record,transcriptionReceipt);
    if(temporal.state==='invalid'){output.push({id:e.id,state:'invalid',reason:'temporal_anchor_mismatch'});continue;}
   }
-  const review=verifiedReview('contextualSignals.evidence.'+e.id,reportHash,manifestHash,reviews,{visual});
+  const fieldPath='contextualSignals.evidence.'+e.id,rejected=negativeReview(fieldPath,reportHash,manifestHash,reviews),review=verifiedReview(fieldPath,reportHash,manifestHash,reviews,{visual,evidence:visual?[{source:'video',...range}]:[]});
   const common={id:e.id,timeRange:e.timeRange??null,temporalAnchorVerified:temporal.verified,sourceIdentity:expected,sourceKind:e.sourceKind,policyVersion:semanticQualityPolicyVersion};
-  output.push(review?{...common,state:'supported',verificationLevel:visual?'visual_support_independently_verified':'semantic_support_reviewed',reviewReceiptId:review.receiptId}:{...common,state:visual||temporal.state==='unknown'?'present_unverified':'supported',verificationLevel:visual?'source_present':'literal_anchor_verified',reason:visual?'pixels_not_independently_reviewed':'literal_only_not_proposition_review'});
+  output.push(rejected?{...common,state:rejected.state,reason:rejected.reason,reviewReceiptId:rejected.reviewReceiptId}:review?{...common,state:'supported',verificationLevel:visual?'visual_support_independently_verified':'semantic_support_reviewed',reviewReceiptId:review.receiptId}:{...common,state:visual||temporal.state==='unknown'?'present_unverified':'supported',verificationLevel:visual?'source_present':'literal_anchor_verified',reason:visual?'pixels_not_independently_reviewed':'literal_only_not_proposition_review'});
  }
  return output;
 }
@@ -155,13 +169,16 @@ export function evaluateQualityGateV2({record={},report,mediaInspection=null,tra
  }catch{checks.push(check('REPORT_CONTRACT_INVALID','invalid','Estrutura principal ou campo de conhecimento inválido sob o contrato tipado.'));}
  if(present(record.source_caption?.text)&&present(record.transcript)&&normalize(record.source_caption.text)!==normalize(record.transcript))gaps.push(check('SOURCE_EQUIVALENCE_UNMEASURED','unknown','Legenda e transcrição distintas preservadas. Diferenças não são automaticamente contradição; equivalência semântica não foi medida.'));
  const q=report.qualityEvidenceV2;
+ for(const [key,items]of [['applications',list(report.useful_information)],['visualObservations',list(report.visual_observations)]]){
+  if(q?.[key]!==undefined){const seen=new Set();if(!Array.isArray(q[key])||q[key].some(e=>!e||!Number.isSafeInteger(e.index)||e.index<0||e.index>=items.length||seen.has(e.index)||!seen.add(e.index)||!Array.isArray(e.evidence)||!e.evidence.length))checks.push(check('INDEXED_EVIDENCE_INVALID','invalid','Referência indexada ausente, duplicada ou fora dos campos do relatório.',{fieldPath:'qualityEvidenceV2.'+key}));}
+ }
  if(q?.version!==2)checks.push(check('NARRATIVE_EVIDENCE_MISSING','inconclusive','Contrato versionado de evidência para título e resumo ausente.'));
  for(const path of ['title','summary'])checks.push(evaluateClaim(path,report[path],q?.[path],record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));
  for(const [index,item]of list(report.useful_information).entries())checks.push(evaluateClaim('useful_information.'+index+'.claim',item?.claim,item?.evidence,record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));
  for(const [index,item]of list(report.knowledge?.fields).entries()){
   checks.push(evaluateClaim('knowledge.fields.'+index+'.value',item?.value,item?.evidence,record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));
-  const roleRule=typedFieldLiteralRule(item),roleReview=verifiedReview('knowledge.fields.'+index+'.kind',reportHash,sourceManifestHash,trustedReviews);
-  checks.push(check(roleRule?'TYPED_FIELD_RULE_SUPPORTED':roleReview?'TYPED_FIELD_REVIEW_SUPPORTED':'TYPED_FIELD_ROLE_UNVERIFIED',roleRule||roleReview?'supported':'inconclusive',roleRule?'Papel tipado conferido por regra textual limitada: '+roleRule:roleReview?'Papel tipado conferido por recibo independente.':'Texto literal não comprova por si só o papel tipado do campo.',{fieldPath:'knowledge.fields.'+index+'.kind',typedRule:roleRule,reviewReceiptId:roleReview?.receiptId??null}));
+  const rolePath='knowledge.fields.'+index+'.kind',roleRule=typedFieldLiteralRule(item),roleRejected=negativeReview(rolePath,reportHash,sourceManifestHash,trustedReviews),roleReview=verifiedReview(rolePath,reportHash,sourceManifestHash,trustedReviews,{visual:list(item?.evidence).some(e=>e.source==='video'),evidence:list(item?.evidence)});
+  checks.push(roleRejected??check(roleRule?'TYPED_FIELD_RULE_SUPPORTED':roleReview?'TYPED_FIELD_REVIEW_SUPPORTED':'TYPED_FIELD_ROLE_UNVERIFIED',roleRule||roleReview?'supported':'inconclusive',roleRule?'Papel tipado conferido por regra textual limitada: '+roleRule:roleReview?'Papel tipado conferido por recibo independente.':'Texto literal não comprova por si só o papel tipado do campo.',{fieldPath:'knowledge.fields.'+index+'.kind',typedRule:roleRule,reviewReceiptId:roleReview?.receiptId??null}));
   if(item?.name!==fieldLabels[item?.kind])checks.push(evaluateClaim('knowledge.fields.'+index+'.name',item?.name,item?.evidence,record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));
  }
  for(const [index,item]of list(report.knowledge?.keywords).entries())checks.push(evaluateClaim('knowledge.keywords.'+index+'.term',item?.term,item?.evidence,record,sourceManifest,reportHash,sourceManifestHash,trustedReviews,transcriptionReceipt));
@@ -212,13 +229,16 @@ export async function prepareQualityCandidateV2({record,report,rawResponse,ports
  if(saved?.candidateContentHash!==qualityCandidateHash(report))throw Error('Hash do candidato persistido incompatível.');
  if(!candidateIdentity)throw Error('Candidato precisa de identidade durável antes da avaliação.');
  const gate=evaluateQualityGateV2({record,report,...evidence});
- const receiptBody={createdBy:'server:gate_v2',policyVersion:qualityPolicyVersion,verdict:gate.accepted?'accepted':'rejected',reelId:record.id,analysisKey:candidateIdentity.key,analysisGeneration:candidateIdentity.generation,candidateContentHash:gate.reportHash,sourceManifest:gate.sourceManifest,sourceManifestHash:gate.sourceManifestHash,checks:gate.checks,gaps:gate.gaps,semanticPolicyVersion:semanticQualityPolicyVersion,contextualEvidence:gate.contextualEvidence??[],contextualPropositions:gate.contextualPropositions??null};
+ const receiptBody={createdBy:'server:gate_v2',...(evidence.independentReview?{independentReview:evidence.independentReview}:{}),policyVersion:qualityPolicyVersion,verdict:gate.accepted?'accepted':'rejected',reelId:record.id,analysisKey:candidateIdentity.key,analysisGeneration:candidateIdentity.generation,candidateContentHash:gate.reportHash,sourceManifest:gate.sourceManifest,sourceManifestHash:gate.sourceManifestHash,checks:gate.checks,gaps:gate.gaps,semanticPolicyVersion:semanticQualityPolicyVersion,contextualEvidence:gate.contextualEvidence??[],contextualPropositions:gate.contextualPropositions??null};
  const receipt={id:'quality_'+qualityDigest(receiptBody),...receiptBody};
  const receiptIdentity={receiptId:receipt.id,receiptHash:qualityDigest(receipt)};
  const savedReceipt=await ports.saveReceipt(receipt);
  if(savedReceipt?.id!==receipt.id||savedReceipt?.receiptHash!==receiptIdentity.receiptHash)throw Error('Recibo precisa de confirmação durável antes da publicação.');
  return {...gate,candidateIdentity,receiptIdentity,publicationIdentity:{...candidateIdentity,reportHash:gate.reportHash},expectedPublicationRevision,publicationChanged:false};
 }
+// Additional content fence for reviewed recoveries; legacy identity hashes and
+// historical publication receipts keep their existing interpretation.
+export const qualityReviewSourceContentHash=(record={})=>qualityDigest({captionText:record.source_caption?.text??null,transcript:record.transcript??null,durationSeconds:record.duration_seconds??null});
 export function qualitySourceStateHash(record={}){
  return qualityDigest({sourceManifest:qualitySourceManifest(record),mediaInspection:record.media_inspection_receipt??null,transcriptionReceipt:record.transcription_receipt??null});
 }

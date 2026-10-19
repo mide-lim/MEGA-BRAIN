@@ -54,12 +54,12 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
    schema.required=[...schema.required,'qualityEvidenceV2','evidence_contract','evidence_anchor_hash'];
    for(const key of ['title','summary'])schema.properties.qualityEvidenceV2.properties[key]=structuredClone(anchors.evidence);
    for(const key of ['applications','visualObservations'])schema.properties.qualityEvidenceV2.properties[key].items.properties.evidence=structuredClone(anchors.evidence);
-   schema.properties.useful_information.items.properties.evidence=structuredClone(anchors.evidence);
-   schema.properties.knowledge.properties.fields.items.properties.evidence=structuredClone(anchors.evidence);
-   schema.properties.knowledge.properties.keywords.items.properties.evidence=structuredClone(anchors.evidence);
+   schema.properties.useful_information.items.properties.evidence=structuredClone(anchors.factualEvidence);
+   schema.properties.knowledge.properties.fields.items.properties.evidence=structuredClone(anchors.factualEvidence);
+   schema.properties.knowledge.properties.keywords.items.properties.evidence=structuredClone(anchors.factualEvidence);
    schema.properties.contextualSignals.properties.evidence=anchors.contextual;
    if(taxonomySignalsEnabled){
-    const transcript=anchors.evidence.items.anyOf.filter(branch=>branch.properties.source.enum[0]==='transcript');
+    const transcript=(anchors.factualEvidence.items.anyOf??[]).filter(branch=>branch.properties.source.enum[0]==='transcript');
     const units=schema.properties.taxonomySignals.properties.units;
     units.items.properties.evidence=transcript.length?{type:'ARRAY',items:{anyOf:transcript}}:{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
     if(!transcript.length)units.maxItems=0;

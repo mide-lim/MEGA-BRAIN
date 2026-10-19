@@ -91,6 +91,32 @@ test('new anchored response is evaluated and restored by the unchanged quality g
  const invalid={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(numeric)}]}}]};
  assert.deepEqual(analysisOutcome(invalid,r,opts).reasons,['invalid_evidence_transport']);
 });
+
+test('factual transcript evidence requires saved timing while narrative gaps remain untimed',async()=>{
+ const {qualitySourceManifest}=await import('../lib/reels-quality-gate.mjs');
+ const {sourceAnchoredEvidenceContract,normalizeSourceAnchoredReport}=await import('../lib/reels-analysis-contract.mjs');
+ const r={...record,video_key:'originals/test/video.mp4',video_generation:'11',transcript_key:'results/test/transcript.json',transcript_generation:'12',source_caption:{text:'Guardar a fonte.',capture_id:'capture-test'}};
+ const requestFor=r=>buildAnalysisRequest({record:r,bucket:'megabrain-v0-media',preset,qualityGateV2Enabled:true,taxonomySignalsEnabled:true});
+ const schema=requestFor(r).generationConfig.responseSchema;
+ for(const family of [schema.properties.useful_information,schema.properties.knowledge.properties.fields,schema.properties.knowledge.properties.keywords]){
+  assert.ok(!family.items.properties.evidence.items.anyOf.some(b=>b.properties.source.enum[0]==='transcript'));
+ }
+ assert.equal(schema.properties.taxonomySignals.properties.units.maxItems,0);
+ const narrative=schema.properties.qualityEvidenceV2.properties.title.items.anyOf.find(b=>b.properties.source.enum[0]==='transcript');
+ assert.ok(narrative);assert.ok(!narrative.required.includes('start_ref'));
+ const manifest=qualitySourceManifest(r),c=sourceAnchoredEvidenceContract(r,manifest),e={source:'transcript',sourceIdentity:manifest.transcript,excerpt:record.transcript};
+ const raw={evidence_contract:c.version,evidence_anchor_hash:c.hash,qualityEvidenceV2:{version:2,title:[e],summary:[e]},useful_information:[]};
+ assert.equal(normalizeSourceAnchoredReport(raw,r,manifest).qualityEvidenceV2.title[0].start_seconds,undefined);
+ for(const extra of [{useful_information:[{evidence:[e]}]},{knowledge:{fields:[{evidence:[e]}]}},{knowledge:{keywords:[{evidence:[e]}]}},{taxonomySignals:{units:[{evidence:[e]}]}}])assert.throws(()=>normalizeSourceAnchoredReport({...raw,...extra},r,manifest),/factual/);
+ const timed={...r,transcript_words:[{word:record.transcript,start_seconds:0.125,end_seconds:2.75}]},timedSchema=requestFor(timed).generationConfig.responseSchema,tc=sourceAnchoredEvidenceContract(timed,manifest);
+ for(const family of [timedSchema.properties.useful_information,timedSchema.properties.knowledge.properties.fields,timedSchema.properties.knowledge.properties.keywords,timedSchema.properties.taxonomySignals.properties.units]){
+  const b=family.items.properties.evidence.items.anyOf.find(b=>b.properties.source.enum[0]==='transcript');
+  assert.ok(b.required.includes('start_ref'));assert.ok(b.required.includes('end_ref'));
+ }
+ const timedRaw={...raw,evidence_anchor_hash:tc.hash,useful_information:[{evidence:[{...e,start_ref:'t1',end_ref:'t2'}]}]};
+ assert.equal(normalizeSourceAnchoredReport(timedRaw,timed,manifest).useful_information[0].evidence[0].start_seconds,0.125);
+ assert.throws(()=>normalizeSourceAnchoredReport({...timedRaw,useful_information:[{evidence:[e]}]},timed,manifest),/factual/);
+});
 test('review omits unsupported claims without rewriting quotes or discarding valid evidence',()=>{
  const original=report(),invalid=structuredClone(original.useful_information[0]);
  invalid.evidence[0].excerpt='Guardar a fonte... a informação.';

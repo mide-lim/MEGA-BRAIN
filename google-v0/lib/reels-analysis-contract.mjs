@@ -36,7 +36,8 @@ export function sourceAnchoredEvidenceContract(record,manifest){
  // round a source timestamp or fabricate alignment/independent recipe units.
  const selected=points.length<=64?points:Array.from({length:64},(_,i)=>points[Math.round(i*(points.length-1)/63)]);
  const anchors=selected.map((seconds,i)=>({ref:'t'+i,seconds}));
- const body={version:sourceAnchorsVersion,sourceManifest:manifest,anchors};
+ const hasTimedTranscript=units.some(v=>Number.isFinite(v.start_seconds)&&Number.isFinite(v.end_seconds)&&v.start_seconds>=0&&v.end_seconds>=v.start_seconds&&v.end_seconds<=duration&&typeof(v.word??v.text??v.transcript)==='string'&&(v.word??v.text??v.transcript).trim());
+ const body={version:sourceAnchorsVersion,sourceManifest:manifest,anchors,hasTimedTranscript:!!hasTimedTranscript};
  const hash=createHash('sha256').update(JSON.stringify(body)).digest('hex');
  const refs=anchors.map(v=>v.ref);
  const branches=anchoredSources.filter(source=>manifest[source]).map(source=>{
@@ -47,21 +48,27 @@ export function sourceAnchoredEvidenceContract(record,manifest){
  });
  if(!branches.length)throw Error('Fontes identificadas ausentes para evidências.');
  const evidence={type:'ARRAY',items:{anyOf:branches}};
+ // Fact fields already require bounded times in the stored report contract.
+ // Untimed transcript citations remain available only for narrative/context.
+ const factualBranches=branches.filter(b=>b.properties.source.enum[0]!=='transcript'||hasTimedTranscript).map(b=>{
+  const branch=structuredClone(b);if(branch.properties.source.enum[0]==='transcript')branch.required.push('start_ref','end_ref');return branch;
+ });
+ const factualEvidence=factualBranches.length?{type:'ARRAY',items:{anyOf:factualBranches}}:{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
  const contextual={type:'ARRAY',items:{anyOf:branches.map(branch=>{
   const source=branch.properties.source.enum[0],identity=manifest[source],{source:ignored,sourceIdentity:ignoredIdentity,...remaining}=branch.properties;
   return {type:'OBJECT',required:['id','sourceKind','sourceIdentity','excerpt','verificationLevel',...(source==='video'?['start_ref','end_ref']:[])],properties:{id:{type:'STRING'},sourceKind:enumString([source]),sourceIdentity:enumString([source==='caption'?identity.captureId:identity.key+'@'+identity.generation]),...remaining,verificationLevel:enumString(['source_present','literal_anchor_verified','semantic_support_reviewed','visual_support_independently_verified'])}};
  })}};
- return {version:sourceAnchorsVersion,hash,anchors,evidence,contextual,manifest};
+ return {version:sourceAnchorsVersion,hash,anchors,evidence,factualEvidence,hasTimedTranscript:!!hasTimedTranscript,contextual,manifest};
 }
 
-export const sourceAnchorsInstruction=' Contrato de transporte source-anchors-v1: devolva evidence_contract e evidence_anchor_hash exatamente como fornecidos. Nunca escreva start_seconds, end_seconds ou timeRange; use somente start_ref/end_ref escolhidos em source_time_anchors. Legenda não tem tempo: omita ambas as referências. Transcrição pode omitir tempos quando não houver alinhamento; nunca invente alinhamento. Vídeo exige as duas referências, como janela candidata, sem certificar pixels. Copie todos os campos da sourceIdentity exata da fonte, inclusive generation; a identidade é referência, não verificação. As âncoras são limites salvos ou limites verificados da mídia, não preparações independentes. Não produza dígitos/decimais para substituir referências.';
+export const sourceAnchorsInstruction=' Contrato de transporte source-anchors-v1: devolva evidence_contract e evidence_anchor_hash exatamente como fornecidos. Nunca escreva start_seconds, end_seconds ou timeRange; use somente start_ref/end_ref escolhidos em source_time_anchors. Legenda não tem tempo: omita ambas as referências. Somente em qualityEvidenceV2 e contextualSignals a transcrição pode omitir tempos quando não houver alinhamento. Em useful_information, knowledge.fields, knowledge.keywords e taxonomySignals.units, evidência de transcrição exige ambas as referências e tempos de palavras/segmentos salvos; se não estiverem disponíveis, omita o item não sustentado e registre a lacuna em limitations/missing_information, ou use legenda realmente sustentada. Nunca invente alinhamento. Vídeo exige as duas referências, como janela candidata, sem certificar pixels. Copie todos os campos da sourceIdentity exata da fonte, inclusive generation; a identidade é referência, não verificação. As âncoras são limites salvos ou limites verificados da mídia, não preparações independentes. Não produza dígitos/decimais para substituir referências.';
 
 export function normalizeSourceAnchoredReport(report,record,manifest){
  if(report?.evidence_contract===undefined&&report?.evidence_anchor_hash===undefined)return report;
  const contract=sourceAnchoredEvidenceContract(record,manifest);
  if(report.evidence_contract!==contract.version||report.evidence_anchor_hash!==contract.hash)throw Error('Contrato ou hash das âncoras divergente.');
  const times=new Map(contract.anchors.map(v=>[v.ref,v.seconds]));
- const read=(value,{contextual=false}={})=>{
+ const read=(value,{contextual=false,factual=false}={})=>{
   if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Evidência de transporte inválida.');
   const source=contextual?value.sourceKind:value.source,expected=manifest[source];
   if(!anchoredSources.includes(source)||!expected)throw Error('Fonte de transporte ausente.');
@@ -69,6 +76,7 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
   if(contextual?value.sourceIdentity!==expectedId:!equalIdentity(value.sourceIdentity,expectedId))throw Error('Identidade de transporte divergente.');
   if(Object.hasOwn(value,'start_seconds')||Object.hasOwn(value,'end_seconds')||Object.hasOwn(value,'timeRange'))throw Error('Tempo numérico não permitido no transporte.');
   const hasStart=Object.hasOwn(value,'start_ref'),hasEnd=Object.hasOwn(value,'end_ref');
+  if(factual&&source==='transcript'&&(!contract.hasTimedTranscript||!hasStart))throw Error('Campo factual exige intervalo de transcrição salva; preserve a lacuna sem inventar alinhamento.');
   if(source==='caption'&&(hasStart||hasEnd)||hasStart!==hasEnd||source==='video'&&!hasStart)throw Error('Referências temporais inválidas para a fonte.');
   const {start_ref,end_ref,...copy}=value;
   if(!hasStart)return copy;
@@ -77,14 +85,14 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
   return contextual?{...copy,timeRange:{startSeconds:start,endSeconds:end}}:{...copy,start_seconds:start,end_seconds:end};
  };
  const copy=structuredClone(report);
- const mapEvidence=entry=>{if(Array.isArray(entry?.evidence))entry.evidence=entry.evidence.map(e=>read(e));};
+ const mapEvidence=(entry,factual=true)=>{if(Array.isArray(entry?.evidence))entry.evidence=entry.evidence.map(e=>read(e,{factual}));};
  for(const item of copy.useful_information??[])mapEvidence(item);
  for(const item of copy.knowledge?.fields??[])mapEvidence(item);
  for(const item of copy.knowledge?.keywords??[])mapEvidence(item);
  for(const unit of copy.taxonomySignals?.units??[])mapEvidence(unit);
  const q=copy.qualityEvidenceV2;
  for(const key of ['title','summary'])if(Array.isArray(q?.[key]))q[key]=q[key].map(e=>read(e));
- for(const key of ['applications','visualObservations'])for(const item of q?.[key]??[])mapEvidence(item);
+ for(const key of ['applications','visualObservations'])for(const item of q?.[key]??[])mapEvidence(item,false);
  if(Array.isArray(copy.contextualSignals?.evidence))copy.contextualSignals.evidence=copy.contextualSignals.evidence.map(e=>read(e,{contextual:true}));
  return copy;
 }

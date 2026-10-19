@@ -1,6 +1,46 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {Firestore,encodeFields}from '../lib/firestore.mjs';
 import {ReelsRepository} from '../lib/reels-repository.mjs';
 const prefix='projects/test-project/databases/(default)/documents/';
+const stoppedCapacityInput=()=>({executionId:'a'.repeat(64),reelId:'Reel_001',executionVersion:'job-v1',stopVersion:'stop-v1',videoVersion:'video-v1',control:{updateTime:'control-v1',data:{active:['a'.repeat(64),'b'.repeat(64)],paused:true,desiredConcurrency:1}},observedAt:'2026-10-19T01:00:00.000Z'});
+function stoppedCapacityApi({mutateRows=rows=>rows,commitError}={}){
+ const calls=[],input=stoppedCapacityInput();return {calls,input,project:'test-project',request:async(url,options)=>{
+  calls.push({url,options});if(url.endsWith(':beginTransaction'))return {transaction:'bounded-capacity-transaction'};
+  if(url.endsWith(':rollback'))return {};
+  if(url.endsWith(':batchGet'))return mutateRows([['reels_executions/'+input.executionId,'job-v1'],['execution_stops/'+input.executionId,'stop-v1'],['videos/Reel_001','video-v1'],['reels_controls/acquisition','control-v1']].map(([path,updateTime])=>({found:{name:prefix+path,updateTime,fields:{}}})));
+  if(commitError)throw commitError;return {writeResults:[{updateTime:'control-v2'}]};
+ }};
+}
+test('stopped acquisition slot release verifies every proof atomically and writes only capacity fields',async()=>{
+ const api=stoppedCapacityApi(),db=new Firestore(api),{calls,input}=api;
+ assert.deepEqual(await db.releaseStoppedAcquisitionCapacity(input),{released:true});assert.equal(calls.length,3);assert.equal(calls[2].url,'https://firestore.googleapis.com/v1/'+prefix.slice(0,-1)+':commit');
+ assert.deepEqual(calls[0].options.json,{options:{readWrite:{}}});assert.deepEqual(calls[1].options.json,{transaction:'bounded-capacity-transaction',documents:['reels_executions/'+input.executionId,'execution_stops/'+input.executionId,'videos/Reel_001','reels_controls/acquisition'].map(path=>prefix+path),mask:{fieldPaths:['id']}});
+ assert.equal(calls[2].options.json.transaction,'bounded-capacity-transaction');const writes=calls[2].options.json.writes;assert.equal(writes.length,1);
+ assert.deepEqual(writes[0],{update:{name:prefix+'reels_controls/acquisition',fields:encodeFields({active:['b'.repeat(64)],observedAt:input.observedAt})},updateMask:{fieldPaths:['active','observedAt']},currentDocument:{updateTime:'control-v1'}});
+ assert.deepEqual(input.control.data.active,['a'.repeat(64),'b'.repeat(64)]);assert.equal(input.control.data.paused,true);
+});
+test('stopped capacity commit rejects a stale proof without blind write retries',async()=>{
+ const api=stoppedCapacityApi({commitError:Object.assign(Error('changed version'),{status:412})}),db=new Firestore(api);
+ assert.deepEqual(await db.releaseStoppedAcquisitionCapacity(api.input),{released:false});assert.equal(api.calls.filter(c=>c.url.endsWith(':commit')).length,1);assert.ok(api.calls.at(-1).url.endsWith(':rollback'));
+});
+test('stopped capacity commit keeps ambiguous acknowledgement explicit without retrying',async()=>{
+ const api=stoppedCapacityApi({commitError:Error('response lost')}),db=new Firestore(api);
+ await assert.rejects(()=>db.releaseStoppedAcquisitionCapacity(api.input),/response lost/);assert.equal(api.calls.filter(c=>c.url.endsWith(':commit')).length,1);assert.ok(api.calls.at(-1).url.endsWith(':rollback'));
+});
+for(const row of [0,1,2,3])test('transaction version change prevents any capacity write: proof '+row,async()=>{
+ const api=stoppedCapacityApi({mutateRows:rows=>{rows[row].found.updateTime='changed';return rows;}}),db=new Firestore(api);
+ assert.deepEqual(await db.releaseStoppedAcquisitionCapacity(api.input),{released:false});assert.equal(api.calls.filter(c=>c.url.endsWith(':commit')).length,0);assert.ok(api.calls.at(-1).url.endsWith(':rollback'));
+});
+for(const kind of ['missing','duplicate','foreignProject','foreignPath','incomplete'])test('capacity transaction fails closed on '+kind+' proof response',async()=>{
+ const api=stoppedCapacityApi({mutateRows:rows=>{
+  if(kind==='missing')rows[0]={missing:rows[0].found.name};if(kind==='duplicate')rows[1]=rows[0];if(kind==='foreignProject')rows[0].found.name=rows[0].found.name.replace('test-project','foreign');if(kind==='foreignPath')rows[0].found.name=prefix+'videos/Other_001';if(kind==='incomplete')rows.pop();return rows;
+ }}),db=new Firestore(api);
+ if(kind==='missing')assert.deepEqual(await db.releaseStoppedAcquisitionCapacity(api.input),{released:false});else await assert.rejects(()=>db.releaseStoppedAcquisitionCapacity(api.input));
+ assert.equal(api.calls.filter(c=>c.url.endsWith(':commit')).length,0);assert.ok(api.calls.at(-1).url.endsWith(':rollback'));
+});
+for(const field of ['executionId','reelId','executionVersion','stopVersion','videoVersion','control','observedAt'])test('stopped capacity commit requires bounded identity and all proof versions: '+field,async()=>{
+ let calls=0;const db=new Firestore({project:'test-project',request:async()=>{calls++;}}),input=stoppedCapacityInput();input[field]=null;
+ await assert.rejects(()=>db.releaseStoppedAcquisitionCapacity(input),/Prova de capacidade/);assert.equal(calls,0);
+});
 
 test('import archive queries use projected fields in permitted inert collections through Firestore codec',async()=>{
  const calls=[],id='a'.repeat(64),db=new Firestore({project:'test-project',request:async(url,options)=>{calls.push(options.json.structuredQuery);const collection=options.json.structuredQuery.from[0].collectionId;return collection==='reels_historical_activity'?[{document:{name:prefix+collection+'/'+id,fields:encodeFields({id,kind:'execution',reelId:'Reel_001',stage:'analysis',sourceStatus:'waiting',historical:true,executable:false})}}]:[];}}),repository=new ReelsRepository({store:db});

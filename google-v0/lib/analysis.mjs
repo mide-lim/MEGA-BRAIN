@@ -2,7 +2,7 @@ import {consolidatePublication,preservePublicationSourcesV2} from './analysis-pu
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 import {qualitySourceManifest,evaluateQualityGateV2,qualityCategoryOptions} from './reels-quality-gate.mjs';
-import {taxonomySignalsSchema,taxonomySignalsInstruction,qualityEvidenceV2Schema,contextualSignalsSchema,qualityGateV2Instruction} from './reels-analysis-contract.mjs';
+import {taxonomySignalsSchema,taxonomySignalsInstruction,qualityEvidenceV2Schema,contextualSignalsSchema,qualityGateV2Instruction,sourceAnchoredEvidenceContract,normalizeSourceAnchoredReport,sourceAnchorsInstruction} from './reels-analysis-contract.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
@@ -45,13 +45,25 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
   const caption=record.source_caption?.text??'';
   if(typeof caption!=='string'||caption.length>50000)throw new Error('Legenda fora do limite.');
   const options=qualityGateV2Enabled?analysisCategoryOptions(contextCatalogSnapshot):categoryOptions(),additionalIds=options.filter(c=>!categoryIds.includes(c.id)).map(c=>c.id);
-  let schema=taxonomySignalsEnabled?{...reportSchema,properties:{...reportSchema.properties,taxonomySignals:taxonomySignalsSchema}}:reportSchema;
+  let schema=taxonomySignalsEnabled?{...reportSchema,properties:{...reportSchema.properties,taxonomySignals:taxonomySignalsSchema}}:reportSchema,anchors=null;
   if(qualityGateV2Enabled){
    schema=structuredClone(schema);schema.properties.categories=categorySelectionSchema(additionalIds);
-   schema.properties.qualityEvidenceV2=qualityEvidenceV2Schema;schema.properties.contextualSignals=contextualSignalsSchema;
-   schema.required=[...schema.required,'qualityEvidenceV2'];
-   const identitySchema=qualityEvidenceV2Schema.properties.title.items.properties.sourceIdentity;
-   for(const entry of [schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence])entry.items.properties.sourceIdentity=identitySchema;
+   anchors=sourceAnchoredEvidenceContract(record,qualitySourceManifest(record));
+   schema.properties.qualityEvidenceV2=structuredClone(qualityEvidenceV2Schema);schema.properties.contextualSignals=structuredClone(contextualSignalsSchema);
+   schema.properties.evidence_contract={type:'STRING',enum:[anchors.version]};schema.properties.evidence_anchor_hash={type:'STRING',enum:[anchors.hash]};
+   schema.required=[...schema.required,'qualityEvidenceV2','evidence_contract','evidence_anchor_hash'];
+   for(const key of ['title','summary'])schema.properties.qualityEvidenceV2.properties[key]=structuredClone(anchors.evidence);
+   for(const key of ['applications','visualObservations'])schema.properties.qualityEvidenceV2.properties[key].items.properties.evidence=structuredClone(anchors.evidence);
+   schema.properties.useful_information.items.properties.evidence=structuredClone(anchors.evidence);
+   schema.properties.knowledge.properties.fields.items.properties.evidence=structuredClone(anchors.evidence);
+   schema.properties.knowledge.properties.keywords.items.properties.evidence=structuredClone(anchors.evidence);
+   schema.properties.contextualSignals.properties.evidence=anchors.contextual;
+   if(taxonomySignalsEnabled){
+    const transcript=anchors.evidence.items.anyOf.filter(branch=>branch.properties.source.enum[0]==='transcript');
+    const units=schema.properties.taxonomySignals.properties.units;
+    units.items.properties.evidence=transcript.length?{type:'ARRAY',items:{anyOf:transcript}}:{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
+    if(!transcript.length)units.maxItems=0;
+   }
    if(contextCatalogSnapshot!==null&&(typeof contextCatalogSnapshot!=='object'||Array.isArray(contextCatalogSnapshot)||JSON.stringify(contextCatalogSnapshot).length>30000))throw Error('Catálogo contextual fora do limite.');
   }
   validateProviderResponseSchema(schema);
@@ -59,12 +71,12 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. Avalie conjuntamente a finalidade desenvolvida no vídeo, transcript_raw e caption_raw quando disponíveis; uma palavra isolada ou um objeto citado não determina o destino. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,category_options:options,category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...((taxonomySignalsEnabled||qualityGateV2Enabled)?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[],transcript_segments:Array.isArray(record.transcript_segments)?record.transcript_segments:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:options,category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),evidence_contract:anchors.version,evidence_anchor_hash:anchors.hash,source_time_anchors:anchors.anchors,context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...((taxonomySignalsEnabled||qualityGateV2Enabled)?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[],transcript_segments:Array.isArray(record.transcript_segments)?record.transcript_segments:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
   if(taxonomySignalsEnabled)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
-  if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction;
+  if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction+sourceAnchorsInstruction;
   return request;
 }
 
@@ -134,6 +146,7 @@ export function analysisOutcome(response,record,{requireKnowledge=false,sourceGr
  let parsed;
  try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
  catch{return {accepted:false,reasons:['invalid_json']};}
+ if(qualityGateV2!==null){try{parsed=normalizeSourceAnchoredReport(parsed,record,qualitySourceManifest(record));}catch{return {accepted:false,reasons:['invalid_evidence_transport']};}}
  const additionalCategoryIds=qualityGateV2!==null?analysisCategoryOptions(contextCatalogSnapshot).filter(c=>!categoryIds.includes(c.id)).map(c=>c.id):[];
  const categories=normalizedCategoryIds(parsed?.categories);
  if(qualityGateV2===null&&categories!==parsed?.categories)parsed={...parsed,categories,limitations:Array.isArray(parsed.limitations)?[...parsed.limitations,'Categoria geral de tecnologia redundante omitida; a resposta original foi preservada.']:parsed.limitations};
@@ -171,4 +184,3 @@ export function reviewSavedCategorySelection(response,record,{categories,reason,
  const outcome=analysisOutcome(proposal,record,{requireKnowledge});
  return {...outcome,category_review:{original_categories:[...ids],selected_categories:[...categories],reason:reason.trim(),inference_replayed:false,publication_performed:false}};
 }
-

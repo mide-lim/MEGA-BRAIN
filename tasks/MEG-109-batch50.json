@@ -3,96 +3,99 @@
   "id": "MEG-109",
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
-  "base_commit": "4e9458888d40c6c6c5dfd2d617cd39dbaed13e1e",
-  "objective": "Owner explicitly authorizes50 newReels in existing three queues/workers at concurrency1, without repeated paid stages. Reuse one private approval/scope/ledger perReel; allow server allowlist1..50 and batch-only approvalTTL48h. In authentic batchscope only, uncertain attempt keeps its reservation/claim/no retry but does not globally pause otherReels. Original262 financialbatch, all quotas/identities/objectproofs and unit/legacy behavior preserved. Native development/review authorized. This developer performs code/tests/sharedimage/PR only; no providers, Google mutation, secrets, merge or deployment.",
+  "base_commit": "92e3d458161b99ca30b8501cd6589f6ddc4f750d",
+  "objective": "Repair original100-Reel operation: release only proven-stopped acquisition physical capacity; bound generated evidence times/source identities; preserve published/saved/uncertain and no blind retries. Same coherent flow correction, tests/build only GitHub Actions.",
   "risk": "high",
   "acceptance_criteria": [
-    "Server allowlist1..50 uniquevalidIDs only; outsideID/51/duplicate malformed config or mixedauthority blocked. Exactlyone private approval and deterministic execution pervideo/stage; no financial.batch262 replacement.",
-    "Batchmode derived only from server configlist>1; WeakSetscopeimmutablebatch marker; TTL<=48h onlybatch, unitdefault<=1h unchanged. Quote/revision/approvalbinding and expirednewstage guards preserved.",
-    "Only verified privatebatchpipeline uncertain transition doesnot setglobalpaused; money/claim remainuncertain and samepaidstage cannotretry, while otherIDcancomplete. Unit/normaluncertain stillpauses; overestimatecomplete stillpauses; missingendproof stillholdsslot. Batch review_required preserves paid candidate/needs_attention without global pause; original unit/normal262 quality hold unchanged.",
-    "Offline integration crosses3queues with sharedledger/proofs for multipleapprovedIDs, prevents foreign authority, preserves oldbatch/reserves and records perID no successorsonfailure. Focus+fullGoogle/packet/link checks and one sharedimage smoke all3realentrypoints networknone512Mi1CPU required.",
-    "Independent fresh-context reviewer required before integration; developer opensPR/CI but doesnotwaitusingmodels, merge, deploy, process providers or mutateGoogle."
+    "Stopped acquisition proof binds exact execution, owner, Reel, stage and time; atomic source/control version checks release only technical capacity on failure, redelivery or next queued item. No proof/paid stages/superseded owners retain slots. No financial/status/provider change.",
+    "Gate-v2 request has finite source-specific identities and finite source time references; caption evidence has no time; normalization rejects changed source/hash or invalid refs and preserves old saved response semantics. Token cap and semantic/visual support gates remain unchanged.",
+    "Closed repair publication retains queued deliveries only in PAUSED stage queues, never purges/resumes them; nonempty legacy or running stage queues still rejected.",
+    "GitHub Actions regressions and existing integration/build required; fresh independent review of exact head; real same100-operation/web verification after publication. No new cohort, scaling, IAM, deletes or blind paid repeats."
   ],
   "allowed_paths": [
-    "google-v0/lib/worker-runtime.mjs",
-    "google-v0/lib/assisted-pipeline.mjs",
-    "google-v0/lib/assisted-scope.mjs",
-    "google-v0/lib/financial-ledger.mjs",
-    "google-v0/tests/assisted-pipeline.test.mjs",
-    "google-v0/tests/batch-pipeline.test.mjs",
     "tasks/MEG-109-batch50.json",
-    "google-v0/lib/worker-flow.mjs"
+    "google-v0/lib/reels-pipeline.mjs",
+    "google-v0/lib/firestore.mjs",
+    "google-v0/tests/reels-pipeline.test.mjs",
+    "google-v0/tests/reels-firestore.test.mjs",
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/tests/analysis.test.mjs",
+    "ops/deploy-reels-services.py",
+    "ops/test_deploy_reels_services.py"
   ],
   "context": [
     {
-      "path": "google-v0/lib/worker-runtime.mjs",
-      "reason": "Existing server-owned allowlist validation only",
+      "path": "google-v0/lib/reels-pipeline.mjs",
+      "reason": "Physical slot/failure/duplicate path",
       "sections": [
-        "pipeline config/runtime construction"
-      ],
-      "max_chars": 1500
-    },
-    {
-      "path": "google-v0/lib/assisted-pipeline.mjs",
-      "reason": "Private approval consumption and invocation scope minting",
-      "sections": [
-        "pipelineFlow"
-      ],
-      "max_chars": 3000
-    },
-    {
-      "path": "google-v0/lib/assisted-scope.mjs",
-      "reason": "WeakSet identity and authorityTTL contract",
-      "sections": [
-        "validatePipelineApproval/createPipelineScope"
+        "capacity",
+        "failure",
+        "run"
       ],
       "max_chars": 3500
     },
     {
-      "path": "google-v0/lib/financial-ledger.mjs",
-      "reason": "Conditional uncertainty transition and invariantpreservation",
+      "path": "google-v0/lib/firestore.mjs",
+      "reason": "Bound multi-version atomic capacity release",
       "sections": [
-        "transition uncertain"
+        "releaseStoppedAcquisitionCapacity"
       ],
-      "max_chars": 1500
+      "max_chars": 2000
     },
     {
-      "path": "google-v0/tests/assisted-pipeline.test.mjs",
-      "reason": "Existing realflow contract and runtime rejection case adjusted fornewvalidmultilist",
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Provider request and saved normalization boundary",
       "sections": [
-        "runtime pipeline optin test; fixtureproofpattern"
+        "buildAnalysisRequest",
+        "analysisOutcome"
       ],
-      "max_chars": 1500
+      "max_chars": 3000
     },
     {
-      "path": "google-v0/lib/worker-flow.mjs",
-      "reason": "One existing reviewRequired/global262 pause must preserve candidate without freezing privatebatch",
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Finite evidence transport",
       "sections": [
-        "finish reviewRequired settlement"
+        "sourceAnchoredEvidenceContract",
+        "normalizeSourceAnchoredReport"
       ],
-      "max_chars": 1000
+      "max_chars": 2000
+    },
+    {
+      "path": "ops/deploy-reels-services.py",
+      "reason": "Preserve pending deliveries for closed repair rollout",
+      "sections": [
+        "Google.queues"
+      ],
+      "max_chars": 1500
     }
   ],
   "validation_commands": [
-    "node --test google-v0/tests/batch-pipeline.test.mjs google-v0/tests/assisted-pipeline.test.mjs google-v0/tests/assisted-scope.test.mjs google-v0/tests/unit-budget.test.mjs google-v0/tests/financial-ledger.test.mjs",
-    "node --test --test-concurrency=1 google-v0/tests/*.test.mjs",
-    "python3 scripts/check_task_packets.py",
-    "python3 scripts/check_links.py",
-    "python3 ops/prepare-release-context.py --output /workspace/meg109-batch50-context",
-    "docker build --build-arg VCS_REF=\"$(git rev-parse HEAD)\" -t megabrain-worker:meg109-batch50 -f /workspace/meg109-batch50-context/Dockerfile.worker /workspace/meg109-batch50-context",
-    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-batch50 scripts/smoke-worker.mjs",
-    "docker run --rm --network none --read-only --tmpfs /tmp:rw,size=128m --memory 512m --cpus 1 --entrypoint node megabrain-worker:meg109-batch50 scripts/smoke-stage-workers.mjs"
+    "GitHub Actions only: node --test tests/*.test.mjs, deployment guard tests, images and entrypoint smokes.",
+    "GitHub Actions only: python3 scripts/check_task_packets.py and check_links.py; independent exact-head review; actual production same100 operation/web observation after publication."
   ],
   "execution_budget": {
     "worker_runs": 1,
     "reviewer_runs": 1,
     "fix_runs": 0,
     "timeout_minutes": 15,
-    "reasoning": "high"
+    "reasoning": "high",
+    "note": "Legacy launcher compatibility fields; actual persistent user-authorized native role runs recorded canonical416, no launcher execution."
   },
   "review": {
-    "mode": "independent_agent_and_human",
+    "mode": "independent_agent",
     "status": "pending",
-    "reason": "Batchauthority and failureisolation arehighrisk; parent uses fresh-context native reviewer. One developer and one reviewer authorized by current human scope; no developer Google/providers/merge/deploy."
+    "reason": "Verify exact bounded capacity, source-transport and paused-delivery correction; no gate relaxation or changed provider authority."
+  },
+  "native_coordination": {
+    "executor": "codex-native",
+    "canonical_revision": 416,
+    "canonical_state": "/srv/paperclip/data/megabrain-operations/v2/current-state.json",
+    "task": "MEG-109-web-batch100-request",
+    "authorized_by": "Current human correction request and persistent native coordination instructions",
+    "processing": "Original100 only; paid redo only after concrete changed correction, no blind identical retries",
+    "ci_authorization": "All tests/builds GitHub Actions only",
+    "max_concurrent_slots": 4,
+    "real_deletion": false
   }
 }

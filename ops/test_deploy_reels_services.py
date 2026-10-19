@@ -220,13 +220,21 @@ class QueueAndPatchContracts(OfflineCase):
             self.assertEqual(api.queues(), queues())
         self.assertEqual(request.call_count, 8)
 
-    def test_any_nonempty_queue_or_continuation_blocks(self):
+    def test_pending_legacy_or_running_stage_deliveries_block(self):
         for kind in queues():
             for response in [{'tasks': [{'name': 'synthetic-task'}]}, {'nextPageToken': 'synthetic-next'}]:
-                api, fake = self.queue_api(tasks={kind: response})
+                api, fake = self.queue_api(mutate=lambda stage, value: value.update(state='RUNNING') if stage != 'processing' else None, tasks={kind: response})
                 with self.subTest(kind=kind, response=response), patch.object(api, 'request', side_effect=fake):
                     with self.assertRaises(deployment.DeploymentError):
                         api.queues()
+
+    def test_paused_stage_deliveries_are_preserved_for_closed_repair_release(self):
+        for kind in deployment.STAGES:
+            for response in [{'tasks': [{'name': 'synthetic-task'}]}, {'nextPageToken': 'synthetic-next'}]:
+                api, fake = self.queue_api(tasks={kind: response})
+                with self.subTest(kind=kind, response=response), patch.object(api, 'request', side_effect=fake) as calls:
+                    self.assertEqual(api.queues(), queues())
+                    self.assertTrue(all(call.args[0] == 'GET' for call in calls.call_args_list))
 
     def test_three_running_empty_stages_are_preserved_with_legacy_paused(self):
         api, fake = self.queue_api(mutate=lambda stage, value: value.update(state='RUNNING') if stage != 'processing' else None)

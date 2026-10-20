@@ -73,7 +73,7 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
  if(report.evidence_contract!==contract.version||report.evidence_anchor_hash!==contract.hash)throw Error('Contrato ou hash das âncoras divergente.');
  const times=new Map(contract.anchors.map(v=>[v.ref,v.seconds]));
  const read=(value,{contextual=false,factual=false}={})=>{
-  if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Evidência de transporte inválida.');
+  if(!value||typeof value!=='object'||Array.isArray(value))throw Object.assign(Error('Evidência de transporte deve ser objeto identificado, nunca texto solto.'),{code:'EVIDENCE_ENTRY_INVALID'});
   const source=contextual?value.sourceKind:value.source,expected=manifest[source];
   if(!anchoredSources.includes(source)||!expected)throw Error('Fonte de transporte ausente.');
   const expectedId=contextual?(source==='caption'?expected.captureId:expected.key+'@'+expected.generation):expected;
@@ -111,7 +111,7 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
  for(const item of copy.useful_information??[])mapEvidence(item);
  for(const item of copy.knowledge?.fields??[])mapEvidence(item);
  for(const item of copy.knowledge?.keywords??[])mapEvidence(item);
- for(const unit of copy.taxonomySignals?.units??[])mapEvidence(unit);
+ for(const unit of copy.taxonomySignals?.units??[]){try{mapEvidence(unit);}catch(error){if(error.code==='EVIDENCE_ENTRY_INVALID')error.transportSection='taxonomySignals.units';throw error;}}
  const q=copy.qualityEvidenceV2;
  for(const key of ['title','summary'])if(Array.isArray(q?.[key]))q[key]=q[key].map(e=>read(e));
  for(const key of ['applications','visualObservations'])for(const item of q?.[key]??[])mapEvidence(item,false);

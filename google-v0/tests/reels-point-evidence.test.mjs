@@ -68,3 +68,17 @@ test('the final media boundary remains an unobserved point instead of inventing 
  const response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({entries:targets.map(t=>({fieldPath:t.fieldPath,verdict:'supported',reason:'Synthetic missing end-boundary pixels.',visualStatic:t.visual,frameIds:[],quotes:t.visual?[]:[{source:'caption',excerpt:f.record.source_caption.text}]}))})}]}}]};
  const entries=automaticReviewEntries({response,targets,frames:[],record:f.record,report});assert.equal(entries.find(e=>e.fieldPath==='knowledge.fields.0.value').verdict,'inconclusive');assert.equal(entries.find(e=>e.fieldPath==='visual_observations.0').verdict,'inconclusive');
 });
+
+test('contextual transcript key-only is bound only by exact manifest hash and unique identity',()=>{
+ const f=fixture();Object.assign(f.record,{transcript:'Texto salvo',transcript_key:'results/synthetic/transcript.json',transcript_generation:'12'});
+ const manifest=qualitySourceManifest(f.record),contract=sourceAnchoredEvidenceContract(f.record,manifest);
+ f.raw.evidence_anchor_hash=contract.hash;f.raw.contextualSignals={evidence:[{id:'context_text',sourceKind:'transcript',sourceIdentity:manifest.transcript.key,start_ref:'untimed',end_ref:'untimed',excerpt:'Texto salvo'}]};
+ const before=structuredClone(f.raw),normalized=normalizeSourceAnchoredReport(f.raw,f.record,manifest);
+ assert.equal(normalized.contextualSignals.evidence[0].sourceIdentity,manifest.transcript.key+'@12');assert.deepEqual(f.raw,before);
+ for(const identity of [manifest.transcript.key+'@99','results/foreign/transcript.json',manifest.transcript.key+' ',{key:manifest.transcript.key}]){
+  const changed=structuredClone(f.raw);changed.contextualSignals.evidence[0].sourceIdentity=identity;assert.throws(()=>normalizeSourceAnchoredReport(changed,f.record,manifest));
+ }
+ const changed=structuredClone(f.raw);changed.evidence_anchor_hash='0'.repeat(64);assert.throws(()=>normalizeSourceAnchoredReport(changed,f.record,manifest),/hash/);
+ const ambiguous={...manifest,video:{...manifest.video,key:manifest.transcript.key}};const raw={evidence_contract:contract.version,contextualSignals:structuredClone(f.raw.contextualSignals)};raw.evidence_anchor_hash=sourceAnchoredEvidenceContract(f.record,ambiguous).hash;
+ assert.throws(()=>normalizeSourceAnchoredReport(raw,f.record,ambiguous));
+});

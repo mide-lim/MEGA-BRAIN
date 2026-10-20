@@ -134,7 +134,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
         const object=await storage.metadata(key);if(!object||object.generation!==generation||Number(object.size)<1)throw Error('Fonte preservada precisa ser conferida.');
       }
     },
-    async restoreAnalysisResult({video,executionId,savedCandidateIdentity=null,requestedReviewId=null}){
+    async restoreAnalysisResult({video,executionId,savedCandidateIdentity=null,savedReviewedCandidate=null,requestedReviewId=null}){
       let savedCandidate=null;
       if(savedCandidateIdentity){
        const expected=`results/instagram/${video.id}/${executionId}/quality-candidate.json`;
@@ -144,6 +144,17 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
        const bytes=await storage.read(expected,{generation:savedCandidateIdentity.generation});
        if(meta?.generation!==savedCandidateIdentity.generation||Number(meta.size)!==bytes.length||meta.metadata?.sha256!==sha256(bytes))throw Object.assign(Error('Integridade do candidato salvo divergente.'),{code:'QUALITY_REVIEW_SOURCE_CHANGED',status:409});
        savedCandidate=JSON.parse(bytes);
+      }
+      if(savedReviewedCandidate){
+       const prior=savedReviewedCandidate,expected=`results/instagram/${video.id}/${executionId}/quality-reviewed-${prior.independentReview?.reviewId?.slice(7)}.json`;
+       const reject=()=>{throw Object.assign(Error('Vínculos do candidato revisado divergentes.'),{code:'QUALITY_REVIEW_SOURCE_CHANGED',status:409});};
+       if(!savedCandidate||!/^review_[a-f0-9]{64}$/.test(prior.independentReview?.reviewId??'')||prior.identity?.key!==expected||!/^\d+$/.test(prior.identity?.generation??''))reject();
+       const meta=await storage.metadata(expected);
+       if(meta?.generation!==prior.identity.generation||!Number.isSafeInteger(Number(meta.size))||Number(meta.size)<1||Number(meta.size)>700000)reject();
+       const bytes=await storage.read(expected,{generation:prior.identity.generation});
+       if(bytes.length!==Number(meta.size)||sha256(bytes)!==meta.metadata?.sha256)reject();
+       const reviewed=JSON.parse(bytes);
+       if(qualityDigest(reviewed.originalCandidateIdentity)!==qualityDigest(savedCandidateIdentity)||qualityDigest(reviewed.rawResponseIdentity)!==qualityDigest(savedCandidate.rawResponseIdentity)||qualityDigest(reviewed.rawResponseIdentity)!==qualityDigest(prior.rawResponseIdentity)||qualityDigest(reviewed.independentReview)!==qualityDigest(prior.independentReview)||reviewed.candidateContentHash!==prior.candidateContentHash||qualityCandidateHash(reviewed.report)!==prior.candidateContentHash)reject();
       }
       const key=`results/instagram/${video.id}/${executionId}/analysis.json`,object=await storage.metadata(key);
       if(!object||!/^\d+$/.test(object.generation??''))throw Error('Resposta persistida não encontrada.');

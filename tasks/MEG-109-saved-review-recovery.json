@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "988ab6faa3e9e0c5abae25868086e4053c31736b",
+  "objective": "Recover an existing failed reviewed candidate through its authenticated original candidate and raw response, without repeating provider production.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Verify projected reviewed artifact, immutable prior review, original candidate and raw identities and hashes before existing recovery.",
+    "Reject altered links, generations, bytes and reports; retain existing source, ownership and publication gates.",
+    "Synthetic GitHub CI only; recovery performs no provider calls and remains idempotent.",
+    "Contextual transcript key-only compatibility requires exact anchor hash and unique saved manifest identity; conflicts remain rejected."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/reels-pipeline.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/reels-quality-review.test.mjs",
+    "tasks/MEG-109-saved-review-recovery.json",
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/tests/reels-point-evidence.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-pipeline.mjs",
+      "reason": "Existing saved quality recovery boundary",
+      "sections": [
+        "saved candidate recovery"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Existing saved quality recovery boundary",
+      "sections": [
+        "saved candidate recovery"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

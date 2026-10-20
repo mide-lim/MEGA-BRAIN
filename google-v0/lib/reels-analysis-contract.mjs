@@ -86,6 +86,8 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
    // only an omitted video generation with its supplied exact object key.
    if(source==='video'&&sourceIdentity.key===expectedId.key&&(sourceIdentity.generation===undefined||sourceIdentity.generation===null)&&Object.keys(sourceIdentity).every(k=>['key','generation'].includes(k)))sourceIdentity={key:expectedId.key,generation:expectedId.generation};
   }
+  // The exact contract hash binds the sole transcript key to its saved generation.
+  if(contextual&&source==='transcript'&&sourceIdentity===expected.key&&/^\d+$/.test(expected.generation??'')&&Object.values(manifest).filter(v=>v?.key===expected.key).length===1)sourceIdentity=expectedId;
   if(contextual?sourceIdentity!==expectedId:!equalIdentity(sourceIdentity,expectedId))throw Error('Identidade de transporte divergente.');
   if(Object.hasOwn(value,'start_seconds')||Object.hasOwn(value,'end_seconds')||Object.hasOwn(value,'timeRange'))throw Error('Tempo numérico não permitido no transporte.');
   const hasStart=value.start_ref!==undefined&&value.start_ref!==null&&value.start_ref!=='untimed',hasEnd=value.end_ref!==undefined&&value.end_ref!==null&&value.end_ref!=='untimed';

@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {safeDownloadDiagnostic} from './download-diagnostic.mjs';
 import {safeAnalysisFailureDiagnostic} from './google-rest.mjs';
-import {qualityPublicationRevision,qualitySourceStateHash,qualityReviewSourceContentHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
+import {qualityCandidateHash,qualityDigest,qualityPublicationRevision,qualitySourceStateHash,qualityReviewSourceContentHash,verifyPublicationQualityReceipt} from './reels-quality-gate.mjs';
 import {reconciliationEvidence,reconciliationOwnership} from './reels-reconciliation.mjs';
 import {hash,nowISO,fail,ensure,cas,event,safeError,queueOutbox} from './reels-runtime.mjs';
 export const STAGES=['acquisition','transcription','analysis'];
@@ -149,18 +149,27 @@ export class ReelsPipeline {
   const [videoSnapshot,control]=await Promise.all([this.store.get('videos/'+job.reelId),this.store.get('reels_controls/analysis')]);
   const video=videoSnapshot?.data,position=video?.reels_v2;
   if(!video||video.import_hold?.active===true||position?.operationId!==job.operationId||position.executionId!==job.id||position.stage!=='analysis'||position.status!=='failed'||!Array.isArray(control?.data.active)||control.data.active.includes(job.id))throw fail('QUALITY_RECOVERY_OWNERSHIP','Posse, estado ou ocupação da análise mudaram.',409);
-  const originalCandidateIdentity={key:job.rawResult.changes?.candidate_analysis_key??null,generation:job.rawResult.changes?.candidate_analysis_generation??null};
-  if(originalCandidateIdentity.key!==`results/instagram/${job.reelId}/${job.id}/quality-candidate.json`||!/^\d+$/.test(originalCandidateIdentity.generation??'')||video.candidate_analysis_key!==originalCandidateIdentity.key||video.candidate_analysis_generation!==originalCandidateIdentity.generation)throw fail('EVIDENCE_UNPROVEN','Candidato original não corresponde à projeção atual.',409);
-  return {videoSnapshot,control,video,originalCandidateIdentity};
+  const projected={key:job.rawResult.changes?.candidate_analysis_key??null,generation:job.rawResult.changes?.candidate_analysis_generation??null},prefix=`results/instagram/${job.reelId}/${job.id}/`;
+  if(!/^\d+$/.test(projected.generation??'')||video.candidate_analysis_key!==projected.key||video.candidate_analysis_generation!==projected.generation||qualityCandidateHash(video.analysis_candidate)!==qualityCandidateHash(job.rawResult.changes.analysis_candidate))throw fail('EVIDENCE_UNPROVEN','Candidato salvo não corresponde à projeção atual.',409);
+  let originalCandidateIdentity=projected,savedReviewedCandidate=null;
+  if(projected.key!==prefix+'quality-candidate.json'){
+   const prior=job.rawResult.qualityReview,reviewId=prior?.reviewId;
+   if(!/^review_[a-f0-9]{64}$/.test(reviewId??'')||projected.key!==prefix+'quality-reviewed-'+reviewId.slice(7)+'.json'||prior.originalCandidateIdentity?.key!==prefix+'quality-candidate.json'||!/^\d+$/.test(prior.originalCandidateIdentity?.generation??'')||prior.rawResponseIdentity?.key!==prefix+'analysis.json'||!/^\d+$/.test(prior.rawResponseIdentity?.generation??''))throw fail('EVIDENCE_UNPROVEN','Vínculo do candidato revisado inválido.',409);
+   const sealed=(await this.store.get('reels_quality_receipts/'+reviewId))?.data;
+   if(!sealed||qualityDigest(sealed)!==prior.reviewHash||sealed.id!==reviewId||sealed.reportHash!==qualityCandidateHash(job.rawResult.changes.analysis_candidate)||qualityDigest(sealed.originalCandidateIdentity)!==qualityDigest(prior.originalCandidateIdentity)||qualityDigest(sealed.rawResponseIdentity)!==qualityDigest(prior.rawResponseIdentity))throw fail('EVIDENCE_UNPROVEN','Revisão original imutável não corresponde ao candidato.',409);
+   originalCandidateIdentity=prior.originalCandidateIdentity;
+   savedReviewedCandidate={identity:projected,rawResponseIdentity:prior.rawResponseIdentity,independentReview:{reviewId,reviewHash:prior.reviewHash,selectionId:prior.selectionId},candidateContentHash:sealed.reportHash};
+  }
+  return {videoSnapshot,control,video,originalCandidateIdentity,savedReviewedCandidate};
  }
  async importQuality({executionId:id,evidenceVersion,packageIdentity}){
   if(!this.processingEnabled)throw fail('PROCESSING_DISABLED','Processamento desabilitado.',423);
   if(this.requiredQualityPolicyVersion!=='gate_v2')throw fail('QUALITY_REVIEW_INVALID','Contrato de revisão indisponível.',409);
   const snapshot=await this.store.get('reels_executions/'+id),job=snapshot?.data;
   if(!job||job.id!==id||job.id!==executionId(job.operationId,job.reelId,'analysis')||job.stage!=='analysis')throw fail('EVIDENCE_UNPROVEN','Execução de análise não corresponde.',409);
-  const {video,originalCandidateIdentity}=await this.failedQualitySource(job,snapshot,evidenceVersion);
+  const {video,originalCandidateIdentity,savedReviewedCandidate}=await this.failedQualitySource(job,snapshot,evidenceVersion);
   if(typeof this.operations?.importQuality!=='function')throw fail('RECOVERY_ADAPTER_REQUIRED','Importação de revisão indisponível.',503);
-  const result=await this.operations.importQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,packageIdentity});
+  const result=await this.operations.importQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,savedReviewedCandidate,packageIdentity});
   if(result.valid!==true||!/^review_[a-f0-9]{64}$/.test(result.qualityReview?.reviewId??''))throw fail('QUALITY_REVIEW_NOT_ACCEPTED','Revisão importada não passou pelo contrato.',409);
   return {status:'review_imported',executionId:id,reviewId:result.qualityReview.reviewId,accepted:true,publicationPerformed:false,evidenceVersion:snapshot.updateTime};
  }
@@ -173,9 +182,9 @@ export class ReelsPipeline {
    await this.qualityRecoveryResult(job);
    return job.status==='completed'?{status:'completed',executionId:id,reviewId,duplicate:true}:this.apply(job);
   }
-  const {videoSnapshot,control,video,originalCandidateIdentity}=await this.failedQualitySource(job,snapshot,evidenceVersion);
+  const {videoSnapshot,control,video,originalCandidateIdentity,savedReviewedCandidate}=await this.failedQualitySource(job,snapshot,evidenceVersion);
   if(typeof this.operations?.restoreQuality!=='function'||typeof this.store.beginQualityRecovery!=='function')throw fail('RECOVERY_ADAPTER_REQUIRED','Recuperação de qualidade indisponível.',503);
-  const restored=await this.operations.restoreQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,requestedReviewId:reviewId});
+  const restored=await this.operations.restoreQuality({video,videoId:job.reelId,reelId:job.reelId,executionId:job.id,claim:{owner:job.owner,updateTime:snapshot.updateTime},savedCandidateIdentity:originalCandidateIdentity,savedReviewedCandidate,requestedReviewId:reviewId});
   const result={...restored,estimatedCents:job.rawResult.estimatedCents??null,finance:job.rawResult.finance??null};
   if(result.valid!==true||result.qualityPublication?.policyVersion!=='gate_v2')return {status:'failed',published:false,reason:'QUALITY_REVIEW_NOT_ACCEPTED',qualityState:result.quality?.state??'inconclusive',reviewId};
   if(result.qualityReview?.reviewId!==reviewId||result.qualityReview.sourceContentHash!==qualityReviewSourceContentHash(video)||!Array.isArray(result.qualityReview.sourceVersions)||result.qualityReview.sourceVersions.length!==2||qualitySourceStateHash(video)!==result.qualityPublication.expectedSourceStateHash||qualityPublicationRevision(video)!==result.qualityPublication.expectedPublicationRevision)throw fail('EVIDENCE_CHANGED','Resultado revisado não corresponde à versão atual.',409);

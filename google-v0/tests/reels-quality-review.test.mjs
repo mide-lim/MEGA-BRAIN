@@ -228,3 +228,44 @@ test('accepted evidence gate with unexplained technical readiness never creates 
  const before=await f.store.get('reels_executions/'+f.id),response=await f.importDelivery(m.packageIdentity);assert.equal(response.status,409);assert.equal((await response.json()).code,'UNEXPLAINED_CONTEXT_GAPS');
  assert.equal(await f.store.get('reels_quality_receipts/'+f.sealed.selection.id),null);assert.equal([...f.store.docs.keys()].filter(p=>p.startsWith('reels_quality_receipts/')).length,0);assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);assert.equal(f.writes.length,0);
 });
+
+async function reviewedFailureFixture(){
+ const f=await fixture(),entries=clone(f.sealInput.entries);entries[0].verdict='inconclusive';
+ const prior=sealQualitySourceReview({...f.sealInput,entries});
+ await f.store.create('reels_quality_receipts/'+prior.review.id,prior.review);
+ const independentReview={reviewId:prior.review.id,reviewHash:prior.selection.reviewHash,selectionId:prior.selection.id};
+ const key=f.binding.originalCandidateIdentity.key.replace('quality-candidate.json','quality-reviewed-'+prior.review.id.slice(7)+'.json');
+ const artifact={report:prior.review.report,candidateContentHash:prior.review.reportHash,rawResponseIdentity:f.binding.rawResponseIdentity,originalCandidateIdentity:f.binding.originalCandidateIdentity,independentReview,parseReasons:[]};
+ f.save(key,'15',artifact);
+ const job=clone(f.job);Object.assign(job.rawResult.changes,{analysis_candidate:prior.review.report,candidate_analysis_key:key,candidate_analysis_generation:'15'});
+ job.rawResult.qualityReview={...independentReview,originalCandidateIdentity:f.binding.originalCandidateIdentity,rawResponseIdentity:f.binding.rawResponseIdentity};job.resultEvidence.resultHash=hash(job.rawResult);
+ f.store.put('reels_executions/'+f.id,job);f.store.put('videos/'+f.reelId,{...f.record,...job.rawResult.changes});
+ return {...f,prior,artifact,key,failedJob:job};
+}
+test('negative reviewed projection recovers via authenticated original without repeating production',async()=>{
+ const f=await reviewedFailureFixture(),bytes=Buffer.from(f.objects.get(f.key).bytes);
+ const response=await f.deliver();assert.equal(response.status,200);assert.equal((await response.json()).status,'completed');
+ assert.deepEqual((await f.store.get('reels_executions/'+f.id)).data.rawResult,f.failedJob.rawResult);
+ assert.deepEqual(f.objects.get(f.key).bytes,bytes);assert.ok(f.reads.some(x=>x.key===f.key&&x.generation==='15'));
+ const writes=f.writes.length;assert.equal((await (await f.deliver()).json()).duplicate,true);assert.equal(f.writes.length,writes);
+});
+test('reviewed recovery rejects modified generation, links, bytes, report and immutable prior review',async()=>{
+ for(const problem of ['generation','original-link','raw-link','bytes','report','review-record','projected-report']){
+  const f=await reviewedFailureFixture();
+  if(problem==='generation')f.objects.get(f.key).generation='16';
+  if(problem==='original-link'){f.artifact.originalCandidateIdentity={...f.binding.originalCandidateIdentity,generation:'999'};f.save(f.key,'15',f.artifact);}
+  if(problem==='raw-link'){f.artifact.rawResponseIdentity={...f.binding.rawResponseIdentity,generation:'999'};f.save(f.key,'15',f.artifact);}
+  if(problem==='bytes')f.objects.get(f.key).bytes=Buffer.from('{}');
+  if(problem==='report'){f.artifact.report={...f.artifact.report,title:'Different report'};f.save(f.key,'15',f.artifact);}
+  if(problem==='review-record')f.store.docs.get('reels_quality_receipts/'+f.prior.review.id).data.reportHash='a'.repeat(64);
+  if(problem==='projected-report')f.store.docs.get('videos/'+f.reelId).data.analysis_candidate.title='Different projection';
+  const before=await f.store.get('reels_executions/'+f.id),response=await f.deliver();assert.equal(response.status,409,problem);
+  assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);assert.equal(f.writes.length,0);
+ }
+});
+test('editorial import follows prior negative reviewed candidate before exact review recovery',async()=>{
+ const f=await reviewedFailureFixture(),m=importMaterial(f),before=await f.store.get('reels_executions/'+f.id);
+ const imported=await f.importDelivery(m.packageIdentity);assert.equal(imported.status,200);const result=await imported.json();assert.equal(result.publicationPerformed,false);
+ assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);
+ const applied=await f.deliver({reviewId:result.reviewId});assert.equal(applied.status,200);assert.equal((await applied.json()).status,'completed');
+});

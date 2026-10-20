@@ -302,3 +302,38 @@ test('external quality review routes preserve application authorization',{timeou
   assert.equal(f.reads.length,0);assert.equal(f.writes.length,0);assert.deepEqual((await f.store.get('reels_executions/'+f.id)).data,f.job);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+
+function reverseMapOrder(value){
+ if(Array.isArray(value))return value.map(reverseMapOrder);
+ if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).reverse().map(([key,item])=>[key,reverseMapOrder(item)]));
+ return value;
+}
+test('saved review recovery reuses exact immutable bytes after Firestore reorders maps',async()=>{
+ const f=await reviewedFailureFixture(),material=importMaterial(f),imported=await f.importDelivery(material.packageIdentity);assert.equal(imported.status,200);
+ const reviewId=(await imported.json()).reviewId,key=f.binding.originalCandidateIdentity.key.replace('quality-candidate.json','quality-reviewed-'+reviewId.slice(7)+'.json'),before=f.objects.get(key),bytes=Buffer.from(before.bytes),generation=before.generation;
+ const originalGet=f.store.get;f.store.get=async path=>{const saved=await originalGet(path);return saved?{...saved,data:reverseMapOrder(saved.data)}:saved;};
+ const writes=f.writes.length,recovered=await f.deliver({reviewId});assert.equal(recovered.status,200);assert.equal((await recovered.json()).status,'completed');
+ assert.deepEqual(f.objects.get(key).bytes,bytes);assert.equal(f.objects.get(key).generation,generation);assert.equal(f.writes.length,writes);
+ assert.equal((await (await f.deliver({reviewId})).json()).duplicate,true);assert.equal(f.writes.length,writes);
+});
+test('reviewed JSON reuse rejects changed content or byte integrity without overwriting',async()=>{
+ for(const problem of ['report','rawIdentity','originalIdentity','reviewIdentity','parseReasons','candidateHash','extraField','bytes','size','invalidJson']){
+  const f=await reviewedFailureFixture(),material=importMaterial(f),imported=await f.importDelivery(material.packageIdentity);assert.equal(imported.status,200);
+  const reviewId=(await imported.json()).reviewId,key=f.binding.originalCandidateIdentity.key.replace('quality-candidate.json','quality-reviewed-'+reviewId.slice(7)+'.json'),object=f.objects.get(key),value=JSON.parse(object.bytes);
+  if(problem==='report')value.report.title='Altered synthetic claim';
+  if(problem==='rawIdentity')value.rawResponseIdentity.generation='999';
+  if(problem==='originalIdentity')value.originalCandidateIdentity.generation='999';
+  if(problem==='reviewIdentity')value.independentReview.reviewHash='a'.repeat(64);
+  if(problem==='parseReasons')value.parseReasons=['changed'];
+  if(problem==='candidateHash')value.candidateContentHash='a'.repeat(64);
+  if(problem==='extraField')value.unexpected=true;
+  f.save(key,object.generation,value);
+  if(problem==='bytes')f.objects.get(key).bytes=Buffer.from('{}');
+  if(problem==='invalidJson')f.save(key,object.generation,Buffer.from('{'));
+  if(problem==='size'){const originalMetadata=f.storage.metadata;f.storage.metadata=async requested=>{const meta=await originalMetadata(requested);return requested===key?{...meta,size:700001}:meta;};}
+  const before=await f.store.get('reels_executions/'+f.id),bytes=Buffer.from(f.objects.get(key).bytes),writes=f.writes.length,response=await f.deliver({reviewId});
+  assert.equal(response.status,409,problem);assert.equal((await response.json()).code,'QUALITY_REVIEW_ARTIFACT_CHANGED',problem);
+  assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);assert.deepEqual(f.objects.get(key).bytes,bytes);assert.equal(f.writes.length,writes);
+ }
+});

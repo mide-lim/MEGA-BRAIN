@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "acdd936cdf5f059ff5a28a530bff29882ef7dbd0",
+  "objective": "Couple each newly emitted static visual observation with its own evidence; preserve saved legacy reports and strict publication checks.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "New gate-v2 requests use explicit versioned observation/evidence items with nonempty video references, never parallel indexes.",
+    "Normalization preserves exact text and order, rejects malformed, mixed, parallel or foreign evidence and never invents timestamps or sources.",
+    "Legacy saved strings/indexes remain unchanged, including incomplete five-observation one-reference candidates; no silent pruning, approval or receipt transplantation.",
+    "Static-only instructions do not replace independent pixel validation; interval alone cannot approve any observation.",
+    "All product tests/builds exclusively GitHub Actions, independent exact-head review before integration; no provider/runtime action."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/tests/analysis.test.mjs",
+    "google-v0/tests/reels-visual-evidence-contract.test.mjs",
+    "google-v0/tests/reels-quality-gate.test.mjs",
+    "tasks/MEG-109-visual-evidence-items.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Versioned coupled visual transport and legacy invariants",
+      "sections": [
+        "visual observation schema and normalization"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Versioned coupled visual transport and legacy invariants",
+      "sections": [
+        "visual observation schema and normalization"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/tests/analysis.test.mjs",
+      "reason": "Versioned coupled visual transport and legacy invariants",
+      "sections": [
+        "visual observation schema and normalization"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/tests/reels-visual-evidence-contract.test.mjs",
+      "reason": "Versioned coupled visual transport and legacy invariants",
+      "sections": [
+        "visual observation schema and normalization"
+      ],
+      "max_chars": 2000
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

@@ -2,7 +2,7 @@ import {consolidatePublication,preservePublicationSourcesV2} from './analysis-pu
 import {categoryIds,categoryOptions,taxonomyVersion,validateCategoryIds,normalizedCategoryIds,categorySelectionSchema,genericCategoryIds} from './category-taxonomy.mjs';
 import {knowledgeSchema,reviewKnowledge} from './knowledge.mjs';
 import {qualitySourceManifest,evaluateQualityGateV2,qualityCategoryOptions} from './reels-quality-gate.mjs';
-import {taxonomySignalsSchema,taxonomySignalsInstruction,qualityEvidenceV2Schema,contextualSignalsSchema,qualityGateV2Instruction,sourceAnchoredEvidenceContract,normalizeSourceAnchoredReport,sourceAnchorsInstruction} from './reels-analysis-contract.mjs';
+import {taxonomySignalsSchema,taxonomySignalsInstruction,qualityEvidenceV2Schema,contextualSignalsSchema,qualityGateV2Instruction,sourceAnchoredEvidenceContract,normalizeSourceAnchoredReport,sourceAnchorsInstruction,visualObservationsContract,visualObservationsInstruction} from './reels-analysis-contract.mjs';
 const ID = /^[A-Za-z0-9_-]{5,32}$/;
 export const reportSchema = {
   type:'OBJECT',required:['title','summary','categories','useful_information','visual_observations','limitations','transcript_quality','knowledge'],
@@ -51,9 +51,18 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
    anchors=sourceAnchoredEvidenceContract(record,qualitySourceManifest(record));
    schema.properties.qualityEvidenceV2=structuredClone(qualityEvidenceV2Schema);schema.properties.contextualSignals=structuredClone(contextualSignalsSchema);
    schema.properties.evidence_contract={type:'STRING',enum:[anchors.version]};schema.properties.evidence_anchor_hash={type:'STRING',enum:[anchors.hash]};
-   schema.required=[...schema.required,'qualityEvidenceV2','evidence_contract','evidence_anchor_hash'];
+   schema.required=[...schema.required,'qualityEvidenceV2','evidence_contract','evidence_anchor_hash','visual_observations_contract'];
+   schema.properties.visual_observations_contract={type:'STRING',enum:[visualObservationsContract]};
+   const visualEvidence=structuredClone(anchors.evidence);visualEvidence.minItems=1;
+   const visualItem=visualEvidence.items;
+   visualItem.properties.source.enum=['video'];
+   visualItem.properties.sourceIdentity={type:'OBJECT',required:['key','generation'],properties:{key:{type:'STRING'},generation:{type:'STRING'}}};
+   for(const key of ['start_ref','end_ref'])visualItem.properties[key].enum=anchors.anchors.map(a=>a.ref);
+   schema.properties.visual_observations={type:'ARRAY',items:{type:'OBJECT',required:['observation','evidence'],properties:{observation:{type:'STRING'},evidence:visualEvidence}}};
+   delete schema.properties.qualityEvidenceV2.properties.visualObservations;
+   schema.properties.qualityEvidenceV2.required=schema.properties.qualityEvidenceV2.required.filter(k=>k!=='visualObservations');
    for(const key of ['title','summary'])schema.properties.qualityEvidenceV2.properties[key]=structuredClone(anchors.evidence);
-   for(const key of ['applications','visualObservations'])schema.properties.qualityEvidenceV2.properties[key].items.properties.evidence=structuredClone(anchors.evidence);
+   for(const key of ['applications'])schema.properties.qualityEvidenceV2.properties[key].items.properties.evidence=structuredClone(anchors.evidence);
    schema.properties.useful_information.items.properties.evidence=structuredClone(anchors.factualEvidence);
    schema.properties.knowledge.properties.fields.items.properties.evidence=structuredClone(anchors.factualEvidence);
    schema.properties.knowledge.properties.keywords.items.properties.evidence=structuredClone(anchors.factualEvidence);
@@ -72,13 +81,13 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
     systemInstruction:{parts:[{text:preset.system_instruction+' Em categories escolha somente IDs de category_options, conforme o conteúdo. Avalie conjuntamente a finalidade desenvolvida no vídeo, transcript_raw e caption_raw quando disponíveis; uma palavra isolada ou um objeto citado não determina o destino. O primeiro ID deve ser o destino principal: a finalidade do vídeo, não cada objeto citado. Respeite o scope de cada opção. Prefira uma categoria. Inclua no máximo uma segunda apenas se houver outro assunto desenvolvido de forma substancial e independente; menções, ingredientes, setor da marca e ferramentas usadas ficam nas palavras-chave. Tecnologia geral e a-organizar devem ser usados sozinhos. Se nenhuma servir, use a-organizar. Assuntos específicos ficam em knowledge.keywords com evidências; não crie categorias. A taxonomia não confirma alegações do autor.'}]},
     contents:[{role:'user',parts:[
       {fileData:{mimeType:'video/mp4',fileUri:`gs://${bucket}/originals/instagram/${record.id}/video.mp4`},...(preset.version==='megabrain-video-text-v4'?{videoMetadata:{fps:2}}:{})},
-      {text:JSON.stringify({task:preset.user_instruction,category_options:options,category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),evidence_contract:anchors.version,evidence_anchor_hash:anchors.hash,source_time_anchors:anchors.anchors,context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...((taxonomySignalsEnabled||qualityGateV2Enabled)?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[],transcript_segments:Array.isArray(record.transcript_segments)?record.transcript_segments:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
+      {text:JSON.stringify({task:preset.user_instruction,category_options:options,category_taxonomy_version:taxonomyVersion,preset_version:preset.version,video_id:record.id,duration_seconds:record.duration_seconds,transcript_raw:transcript,...(qualityGateV2Enabled?{quality_policy_version:'gate_v2',source_manifest:qualitySourceManifest(record),evidence_contract:anchors.version,evidence_anchor_hash:anchors.hash,visual_observations_contract:visualObservationsContract,source_time_anchors:anchors.anchors,context_catalog_snapshot:contextCatalogSnapshot}:{}),transcript_missing:!transcript.trim(),...((taxonomySignalsEnabled||qualityGateV2Enabled)?{transcript_words:Array.isArray(record.transcript_words)?record.transcript_words:[],transcript_segments:Array.isArray(record.transcript_segments)?record.transcript_segments:[]}:{}),caption_raw:caption,caption_capture_id:record.source_caption?.capture_id??null,caption_missing:!caption.trim(),source_url:record.source_url})}
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
   if(taxonomySignalsEnabled&&schema.properties.taxonomySignals)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
   if(qualityGateV2Enabled&&!anchors.hasTimedTranscript)request.systemInstruction.parts[0].text+=' A transcrição salva não tem alinhamento temporal: omita taxonomySignals. Não substitua evidência de transcrição indisponível por vídeo nem invente intervalos; preserve somente itens sustentados por outra fonte identificada e registre a lacuna.';
-  if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction+sourceAnchorsInstruction;
+  if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction+sourceAnchorsInstruction+visualObservationsInstruction;
   return request;
 }
 

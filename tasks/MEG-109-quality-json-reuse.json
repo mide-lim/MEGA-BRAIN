@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "afda2dd9c72f8c79edda4202861270477a127c59",
+  "objective": "Reuse a verified immutable reviewed candidate when Firestore map ordering changes JSON serialization, preserving the existing bytes and generation.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Existing reviewed artifact is read at its metadata generation and verified by bounded size and SHA256.",
+    "Whole JSON content must match canonically, including report, all source/review identities, candidate hash and parse reasons; any divergence rejects without overwrite.",
+    "Synthetic import/recovery with reordered Firestore maps preserves exact bytes, generation and idempotency; tampering remains rejected.",
+    "GitHub CI only; no local product execution or provider calls."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/reels-quality-review.test.mjs",
+    "tasks/MEG-109-quality-json-reuse.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Verified immutable reviewed candidate reuse",
+      "sections": [
+        "saved review recovery"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/reels-quality-review.test.mjs",
+      "reason": "Verified immutable reviewed candidate reuse",
+      "sections": [
+        "saved review recovery"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

@@ -35,6 +35,19 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
   const at=async(step,action)=>{const started=performance.now();try{return await action();}catch(error){error.operation_step=step;error.elapsed_ms=Math.max(0,Math.round(performance.now()-started));throw error;}};
   const submitSTT=(url,options)=>at('submit_stt',()=>api.request(url,options));
   const persist=(key,data)=>storage.writeImmutable(key,Buffer.from(JSON.stringify(data)),{contentType:'application/json',uploadsEnabled:true});
+  async function persistReviewedCandidate(key,value){
+   // Firestore map order is not stable. Reuse the exact immutable artifact,
+   // never rewrite it merely because equivalent JSON serializes differently.
+   const metadata=await storage.metadata(key);
+   if(!metadata)return persist(key,value);
+   const reject=()=>{throw Object.assign(Error('Artefato revisado salvo diverge; original preservado.'),{code:'QUALITY_REVIEW_ARTIFACT_CHANGED',status:409});};
+   if(!/^\d{1,30}$/.test(metadata.generation??'')||!Number.isSafeInteger(Number(metadata.size))||Number(metadata.size)<1||Number(metadata.size)>700000||!/^([a-f0-9]{64})$/.test(metadata.metadata?.sha256??''))reject();
+   const bytes=await storage.read(key,{generation:metadata.generation});
+   if(bytes.length!==Number(metadata.size)||sha256(bytes)!==metadata.metadata.sha256)reject();
+   let saved;try{saved=JSON.parse(bytes);}catch{reject();}
+   if(qualityDigest(saved)!==qualityDigest(value))reject();
+   return {generation:metadata.generation};
+  }
   async function captionFor(video,executionId){
     if(video.source_caption?.text)return {source_caption:video.source_caption,caption_status:'captured'};
     // Caption/metadata belong to acquisition. Legacy absence is explicit; an
@@ -63,7 +76,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
    if(review&&qualityCandidateHash(report)!==qualityCandidateHash(review.report))throw Object.assign(Error('Revisão não preserva as fontes textuais exatas.'),{code:'QUALITY_REVIEW_SOURCE_CHANGED',status:409});
    const reviewedKey=review?rawIdentity.key.replace(/analysis\.json$/,'quality-reviewed-'+review.reviewIdentity.reviewId.slice('review_'.length)+'.json'):candidateKey;
    const prepared=await prepareQualityCandidateV2({record:video,report,rawResponse:response,expectedPublicationRevision:qualityPublicationRevision(video),...context,contextCatalogSnapshot,independentReview:review?.reviewIdentity??null,ports:{
-    saveCandidate:async value=>{if(!review)return {...originalIdentity,candidateContentHash:value.candidateContentHash};const object=await persist(reviewedKey,{report:value.report,candidateContentHash:value.candidateContentHash,rawResponseIdentity:rawIdentity,originalCandidateIdentity:originalIdentity,independentReview:review.reviewIdentity,parseReasons:outcome.reasons??[]});return {key:reviewedKey,generation:object.generation,candidateContentHash:value.candidateContentHash};},
+    saveCandidate:async value=>{if(!review)return {...originalIdentity,candidateContentHash:value.candidateContentHash};const object=await persistReviewedCandidate(reviewedKey,{report:value.report,candidateContentHash:value.candidateContentHash,rawResponseIdentity:rawIdentity,originalCandidateIdentity:originalIdentity,independentReview:review.reviewIdentity,parseReasons:outcome.reasons??[]});return {key:reviewedKey,generation:object.generation,candidateContentHash:value.candidateContentHash};},
     saveReceipt:saveQualityReceipt
    }});
    const accepted=outcome.accepted&&prepared.accepted;

@@ -27,7 +27,7 @@ test('gate-v2 provider evidence uses flat objects and finite time references wit
  for(const evidence of paths){
   const item=evidence.items;assert.equal(item.type,'OBJECT');assert.equal(item.anyOf,undefined);
   assert.deepEqual(item.properties.source.enum,['caption','transcript','video']);assert.ok(item.required.includes('sourceIdentity'));
-  assert.equal(item.properties.sourceIdentity.type,'OBJECT');
+  assert.equal(item.properties.sourceIdentity.type,'OBJECT');assert.deepEqual(item.properties.sourceIdentity.required,['key','generation','captureId']);assert.ok(item.required.includes('start_ref'));assert.ok(item.required.includes('end_ref'));
   for(const property of Object.values(item.properties.sourceIdentity.properties)){assert.equal(property.type,'STRING');assert.equal(property.enum,undefined);}
   assert.equal(item.properties.start_ref.type,'STRING');assert.deepEqual(item.properties.start_ref.enum,payload.source_time_anchors.map(a=>a.ref));
   assert.deepEqual(item.properties.end_ref.enum,item.properties.start_ref.enum);
@@ -65,7 +65,7 @@ test('malformed numeric transport, mixed caption times and invented identities a
   {...valid,start_seconds:0},
   {...valid,start_ref:'0.000E'+'0'.repeat(1000)},
   {...valid,start_ref:'0.000000123456789'+'0'.repeat(1000)},
-  {...valid,sourceIdentity:{key:manifest.video.key}},
+  {...valid,sourceIdentity:{generation:manifest.video.generation}},
   {...valid,sourceIdentity:{...manifest.video,generation:'99'}},
   {source:'video',sourceIdentity:manifest.video,excerpt:'Guardar'},
   {...valid,start_ref:'t1',end_ref:'t0'},
@@ -106,7 +106,7 @@ test('factual transcript evidence requires saved timing while narrative gaps rem
  }
  assert.equal(schema.properties.taxonomySignals.properties.units.maxItems,0);
  const narrative=schema.properties.qualityEvidenceV2.properties.title.items;
- assert.ok(narrative.properties.source.enum.includes('transcript'));assert.ok(!narrative.required.includes('start_ref'));
+ assert.ok(narrative.properties.source.enum.includes('transcript'));assert.ok(narrative.required.includes('start_ref'));assert.equal(narrative.properties.start_ref.nullable,true);assert.equal(narrative.properties.end_ref.nullable,true);
  const manifest=qualitySourceManifest(r),c=sourceAnchoredEvidenceContract(r,manifest),e={source:'transcript',sourceIdentity:manifest.transcript,excerpt:record.transcript};
  const raw={evidence_contract:c.version,evidence_anchor_hash:c.hash,qualityEvidenceV2:{version:2,title:[e],summary:[e]},useful_information:[]};
  assert.equal(normalizeSourceAnchoredReport(raw,r,manifest).qualityEvidenceV2.title[0].start_seconds,undefined);

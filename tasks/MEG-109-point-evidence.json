@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "d2f24e4b198ce8abedf0620258a352911c1f5bd5",
+  "objective": "Align flat source-anchors-v1 wire schema with required nullable identity/time slots; preserve exact pinned saved-video point references without inventing a duration, transcript alignment or independent support. First-pass candidates only; preserve saved failed raw responses and existing recovery paths.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Flat provider schema requires all identity and temporal slots, with null only when non-applicable.",
+    "Exact v1 anchor hash and supplied video key bind missing generation to trusted source manifest; conflicts and extra identity keys are rejected.",
+    "Video start reference with omitted/null end remains explicit temporal_scope point and identical numeric endpoints, never an inferred observation interval.",
+    "Point marker reaches sampled-pixel independent validation; no automatic support, no factual transcript fallback, temporal assertions remain inconclusive.",
+    "Synthetic GitHub Actions tests only; no local product execution, provider calls, Google writes, original analysis replay or recovery expansion."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/lib/reels-quality-auto-review.mjs",
+    "google-v0/tests/analysis.test.mjs",
+    "google-v0/tests/reels-point-evidence.test.mjs",
+    "tasks/MEG-109-point-evidence.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Source-anchored contract and independent sampled-pixel validation",
+      "sections": [
+        "bounded transport compatibility"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/lib/reels-quality-auto-review.mjs",
+      "reason": "Source-anchored contract and independent sampled-pixel validation",
+      "sections": [
+        "bounded transport compatibility"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/analysis.test.mjs",
+      "reason": "Source-anchored contract and independent sampled-pixel validation",
+      "sections": [
+        "bounded transport compatibility"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Native independent review of explicit video point semantics and exact-head GitHub CI required before integration. Preserve original raw and all prior failures; no restore extension or activation in this implementation."
+  }
+}

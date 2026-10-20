@@ -47,13 +47,13 @@ export function sourceAnchoredEvidenceContract(record,manifest){
  const evidenceFor=(kinds,{factual=false,contextual=false}={})=>{
   if(!kinds.length)return {type:'ARRAY',maxItems:0,items:{type:'STRING'}};
   const identityProperties={};
-  if(kinds.some(s=>s!=='caption')){identityProperties.key={type:'STRING'};identityProperties.generation={type:'STRING'};}
-  if(kinds.includes('caption'))identityProperties.captureId={type:'STRING'};
-  const identity={type:'OBJECT',properties:identityProperties};
-  if(kinds.every(s=>s==='caption'))identity.required=['captureId'];
-  else if(kinds.every(s=>s!=='caption'))identity.required=['key','generation'];
+  if(kinds.some(s=>s!=='caption')){identityProperties.key={type:'STRING',nullable:true};identityProperties.generation={type:'STRING',nullable:true};}
+  if(kinds.includes('caption'))identityProperties.captureId={type:'STRING',nullable:true};
+  // The flat wire shape requires every slot. Null is only a placeholder for
+  // a field which does not belong to the selected source; never a new identity.
+  const identity={type:'OBJECT',properties:identityProperties,required:Object.keys(identityProperties)};
   const sourceKey=contextual?'sourceKind':'source',properties={[sourceKey]:enumString(kinds),sourceIdentity:contextual?{type:'STRING'}:identity,excerpt:{type:'STRING'}},required=[sourceKey,'sourceIdentity','excerpt'];
-  if(kinds.some(s=>s!=='caption')){properties.start_ref=enumString(refs);properties.end_ref=enumString(refs);if(kinds.every(s=>s!=='caption'&&(factual||s==='video')))required.push('start_ref','end_ref');}
+  properties.start_ref={...enumString(refs),nullable:true};properties.end_ref={...enumString(refs),nullable:true};required.push('start_ref','end_ref');
   if(contextual){properties.id={type:'STRING'};properties.verificationLevel=enumString(['source_present','literal_anchor_verified','semantic_support_reviewed','visual_support_independently_verified']);required.push('id','verificationLevel');}
   return {type:'ARRAY',items:{type:'OBJECT',required,properties}};
  };
@@ -65,7 +65,7 @@ export function sourceAnchoredEvidenceContract(record,manifest){
  return {version:sourceAnchorsVersion,hash,anchors,evidence,factualEvidence,hasTimedTranscript:!!hasTimedTranscript,contextual,manifest};
 }
 
-export const sourceAnchorsInstruction=' Contrato de transporte source-anchors-v1: devolva evidence_contract e evidence_anchor_hash exatamente como fornecidos. Nunca escreva start_seconds, end_seconds ou timeRange; use somente start_ref/end_ref escolhidos em source_time_anchors. Legenda não tem tempo: omita ambas as referências. Somente em qualityEvidenceV2 e contextualSignals a transcrição pode omitir tempos quando não houver alinhamento. Em useful_information, knowledge.fields, knowledge.keywords e taxonomySignals.units, evidência de transcrição exige ambas as referências e tempos de palavras/segmentos salvos; se não estiverem disponíveis, omita o item não sustentado e registre a lacuna em limitations/missing_information, ou use legenda realmente sustentada. Nunca invente alinhamento. Vídeo exige as duas referências, como janela candidata, sem certificar pixels. Copie todos os campos da sourceIdentity exata da fonte, inclusive generation; a identidade é referência, não verificação. As âncoras são limites salvos ou limites verificados da mídia, não preparações independentes. Não produza dígitos/decimais para substituir referências.';
+export const sourceAnchorsInstruction=' Todos os slots sourceIdentity existentes no schema são obrigatórios: copie valores exatos da fonte e use null somente para campos de outra fonte (captureId no vídeo/transcrição; key/generation na legenda). start_ref e end_ref são obrigatórios: use null/null quando não houver tempo aplicável. Para observação estática em um ponto de vídeo, use start_ref com a âncora existente e end_ref null: isso representa somente aquele ponto e não uma ação, sequência, duração, intervalo ou ausência ao longo do vídeo. O servidor identifica temporal_scope point e exige revisão independente dos pixels; ponto não sustenta transcrição factual nem completude temporal de receita. Contrato de transporte source-anchors-v1: devolva evidence_contract e evidence_anchor_hash exatamente como fornecidos. Nunca escreva start_seconds, end_seconds ou timeRange; use somente start_ref/end_ref escolhidos em source_time_anchors. Legenda não tem tempo: use null nas duas referências. Somente em qualityEvidenceV2 e contextualSignals a transcrição pode usar null nas duas referências quando não houver alinhamento. Em useful_information, knowledge.fields, knowledge.keywords e taxonomySignals.units, evidência de transcrição exige ambas as referências e tempos de palavras/segmentos salvos; se não estiverem disponíveis, omita o item não sustentado e registre a lacuna em limitations/missing_information, ou use legenda realmente sustentada. Nunca invente alinhamento. Vídeo exige start_ref; end_ref é uma segunda âncora para janela candidata ou null para ponto estático explícito, sem certificar pixels. Copie todos os campos da sourceIdentity exata da fonte, inclusive generation; a identidade é referência, não verificação. As âncoras são limites salvos ou limites verificados da mídia, não preparações independentes. Não produza dígitos/decimais para substituir referências.';
 
 export function normalizeSourceAnchoredReport(report,record,manifest){
  if(report?.evidence_contract===undefined&&report?.evidence_anchor_hash===undefined)return report;
@@ -77,12 +77,28 @@ export function normalizeSourceAnchoredReport(report,record,manifest){
   const source=contextual?value.sourceKind:value.source,expected=manifest[source];
   if(!anchoredSources.includes(source)||!expected)throw Error('Fonte de transporte ausente.');
   const expectedId=contextual?(source==='caption'?expected.captureId:expected.key+'@'+expected.generation):expected;
-  if(contextual?value.sourceIdentity!==expectedId:!equalIdentity(value.sourceIdentity,expectedId))throw Error('Identidade de transporte divergente.');
+  let sourceIdentity=value.sourceIdentity;
+  if(!contextual&&sourceIdentity&&typeof sourceIdentity==='object'&&!Array.isArray(sourceIdentity)){
+   // Nullable wire placeholders are not identity values. Unknown fields and
+   // conflicting supplied generations remain errors, including on old v1.
+   sourceIdentity=Object.fromEntries(Object.entries(sourceIdentity).filter(([key,v])=>!(v===null&&['key','generation','captureId'].includes(key)&&!Object.hasOwn(expectedId,key))));
+   // The exact anchor hash above binds this manifest's generation. Recover
+   // only an omitted video generation with its supplied exact object key.
+   if(source==='video'&&sourceIdentity.key===expectedId.key&&(sourceIdentity.generation===undefined||sourceIdentity.generation===null)&&Object.keys(sourceIdentity).every(k=>['key','generation'].includes(k)))sourceIdentity={key:expectedId.key,generation:expectedId.generation};
+  }
+  if(contextual?sourceIdentity!==expectedId:!equalIdentity(sourceIdentity,expectedId))throw Error('Identidade de transporte divergente.');
   if(Object.hasOwn(value,'start_seconds')||Object.hasOwn(value,'end_seconds')||Object.hasOwn(value,'timeRange'))throw Error('Tempo numérico não permitido no transporte.');
-  const hasStart=Object.hasOwn(value,'start_ref'),hasEnd=Object.hasOwn(value,'end_ref');
+  const hasStart=value.start_ref!==undefined&&value.start_ref!==null,hasEnd=value.end_ref!==undefined&&value.end_ref!==null;
+  const point=source==='video'&&hasStart&&!hasEnd;
   if(factual&&source==='transcript'&&(!contract.hasTimedTranscript||!hasStart))throw Error('Campo factual exige intervalo de transcrição salva; preserve a lacuna sem inventar alinhamento.');
-  if(source==='caption'&&(hasStart||hasEnd)||hasStart!==hasEnd||source==='video'&&!hasStart)throw Error('Referências temporais inválidas para a fonte.');
-  const {start_ref,end_ref,...copy}=value;
+  if(source==='caption'&&(hasStart||hasEnd)||hasStart!==hasEnd&&!point||source==='video'&&!hasStart)throw Error('Referências temporais inválidas para a fonte.');
+  const {start_ref,end_ref,...copy}=value;copy.sourceIdentity=sourceIdentity;
+  if(point){
+   if(!times.has(start_ref)||value.temporal_scope!==undefined&&value.temporal_scope!=='point')throw Error('Ponto de vídeo sem âncora válida.');
+   const at=times.get(start_ref);
+   return contextual?{...copy,temporal_scope:'point',timeRange:{startSeconds:at,endSeconds:at}}:{...copy,temporal_scope:'point',start_seconds:at,end_seconds:at};
+  }
+  if(value.temporal_scope==='point'&&(!hasStart||!hasEnd||start_ref!==end_ref))throw Error('Ponto de vídeo não pode declarar intervalo.');
   if(!hasStart)return copy;
   if(!times.has(start_ref)||!times.has(end_ref)||times.get(end_ref)<times.get(start_ref))throw Error('Âncora temporal desconhecida ou invertida.');
   const start=times.get(start_ref),end=times.get(end_ref);

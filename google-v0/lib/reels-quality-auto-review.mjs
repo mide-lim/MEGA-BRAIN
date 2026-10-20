@@ -21,7 +21,7 @@ function evidenceFor(report,path){
  if(section==='visual_observations')return list(report.qualityEvidenceV2?.visualObservations?.find(e=>e.index===Number(index))?.evidence);
  if(section==='useful_information')return field==='application'?list(report.qualityEvidenceV2?.applications?.find(e=>e.index===Number(index))?.evidence):list(report.useful_information?.[index]?.evidence);
  if(section==='knowledge')return list(report.knowledge?.[index]?.[field]?.evidence);
- if(path.startsWith('contextualSignals.evidence.')){const e=report.contextualSignals.evidence.find(e=>e.id===path.slice('contextualSignals.evidence.'.length));return e?[{source:e.sourceKind,start_seconds:e.timeRange?.startSeconds,end_seconds:e.timeRange?.endSeconds}]:[];}
+ if(path.startsWith('contextualSignals.evidence.')){const e=report.contextualSignals.evidence.find(e=>e.id===path.slice('contextualSignals.evidence.'.length));return e?[{source:e.sourceKind,start_seconds:e.timeRange?.startSeconds,end_seconds:e.timeRange?.endSeconds,...(e.temporal_scope?{temporal_scope:e.temporal_scope}:{})}]:[];}
  const p=path.split('.').reduce((v,k)=>v?.[k],report);
  return list(p?.evidenceRefs).flatMap(id=>evidenceFor(report,'contextualSignals.evidence.'+id));
 }
@@ -34,7 +34,7 @@ export function automaticReviewTargets(record,report){
  return paths.filter(path=>valueFor(report,path)!==undefined&&!path.startsWith('qualityEvidenceV2.')).map(fieldPath=>({fieldPath,value:valueFor(report,fieldPath),evidence:evidenceFor(report,fieldPath),visual:fieldPath.startsWith('visual_observations.')||evidenceFor(report,fieldPath).some(e=>e.source==='video')}));
 }
 export function automaticFrameTimes(targets,duration){
- return [...new Set(targets.flatMap(t=>t.evidence.filter(e=>e.source==='video'&&Number.isFinite(e.start_seconds)&&Number.isFinite(e.end_seconds)&&e.start_seconds>=0&&e.end_seconds>=e.start_seconds&&e.end_seconds<=duration).map(e=>Math.round(((e.start_seconds+e.end_seconds)/2)*1000)/1000)))].sort((a,b)=>a-b).slice(0,16);
+ return [...new Set(targets.flatMap(t=>t.evidence.filter(e=>e.source==='video'&&e.temporal_scope!=='point'&&e.end_seconds>e.start_seconds&&Number.isFinite(e.start_seconds)&&Number.isFinite(e.end_seconds)&&e.start_seconds>=0&&e.end_seconds>=e.start_seconds&&e.end_seconds<=duration).map(e=>Math.round(((e.start_seconds+e.end_seconds)/2)*1000)/1000).filter(seconds=>seconds<duration)))].sort((a,b)=>a-b).slice(0,16);
 }
 const schema={type:'OBJECT',properties:{entries:{type:'ARRAY',items:{type:'OBJECT',properties:{fieldPath:{type:'STRING'},verdict:{type:'STRING',enum:['supported','inconclusive','invalid']},reason:{type:'STRING'},visualStatic:{type:'BOOLEAN'},frameIds:{type:'ARRAY',items:{type:'INTEGER'}},quotes:{type:'ARRAY',items:{type:'OBJECT',properties:{source:{type:'STRING',enum:['caption','transcript']},excerpt:{type:'STRING'}},required:['source','excerpt']}}},required:['fieldPath','verdict','reason','visualStatic','frameIds','quotes']}}},required:['entries']};
 export function automaticReviewEntries({response,targets,frames,record,report}){
@@ -50,6 +50,9 @@ export function automaticReviewEntries({response,targets,frames,record,report}){
   for(const q of e.quotes){requireValue(q&&typeof q==='object'&&!Array.isArray(q),'Citação de validação inválida.');const text=q.source==='caption'?record.source_caption?.text:q.source==='transcript'?record.transcript:null;requireValue(Object.keys(q).every(k=>['source','excerpt'].includes(k))&&typeof q.excerpt==='string'&&q.excerpt.trim()&&q.excerpt.length<=4000&&typeof text==='string'&&text.includes(q.excerpt),'Citação não pertence à fonte salva.');}
   const selected=e.frameIds.map(id=>frames[id]),ranges=target.evidence.filter(e=>e.source==='video');
   let verdict=e.verdict;
+  // Seeking to t does not establish a frame PTS of t. Old point references
+  // remain candidates; no model flag or sampled image can promote them.
+  if(verdict==='supported'&&ranges.some(r=>r.temporal_scope==='point'||r.start_seconds===r.end_seconds))verdict='inconclusive';
   if(verdict==='supported'&&target.visual&&(!e.visualStatic||!selected.length||!ranges.length||!ranges.every(r=>selected.some(f=>f.seconds>=r.start_seconds&&f.seconds<=r.end_seconds))||selected.some(f=>!ranges.some(r=>f.seconds>=r.start_seconds&&f.seconds<=r.end_seconds))))verdict='inconclusive';
   if(verdict==='supported'&&!target.visual&&!e.quotes.length)verdict='inconclusive';
   const entry={fieldPath:e.fieldPath,verdict,reason:(verdict!==e.verdict?'Evidência independente insuficiente para a afirmação integral. '+e.reason:e.reason).slice(0,4000),method:'Independent saved-source validation; sampled static pixels only.'};

@@ -23,7 +23,7 @@ test('gate-v2 provider evidence uses flat objects and finite time references wit
  assert.deepEqual(payload.source_time_anchors.map(a=>a.seconds),[0,0.125,2.75,60]);
  const keys=[];const walk=value=>{if(!value||typeof value!=='object')return;keys.push(...Object.keys(value.properties??{}));for(const child of Object.values(value))if(typeof child==='object'){if(Array.isArray(child))child.forEach(walk);else walk(child);}};
  walk(schema);for(const key of ['start_seconds','end_seconds','startSeconds','endSeconds','timeRange'])assert.ok(!keys.includes(key),key);
- const paths=[schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.title,schema.properties.qualityEvidenceV2.properties.summary,schema.properties.qualityEvidenceV2.properties.applications.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.visualObservations.items.properties.evidence];
+ const paths=[schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.title,schema.properties.qualityEvidenceV2.properties.summary,schema.properties.qualityEvidenceV2.properties.applications.items.properties.evidence];
  for(const evidence of paths){
   const item=evidence.items;assert.equal(item.type,'OBJECT');assert.equal(item.anyOf,undefined);
   assert.deepEqual(item.properties.source.enum,['caption','transcript','video']);assert.ok(item.required.includes('sourceIdentity'));

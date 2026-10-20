@@ -4,13 +4,13 @@
   "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
   "repository": "mide-lim/MEGA-BRAIN",
   "base_commit": "d2f24e4b198ce8abedf0620258a352911c1f5bd5",
-  "objective": "Align flat source-anchors-v1 wire schema with required nullable identity/time slots; preserve exact pinned saved-video point references without inventing a duration, transcript alignment or independent support. First-pass candidates only; preserve saved failed raw responses and existing recovery paths.",
+  "objective": "Align flat source-anchors-v1 schema with required identity slots and non-null temporal references. Preserve old incomplete video references as explicitly inconclusive candidates without certifying seek targets as observed frame timestamps. First-pass candidates only; preserve saved failed raw responses and existing recovery paths.",
   "risk": "high",
   "acceptance_criteria": [
-    "Flat provider schema requires all identity and temporal slots, with null only when non-applicable.",
+    "Flat provider schema requires every identity slot and both non-null temporal references; untimed sentinel is only applicable to caption and untimed narrative transcript.",
     "Exact v1 anchor hash and supplied video key bind missing generation to trusted source manifest; conflicts and extra identity keys are rejected.",
-    "Video start reference with omitted/null end remains explicit temporal_scope point and identical numeric endpoints, never an inferred observation interval.",
-    "Point marker reaches sampled-pixel independent validation; no automatic support, no factual transcript fallback, temporal assertions remain inconclusive.",
+    "Old video start reference with omitted/null end remains explicit temporal_scope point, never a fabricated interval; points are excluded from frame extraction.",
+    "Automatic verifier cannot promote any point or zero-width interval even with provider supported/pixel flags; no PTS claim, factual transcript fallback or temporal inference.",
     "Synthetic GitHub Actions tests only; no local product execution, provider calls, Google writes, original analysis replay or recovery expansion."
   ],
   "allowed_paths": [

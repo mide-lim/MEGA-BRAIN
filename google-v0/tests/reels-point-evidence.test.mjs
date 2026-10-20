@@ -6,7 +6,7 @@ import {analysisOutcome} from '../lib/analysis.mjs';
 import {automaticReviewTargets,automaticFrameTimes,automaticReviewEntries} from '../lib/reels-quality-auto-review.mjs';
 function fixture(){
  const record={id:'Point_fixture',duration_seconds:12,media_verified:true,video_key:'originals/instagram/Point_fixture/video.mp4',video_generation:'11',transcript:null,source_caption:{text:'Um exemplo visual salvo.',capture_id:'synthetic-caption'}};
- const manifest=qualitySourceManifest(record),contract=sourceAnchoredEvidenceContract(record,manifest),caption={source:'caption',sourceIdentity:{key:null,generation:null,captureId:manifest.caption.captureId},excerpt:record.source_caption.text,start_ref:null,end_ref:null};
+ const manifest=qualitySourceManifest(record),contract=sourceAnchoredEvidenceContract(record,manifest),caption={source:'caption',sourceIdentity:{key:null,generation:null,captureId:manifest.caption.captureId},excerpt:record.source_caption.text,start_ref:'untimed',end_ref:'untimed'};
  // Exact observed omission SHAPE, wholly synthetic source and content.
  const point={source:'video',sourceIdentity:{key:manifest.video.key},excerpt:'Um objeto no instante amostrado.',start_ref:'t0'};
  const raw={title:record.source_caption.text,summary:record.source_caption.text,categories:['a-organizar'],useful_information:[],visual_observations:['Um objeto no instante amostrado.'],limitations:[],transcript_quality:{assessment:'Sem transcrição salva.',uncertain_segments:[]},knowledge:{context:'general',fields:[{kind:'other',name:'Informação',value:'Um objeto no instante amostrado.',evidence:[point]}],keywords:[],missing_information:[]},qualityEvidenceV2:{version:2,title:[caption],summary:[caption],applications:[],visualObservations:[{index:0,evidence:[point]}]},evidence_contract:contract.version,evidence_anchor_hash:contract.hash};
@@ -19,7 +19,7 @@ test('v1 exact pinned video omission becomes explicit point, not an inferred int
  const response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(f.raw)}]}}]},serialized=JSON.stringify(response),first=analysisOutcome(response,f.record,{requireKnowledge:true,qualityGateV2:{mediaInspection:f.mediaInspection}}),repeated=analysisOutcome(response,f.record,{requireKnowledge:true,qualityGateV2:{mediaInspection:f.mediaInspection}});
  assert.ok(first.report);assert.equal(first.accepted,false);assert.equal(first.report.knowledge.fields[0].evidence[0].temporal_scope,'point');assert.deepEqual(repeated,first);assert.equal(JSON.stringify(response),serialized);
  assert.ok(first.quality.checks.some(c=>c.code==='VISUAL_SUPPORT_UNVERIFIED'));
- const targets=automaticReviewTargets(f.record,first.report),target=targets.find(t=>t.fieldPath==='knowledge.fields.0.value');assert.equal(target.evidence[0].temporal_scope,'point');assert.deepEqual(automaticFrameTimes(targets,12),[0]);
+ const targets=automaticReviewTargets(f.record,first.report),target=targets.find(t=>t.fieldPath==='knowledge.fields.0.value');assert.equal(target.evidence[0].temporal_scope,'point');assert.deepEqual(automaticFrameTimes(targets,12),[]);
 });
 test('explicit nullable transport slots normalize without inventing caption time or losing complete video ranges',()=>{
  const f=fixture();f.raw.knowledge.fields[0].evidence[0]={...f.point,sourceIdentity:{...f.manifest.video,captureId:null},end_ref:'t1'};
@@ -37,27 +37,27 @@ test('transcript evidence never inherits video point recovery or a missing sourc
  const manifest=qualitySourceManifest(f.record),contract=sourceAnchoredEvidenceContract(f.record,manifest);f.raw.evidence_anchor_hash=contract.hash;
  for(const sourceIdentity of [{key:manifest.transcript.key},manifest.transcript]){f.raw.knowledge.fields[0].evidence=[{source:'transcript',sourceIdentity,excerpt:'Texto salvo',start_ref:'t0'}];assert.throws(()=>normalizeSourceAnchoredReport(f.raw,f.record,manifest));}
 });
-test('independent sampled pixels may support only the point; temporal assertions stay inconclusive',()=>{
+test('a provider claiming supported cannot promote a point without measured frame timing',()=>{
  const f=fixture(),report=normalizeSourceAnchoredReport(f.raw,f.record,f.manifest),targets=automaticReviewTargets(f.record,report),frames=[{seconds:0,artifact:{key:'results/synthetic/frame.jpg',generation:'2',sha256:'a'.repeat(64)}}];
  const output=visualStatic=>({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({entries:targets.map(t=>({fieldPath:t.fieldPath,verdict:'supported',reason:'Synthetic independent verdict.',visualStatic:t.visual&&visualStatic,frameIds:t.visual?[0]:[],quotes:t.visual?[]:[{source:'caption',excerpt:f.record.source_caption.text}]}))})}]}}]});
  const entries=automaticReviewEntries({response:output(false),targets,frames,record:f.record,report});assert.ok(entries.filter(e=>targets.find(t=>t.fieldPath===e.fieldPath).visual).every(e=>e.verdict==='inconclusive'));
- const staticEntries=automaticReviewEntries({response:output(true),targets,frames,record:f.record,report});assert.ok(staticEntries.find(e=>e.fieldPath==='visual_observations.0').visualPixelsReviewed);
+ const staticEntries=automaticReviewEntries({response:output(true),targets,frames,record:f.record,report});assert.equal(staticEntries.find(e=>e.fieldPath==='visual_observations.0').verdict,'inconclusive');assert.equal(staticEntries.find(e=>e.fieldPath==='visual_observations.0').visualPixelsReviewed,undefined);
  const trustedReviews=staticEntries.map(e=>({...e,receiptId:'synthetic-independent-'+e.fieldPath,kind:'independent_source_review',reportHash:qualityCandidateHash(report),sourceManifestHash:qualityDigest(f.manifest)}));
- assert.equal(evaluateQualityGateV2({record:f.record,report,mediaInspection:f.mediaInspection,trustedReviews}).accepted,true);
+ assert.equal(evaluateQualityGateV2({record:f.record,report,mediaInspection:f.mediaInspection,trustedReviews}).accepted,false);
  const gate=evaluateQualityGateV2({record:f.record,report,mediaInspection:f.mediaInspection});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.code==='VISUAL_SUPPORT_UNVERIFIED'));
 });
 
 
-test('point sampling preserves a saved sub-millisecond anchor exactly through independent frame coverage',()=>{
+test('a sub-millisecond point remains exact in the candidate but never requests or certifies an approximate frame',()=>{
  const f=fixture(),at=1.2345;f.record.transcript_words=[{word:'synthetic',start_seconds:at,end_seconds:2.3456}];
  const contract=sourceAnchoredEvidenceContract(f.record,f.manifest),ref=contract.anchors.find(a=>a.seconds===at).ref;
  f.raw.evidence_anchor_hash=contract.hash;f.raw.knowledge.fields[0].evidence[0].start_ref=ref;
  const report=normalizeSourceAnchoredReport(f.raw,f.record,f.manifest),targets=automaticReviewTargets(f.record,report),times=automaticFrameTimes(targets,12);
- assert.deepEqual(times,[at]);assert.equal(targets.find(t=>t.fieldPath==='knowledge.fields.0.value').evidence[0].end_seconds,at);
- const frames=[{seconds:times[0],artifact:{key:'results/synthetic/precise-frame.jpg',generation:'2',sha256:'a'.repeat(64)}}];
+ assert.deepEqual(times,[]);assert.equal(targets.find(t=>t.fieldPath==='knowledge.fields.0.value').evidence[0].end_seconds,at);
+ const frames=[{seconds:at,artifact:{key:'results/synthetic/precise-frame.jpg',generation:'2',sha256:'a'.repeat(64)}}];
  const response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({entries:targets.map(t=>({fieldPath:t.fieldPath,verdict:'supported',reason:'Synthetic exact point review.',visualStatic:t.visual,frameIds:t.visual?[0]:[],quotes:t.visual?[]:[{source:'caption',excerpt:f.record.source_caption.text}]}))})}]}}]};
  const entries=automaticReviewEntries({response,targets,frames,record:f.record,report});
- assert.equal(entries.find(e=>e.fieldPath==='knowledge.fields.0.value').verdict,'supported');assert.deepEqual(entries.find(e=>e.fieldPath==='knowledge.fields.0.value').frameArtifacts[0].sampleSeconds,[at]);
+ assert.equal(entries.find(e=>e.fieldPath==='knowledge.fields.0.value').verdict,'inconclusive');assert.equal(entries.find(e=>e.fieldPath==='knowledge.fields.0.value').frameArtifacts,undefined);
 });
 
 

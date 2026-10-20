@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "1c609cad0555e3ceb5bee31d6f08dfab2aecb829",
+  "objective": "Expose the two existing saved quality review routes through the external worker HTTP allowlist, preserving authentication, stage fences and recovery checks.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Exact review import and recovery paths reach the existing runtime through the production HTTP adapter.",
+    "Existing provider-free synthetic recovery succeeds through external HTTP; unknown paths and methods remain rejected.",
+    "Closed stage entrypoint smoke rejects both routes at the processing fence rather than hiding them with 404.",
+    "GitHub CI only; no local product tests, provider calls or deployment."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/worker-http.mjs",
+    "google-v0/scripts/smoke-stage-workers.mjs",
+    "google-v0/tests/reels-quality-review.test.mjs",
+    "tasks/MEG-109-quality-http-routes.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/worker-http.mjs",
+      "reason": "Production external HTTP boundary and saved review regression",
+      "sections": [
+        "quality review HTTP routes"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/scripts/smoke-stage-workers.mjs",
+      "reason": "Production external HTTP boundary and saved review regression",
+      "sections": [
+        "quality review HTTP routes"
+      ],
+      "max_chars": 1500
+    },
+    {
+      "path": "google-v0/tests/reels-quality-review.test.mjs",
+      "reason": "Production external HTTP boundary and saved review regression",
+      "sections": [
+        "quality review HTTP routes"
+      ],
+      "max_chars": 1500
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

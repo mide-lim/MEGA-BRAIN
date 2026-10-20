@@ -9,6 +9,7 @@ import {executionId} from '../lib/reels-pipeline.mjs';
 import {hash} from '../lib/reels-runtime.mjs';
 import {sha256} from '../lib/storage.mjs';
 import {encodeFields} from '../lib/firestore.mjs';
+import {workerHTTP} from '../lib/worker-http.mjs';
 
 // Entirely synthetic source and editorial review. These values never leave the
 // isolated Actions test process and cannot establish a real source review.
@@ -30,7 +31,7 @@ function memory(){
   await store.afterRecovery?.(args);return {applied:true};
  };return store;
 }
-async function fixture({ordinal=1,entriesTransform,reportTransform}={}){
+async function fixture({ordinal=1,entriesTransform,reportTransform,authorize=()=>true}={}){
  const reelId='Reel_'+String(ordinal).padStart(3,'0'),operationId='same-original-cohort-100',id=executionId(operationId,reelId,'analysis'),prefix=`results/instagram/${reelId}/${id}/`,media=Buffer.from('synthetic-video'),audio=Buffer.from('synthetic-audio');
  const record={id:reelId,duration_seconds:20,media_verified:true,video_key:`originals/instagram/${reelId}/video.mp4`,video_generation:'1',video_bytes:media.length,video_sha256:sha256(media),audio_key:prefix+'audio.flac',audio_generation:'2',audio_bytes:audio.length,audio_sha256:sha256(audio),audio_source_key:`originals/instagram/${reelId}/video.mp4`,audio_source_generation:'1',audio_status:'present',transcript:'',transcript_key:prefix+'transcription.json',transcript_generation:'3',source_caption:{text:'Build a portfolio with HTML.',capture_id:'synthetic_capture_'+ordinal}};
  record.media_inspection_receipt=createMediaInspectionReceipt({video:record,media:{hasVideo:true,hasAudio:true,audio_status:'present',duration_seconds:20},bytes:media});
@@ -63,10 +64,10 @@ async function fixture({ordinal=1,entriesTransform,reportTransform}={}){
  const storage={bucket:project+'-media',metadata:async key=>{const o=objects.get(key);return o?{generation:o.generation,size:o.bytes.length,metadata:{sha256:o.sha256}}:null;},read:async(key,{generation}={})=>{reads.push({key,generation});const o=objects.get(key);assert.equal(generation,o?.generation);return Buffer.from(o.bytes);},writeImmutable:async(key,bytes)=>{writes.push(key);const old=objects.get(key);if(old){assert.deepEqual(old.bytes,bytes);return {generation:old.generation};}const o=save(key,String(100+objects.size),bytes);return {generation:o.generation};}};
  const binding={record,originalReport,executionId:id,rawResponseIdentity,originalCandidateIdentity};
  const repository={store,raw:async reelId=>(await store.get('videos/'+reelId))?.data,refresh:async()=>{}};
- const runtime=reelsGoogleRuntime({project,reels_runtime_version:'v2',reels_processing_enabled:true,worker_origin:'https://worker.run.app',gemini_model:'gemini-fixture'}, {version:'fixture'}, {stage:'analysis',authorize:()=>true,dependencies:{store,repository,storage,tools:{download:()=>assert.fail('provider download forbidden')},api:{project,request:()=>assert.fail('all provider calls forbidden')},dispatcher:{enqueue:()=>assert.fail('queue dispatch forbidden')}}});
+ const runtime=reelsGoogleRuntime({project,reels_runtime_version:'v2',reels_processing_enabled:true,worker_origin:'https://worker.run.app',gemini_model:'gemini-fixture'}, {version:'fixture'}, {stage:'analysis',authorize,dependencies:{store,repository,storage,tools:{download:()=>assert.fail('provider download forbidden')},api:{project,request:()=>assert.fail('all provider calls forbidden')},dispatcher:{enqueue:()=>assert.fail('queue dispatch forbidden')}}});
  const deliver=async(overrides={})=>runtime(new Request('https://worker.run.app/tasks/quality-review',{method:'POST',body:JSON.stringify({executionId:id,reviewId:sealed.review.id,evidenceVersion:(await store.get('reels_executions/'+id)).updateTime,...overrides})}));
  const importDelivery=async(packageIdentity,overrides={})=>runtime(new Request('https://worker.run.app/tasks/quality-review/import',{method:'POST',body:JSON.stringify({executionId:id,evidenceVersion:(await store.get('reels_executions/'+id)).updateTime,packageIdentity,...overrides})}));
- return {id,reelId,store,storage,objects,save,reads,writes,binding,sealInput,sealed,job,record,repository,deliver,importDelivery};
+ return {id,reelId,store,storage,objects,save,reads,writes,binding,sealInput,sealed,job,record,repository,deliver,importDelivery,runtime};
 }
 
 test('server loader accepts only sealed exact source reviews and reads every distinct frame',async()=>{
@@ -268,4 +269,36 @@ test('editorial import follows prior negative reviewed candidate before exact re
  const imported=await f.importDelivery(m.packageIdentity);assert.equal(imported.status,200);const result=await imported.json();assert.equal(result.publicationPerformed,false);
  assert.deepEqual(await f.store.get('reels_executions/'+f.id),before);
  const applied=await f.deliver({reviewId:result.reviewId});assert.equal(applied.status,200);assert.equal((await applied.json()).status,'completed');
+});
+
+
+test('external HTTP adapter reaches exact saved-review import and recovery with no providers',{timeout:30000},async()=>{
+ const f=await reviewedFailureFixture(),material=importMaterial(f),server=workerHTTP(f.runtime);
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+ const origin='http://127.0.0.1:'+server.address().port;
+ const request=async(path,body)=>{const response=await fetch(origin+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});return {status:response.status,body:await response.json()};};
+ try{
+  const evidenceVersion=(await f.store.get('reels_executions/'+f.id)).updateTime;
+  const imported=await request('/tasks/quality-review/import',{executionId:f.id,evidenceVersion,packageIdentity:material.packageIdentity});
+  assert.equal(imported.status,200);assert.equal(imported.body.status,'review_imported');assert.equal(imported.body.publicationPerformed,false);
+  const recovered=await request('/tasks/quality-review',{executionId:f.id,evidenceVersion,reviewId:imported.body.reviewId});
+  assert.equal(recovered.status,200);assert.equal(recovered.body.status,'completed');
+  assert.deepEqual((await f.store.get('reels_executions/'+f.id)).data.rawResult,f.failedJob.rawResult);
+  assert.equal((await request('/tasks/quality-review/import/unknown',{})).status,404);
+  assert.equal((await request('/tasks/quality-review/import',{oversized:'x'.repeat(2049)})).status,413);
+  const wrongMethod=await fetch(origin+'/tasks/quality-review/import',{signal:AbortSignal.timeout(5000)});assert.equal(wrongMethod.status,405);await wrongMethod.text();
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+
+test('external quality review routes preserve application authorization',{timeout:30000},async()=>{
+ const f=await fixture({authorize:()=>false}),server=workerHTTP(f.runtime);
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+ const origin='http://127.0.0.1:'+server.address().port;
+ try{
+  for(const path of ['/tasks/quality-review','/tasks/quality-review/import']){
+   const response=await fetch(origin+path,{method:'POST',body:'{}',signal:AbortSignal.timeout(5000)});assert.equal(response.status,401);await response.text();
+  }
+  assert.equal(f.reads.length,0);assert.equal(f.writes.length,0);assert.deepEqual((await f.store.get('reels_executions/'+f.id)).data,f.job);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });

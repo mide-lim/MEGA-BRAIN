@@ -46,6 +46,7 @@ async function checkStage(stage,{v2=false,closedEnv=false}={}){
     await response.text();
     if(v2){
       const control=await fetch(url+'/tasks/control',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(control.status,423);await control.text();
+      for(const path of ['/tasks/quality-review','/tasks/quality-review/import']){const review=await fetch(url+path,{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(review.status,423,stage+' quality review reaches closed runtime fence');await review.text();}
       const curation=await fetch(url+'/tasks/curation',{method:'POST',body:'{}',signal:AbortSignal.timeout(1000)});assert.equal(curation.status,stage==='analysis'?401:405,stage+' curation is isolated and reaches application authorization');await curation.text();
       assert.doesNotMatch(output,/Unexpected outbound I\/O/);return;
     }

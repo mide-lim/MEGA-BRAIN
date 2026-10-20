@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "b12ebfbfc4803ecb184a6115b8144bf776e74f0e",
+  "objective": "Stabilize saved evidence transport and precise independent-review diagnostics without weakening publication proof or replaying providers.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Do not solicit optional temporal taxonomy signals without saved transcript timing; never replace missing transcript proof with video.",
+    "Malformed saved string evidence remains rejected with bounded diagnostic; raw sources and legacy parse reasons remain unchanged.",
+    "Visual claims remain inconclusive when a textual positive review lacks visual proof; diagnose the missing proof explicitly.",
+    "Version only new request diagnostics while reproducing existing saved-request review bytes and preserving single-attempt provider intents.",
+    "All product tests/builds run exclusively in GitHub Actions; preserve prior source identity, HTTP routes and immutable JSON recovery regressions."
+  ],
+  "allowed_paths": [
+    "google-v0/lib/analysis.mjs",
+    "google-v0/lib/reels-analysis-contract.mjs",
+    "google-v0/lib/reels-quality-auto-review.mjs",
+    "google-v0/lib/google-operations.mjs",
+    "google-v0/tests/analysis.test.mjs",
+    "google-v0/tests/reels-quality-auto-review.test.mjs",
+    "tasks/MEG-109-residual-evidence.json"
+  ],
+  "context": [
+    {
+      "path": "google-v0/lib/analysis.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/reels-analysis-contract.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/reels-quality-auto-review.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/lib/google-operations.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/tests/analysis.test.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    },
+    {
+      "path": "google-v0/tests/reels-quality-auto-review.test.mjs",
+      "reason": "Bounded residual evidence stabilization",
+      "sections": [
+        "source transport and independent review"
+      ],
+      "max_chars": 3000
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions Google v0 integration: node --test tests/*.test.mjs",
+    "GitHub Actions docs: python3 scripts/check_task_packets.py",
+    "GitHub Actions Google v0 integration: image build and isolated smoke checks"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

@@ -97,3 +97,31 @@ test('downgraded verdict bounds final reason and malformed null entries/quotes a
   assert.throws(()=>automaticReviewEntries({response:fresh,targets,frames:[],record:f.record,report:f.originalReport}),e=>e.code==='QUALITY_VALIDATION_EVIDENCE_INVALID');
  }
 });
+
+
+test('textual supported response cannot replace candidate video proof and diagnoses the exact gap',()=>{
+ const f=fixture(),targets=[{fieldPath:'knowledge.fields.0.value',visual:true,evidence:[{source:'video',start_seconds:0,end_seconds:20}]}];
+ const response=f.responseFor(targets),body=JSON.parse(response.candidates[0].content.parts[0].text),entry=body.entries[0];
+ entry.reason='Supported by saved text.';entry.visualStatic=false;entry.frameIds=[];entry.quotes=[{source:'caption',excerpt:f.record.source_caption.text}];
+ response.candidates[0].content.parts[0].text=JSON.stringify(body);const before=structuredClone(response);
+ const args={response,targets,frames:[],record:f.record,report:f.originalReport};
+ const result=automaticReviewEntries(args)[0];assert.equal(result.verdict,'inconclusive');assert.match(result.reason,/VISUAL_PROOF_INCOMPLETE/);assert.match(result.reason,/não aceito como prova/);assert.equal(result.visualPixelsReviewed,undefined);assert.deepEqual(response,before);
+ const legacy=automaticReviewEntries({...args,diagnosticVersion:1})[0];assert.equal(legacy.reason,'Evidência independente insuficiente para a afirmação integral. Supported by saved text.');
+ assert.throws(()=>automaticReviewEntries({...args,diagnosticVersion:3}),e=>e.code==='QUALITY_VALIDATION_EVIDENCE_INVALID');
+ targets[0].evidence[0].end_seconds=0;assert.match(automaticReviewEntries(args)[0].reason,/VIDEO_POINT_UNPROVEN/);
+ targets[0].visual=false;targets[0].evidence=[];entry.quotes=[];response.candidates[0].content.parts[0].text=JSON.stringify(body);assert.match(automaticReviewEntries(args)[0].reason,/TEXT_QUOTE_MISSING/);
+ entry.verdict='invalid';entry.reason='Contradiction demonstrated.';response.candidates[0].content.parts[0].text=JSON.stringify(body);assert.equal(automaticReviewEntries(args)[0].verdict,'invalid');
+});
+
+test('saved v1 request and response keep legacy review bytes and never acquire a new paid intent',async()=>{
+ const f=fixture({visual:true,mutateResponse:r=>{const body=JSON.parse(r.candidates[0].content.parts[0].text);body.entries.find(e=>e.fieldPath==='visual_observations.0').visualStatic=false;r.candidates[0].content.parts[0].text=JSON.stringify(body);}});
+ await f.reviewer.generate(f.input);assert.equal(f.calls(),1);
+ const requestKey=[...f.objects.keys()].find(k=>k.endsWith('-request.json')),responseKey=[...f.objects.keys()].find(k=>k.endsWith('-response.json'));
+ const requestObject=f.objects.get(requestKey),responseObject=f.objects.get(responseKey),request=JSON.parse(requestObject.bytes),response=JSON.parse(responseObject.bytes);
+ assert.equal(request.diagnosticVersion,2);delete request.diagnosticVersion;response.requestHash=qualityDigest(request);
+ for(const [object,value] of [[requestObject,request],[responseObject,response]]){object.bytes=Buffer.from(JSON.stringify(value));object.sha256=sha256(object.bytes);}
+ for(const key of [...f.docs.keys()])if(!key.includes('/validation_'))f.docs.delete(key);
+ const first=await f.reviewer.load(f.input),saved=structuredClone(f.docs.get('reels_quality_receipts/'+first.reviewIdentity.reviewId));
+ assert.match(first.trustedReviews.find(e=>e.fieldPath==='visual_observations.0').reason,/^Evidência independente insuficiente/);
+ await f.reviewer.load(f.input);assert.deepEqual(f.docs.get('reels_quality_receipts/'+first.reviewIdentity.reviewId),saved);assert.equal(f.calls(),1);
+});

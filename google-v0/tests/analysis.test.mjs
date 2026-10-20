@@ -104,7 +104,9 @@ test('factual transcript evidence requires saved timing while narrative gaps rem
  for(const family of [schema.properties.useful_information,schema.properties.knowledge.properties.fields,schema.properties.knowledge.properties.keywords]){
   const item=family.items.properties.evidence.items;assert.equal(item.type,'OBJECT');assert.ok(!item.properties.source.enum.includes('transcript'));
  }
- assert.equal(schema.properties.taxonomySignals.properties.units.maxItems,0);
+ assert.equal(schema.properties.taxonomySignals,undefined);
+ assert.match(requestFor(r).systemInstruction.parts[0].text,/omita taxonomySignals/);
+ assert.doesNotMatch(requestFor(r).systemInstruction.parts[0].text,/forneça taxonomySignals/);
  const narrative=schema.properties.qualityEvidenceV2.properties.title.items;
  assert.ok(narrative.properties.source.enum.includes('transcript'));assert.ok(narrative.required.includes('start_ref'));assert.equal(narrative.properties.start_ref.nullable,undefined);assert.equal(narrative.properties.end_ref.nullable,undefined);assert.ok(narrative.properties.start_ref.enum.includes('untimed'));
  const manifest=qualitySourceManifest(r),c=sourceAnchoredEvidenceContract(r,manifest),e={source:'transcript',sourceIdentity:manifest.transcript,excerpt:record.transcript};
@@ -183,4 +185,20 @@ test('malformed or incomplete received responses are review outcomes, never publ
  for(const [response,reason] of [[{},'incomplete_response'],[{candidates:[{finishReason:'MAX_TOKENS'}]},'incomplete_response'],[{candidates:[{finishReason:'STOP',content:{parts:[{text:'not JSON'}]}}]},'invalid_json'],[{candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({categories:['receitas']})}]}}]},'invalid_report']]){
   const result=analysisOutcome(response,{});assert.equal(result.accepted,false);assert.deepEqual(result.reasons,[reason]);
  }
+});
+
+
+test('saved optional taxonomy string evidence stays rejected without changing legacy candidate reasons',async()=>{
+ const {sourceAnchoredEvidenceContract,normalizeSourceAnchoredReport}=await import('../lib/reels-analysis-contract.mjs');
+ const {qualitySourceManifest}=await import('../lib/reels-quality-gate.mjs');
+ const {analysisOutcome}=await import('../lib/analysis.mjs');
+ const r={...record,video_key:'originals/test/video.mp4',video_generation:'11',transcript_key:'results/test/transcript.json',transcript_generation:'12',source_caption:{text:'Guardar a fonte.',capture_id:'capture-test'}},manifest=qualitySourceManifest(r),c=sourceAnchoredEvidenceContract(r,manifest);
+ const raw={evidence_contract:c.version,evidence_anchor_hash:c.hash,useful_information:[{evidence:[{source:'video',sourceIdentity:{...manifest.video,captureId:null},excerpt:'Synthetic claim',start_ref:'t0',end_ref:'t1'}]}],contextualSignals:{evidence:[{sourceKind:'transcript',sourceIdentity:manifest.transcript.key,excerpt:r.transcript,start_ref:'untimed',end_ref:'untimed'}]},taxonomySignals:{version:1,complete:true,units:[{id:'synthetic',kind:'recipe',title:'Synthetic',evidence:[r.transcript]}]}};
+ const before=structuredClone(raw),response={candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(raw)}]}}]};
+ assert.throws(()=>normalizeSourceAnchoredReport(raw,r,manifest),e=>e.code==='EVIDENCE_ENTRY_INVALID'&&e.transportSection==='taxonomySignals.units');
+ const outcome=analysisOutcome(response,r,{qualityGateV2:{}});
+ assert.equal(outcome.accepted,false);assert.equal(outcome.report,undefined);assert.deepEqual(outcome.reasons,['invalid_evidence_transport']);
+ assert.deepEqual(outcome.transportDiagnostic,{code:'EVIDENCE_ENTRY_INVALID',section:'taxonomySignals.units'});assert.deepEqual(raw,before);
+ for(const value of [null,42,'unbound']){raw.taxonomySignals.units[0].evidence=[value];assert.throws(()=>normalizeSourceAnchoredReport(raw,r,manifest),e=>e.code==='EVIDENCE_ENTRY_INVALID');}
+ raw.evidence_anchor_hash='0'.repeat(64);assert.throws(()=>normalizeSourceAnchoredReport(raw,r,manifest),/hash/);
 });

@@ -63,7 +63,7 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
     const units=schema.properties.taxonomySignals.properties.units;
     units.items.properties.evidence=transcript?structuredClone(anchors.factualEvidence):{type:'ARRAY',maxItems:0,items:{type:'STRING'}};
     if(transcript){const item=units.items.properties.evidence.items;item.properties.source.enum=['transcript'];item.properties.sourceIdentity={type:'OBJECT',required:['key','generation'],properties:{key:{type:'STRING'},generation:{type:'STRING'}}};item.required=[...new Set([...item.required,'start_ref','end_ref'])];}
-    else units.maxItems=0;
+    else delete schema.properties.taxonomySignals;
    }
    if(contextCatalogSnapshot!==null&&(typeof contextCatalogSnapshot!=='object'||Array.isArray(contextCatalogSnapshot)||JSON.stringify(contextCatalogSnapshot).length>30000))throw Error('Catálogo contextual fora do limite.');
   }
@@ -76,7 +76,8 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
     ]}],
     generationConfig:{...(model==='gemini-3.5-flash-lite'?{thinkingConfig:{thinkingLevel:'MINIMAL'}}:{temperature:0.2}),maxOutputTokens:8192,responseMimeType:'application/json',responseSchema:schema}
   };
-  if(taxonomySignalsEnabled)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
+  if(taxonomySignalsEnabled&&schema.properties.taxonomySignals)request.systemInstruction.parts[0].text+=taxonomySignalsInstruction;
+  if(qualityGateV2Enabled&&!anchors.hasTimedTranscript)request.systemInstruction.parts[0].text+=' A transcrição salva não tem alinhamento temporal: omita taxonomySignals. Não substitua evidência de transcrição indisponível por vídeo nem invente intervalos; preserve somente itens sustentados por outra fonte identificada e registre a lacuna.';
   if(qualityGateV2Enabled)request.systemInstruction.parts[0].text+=qualityGateV2Instruction+sourceAnchorsInstruction;
   return request;
 }
@@ -147,7 +148,7 @@ export function analysisOutcome(response,record,{requireKnowledge=false,sourceGr
  let parsed;
  try{parsed=JSON.parse((candidate.content?.parts??[]).filter(p=>p.thought!==true).map(p=>p.text??'').join(''));}
  catch{return {accepted:false,reasons:['invalid_json']};}
- if(qualityGateV2!==null){try{parsed=normalizeSourceAnchoredReport(parsed,record,qualitySourceManifest(record));}catch{return {accepted:false,reasons:['invalid_evidence_transport']};}}
+ if(qualityGateV2!==null){try{parsed=normalizeSourceAnchoredReport(parsed,record,qualitySourceManifest(record));}catch(error){return {accepted:false,reasons:['invalid_evidence_transport'],...(error.code==='EVIDENCE_ENTRY_INVALID'&&error.transportSection==='taxonomySignals.units'?{transportDiagnostic:{code:'EVIDENCE_ENTRY_INVALID',section:'taxonomySignals.units'}}:{})};}}
  return analysisReportOutcome(parsed,record,{requireKnowledge,sourceGroundedPublication,qualityGateV2,contextCatalogSnapshot});
 }
 

@@ -63,7 +63,7 @@ export function googleOperations({api,storage,tools,preset,config,gate,execution
    if(savedCandidate){
     if(!originalIdentity||originalIdentity.key!==candidateKey||savedCandidate.candidateContentHash!==qualityCandidateHash(savedCandidate.report)||qualityCandidateHash(originalReport)!==savedCandidate.candidateContentHash||qualityDigest(savedCandidate.rawResponseIdentity)!==qualityDigest(rawIdentity))throw Object.assign(Error('Resposta e candidato originais não correspondem às fontes atuais.'),{code:'QUALITY_REVIEW_SOURCE_CHANGED',status:409});
    }else{
-    const object=await persist(candidateKey,{report:originalReport,candidateContentHash:qualityCandidateHash(originalReport),rawResponseIdentity:rawIdentity,parseReasons:initial.reasons??[]});
+    const object=await persist(candidateKey,{report:originalReport,candidateContentHash:qualityCandidateHash(originalReport),rawResponseIdentity:rawIdentity,parseReasons:initial.reasons??[],...(initial.transportDiagnostic?{transportDiagnostic:initial.transportDiagnostic}:{})});
     originalIdentity={key:candidateKey,generation:object.generation};
    }
    // A report cannot nominate its reviewer. The only port is constructed by

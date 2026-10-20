@@ -18,6 +18,7 @@
     "google-v0/lib/reels-analysis-contract.mjs",
     "google-v0/tests/analysis.test.mjs",
     "google-v0/tests/reels-visual-evidence-contract.test.mjs",
+    "google-v0/tests/reels-quality-gate.test.mjs",
     "tasks/MEG-109-visual-evidence-items.json"
   ],
   "context": [

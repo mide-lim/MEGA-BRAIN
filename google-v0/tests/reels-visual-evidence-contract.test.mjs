@@ -104,3 +104,10 @@ test('individually allowed flat identity values cannot cross source pairs; narra
  e.sourceIdentity={key:f.manifest.transcript.key,generation:f.manifest.video.generation};assert.ok(c.evidence.items.properties.sourceIdentity.properties.key.enum.includes(e.sourceIdentity.key));assert.ok(c.evidence.items.properties.sourceIdentity.properties.generation.enum.includes(e.sourceIdentity.generation));assert.throws(()=>normalizeSourceAnchoredReport(f.raw,f.record,f.manifest),/Identidade/);
  e.sourceIdentity=f.manifest.video;e.source='transcript';assert.throws(()=>normalizeSourceAnchoredReport(f.raw,f.record,f.manifest),/Identidade/);
 });
+
+test('missing video identity permits no visual item and never emits undefined or empty identity enums',()=>{
+ const f=fixture();delete f.record.video_generation;const p=buildAnalysisRequest({record:f.record,preset,bucket:'fixture',qualityGateV2Enabled:true}).generationConfig.responseSchema.properties;
+ assert.equal(p.visual_observations.maxItems,0);assert.deepEqual(p.qualityEvidenceV2.properties.title.items.properties.source.enum,['caption']);assert.deepEqual(p.qualityEvidenceV2.properties.title.items.properties.sourceIdentity.required,['captureId']);
+ const m=qualitySourceManifest(f.record),c=sourceAnchoredEvidenceContract(f.record,m);f.raw.evidence_anchor_hash=c.hash;assert.throws(()=>normalizeSourceAnchoredReport(f.raw,f.record,m));f.raw.visual_observations=[];assert.deepEqual(normalizeSourceAnchoredReport(f.raw,f.record,m).visual_observations,[]);
+ const walk=x=>{if(!x||typeof x!=='object')return;if(x.enum)assert.ok(x.enum.length&&x.enum.every(v=>typeof v==='string'));for(const v of Object.values(x))if(Array.isArray(v))v.forEach(walk);else walk(v);};walk(p);
+});

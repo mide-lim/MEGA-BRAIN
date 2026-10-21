@@ -54,12 +54,14 @@ export function buildAnalysisRequest({record,bucket,preset,model,taxonomySignals
    schema.required=[...schema.required,'qualityEvidenceV2','evidence_contract','evidence_anchor_hash','visual_observations_contract','application_evidence_contract'];
    schema.properties.visual_observations_contract={type:'STRING',enum:[visualObservationsContract]};
    schema.properties.application_evidence_contract={type:'STRING',enum:[applicationsContract]};
+   if(anchors.manifest.video){
    const visualEvidence=structuredClone(anchors.evidence);visualEvidence.minItems=1;
    const visualItem=visualEvidence.items;
    visualItem.properties.source.enum=['video'];
    visualItem.properties.sourceIdentity={type:'OBJECT',required:['key','generation'],properties:{key:{type:'STRING',enum:[anchors.manifest.video.key]},generation:{type:'STRING',enum:[anchors.manifest.video.generation]}}};
    for(const key of ['start_ref','end_ref'])visualItem.properties[key].enum=anchors.anchors.map(a=>a.ref);
    schema.properties.visual_observations={type:'ARRAY',items:{type:'OBJECT',required:['observation','evidence'],properties:{observation:{type:'STRING'},evidence:visualEvidence}}};
+   }else schema.properties.visual_observations={type:'ARRAY',maxItems:0,items:{type:'OBJECT',required:['observation','evidence'],properties:{observation:{type:'STRING'},evidence:{type:'ARRAY',maxItems:0,items:{type:'OBJECT',required:['source','sourceIdentity','excerpt','start_ref','end_ref'],properties:{source:{type:'STRING',enum:['video']},sourceIdentity:{type:'OBJECT',required:['key','generation'],properties:{key:{type:'STRING'},generation:{type:'STRING'}}},excerpt:{type:'STRING'},start_ref:{type:'STRING',enum:anchors.anchors.map(a=>a.ref)},end_ref:{type:'STRING',enum:anchors.anchors.map(a=>a.ref)}}}}}}};
    delete schema.properties.qualityEvidenceV2.properties.visualObservations;
    schema.properties.qualityEvidenceV2.required=schema.properties.qualityEvidenceV2.required.filter(k=>k!=='visualObservations');
    for(const key of ['title','summary'])schema.properties.qualityEvidenceV2.properties[key]=structuredClone(anchors.evidence);

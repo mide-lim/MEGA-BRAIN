@@ -1,11 +1,27 @@
 // Keep bounded provider error data; never store credentials or full request URLs.
 export const safeProviderMessage=value=>typeof value==='string'?value.replace(/https?:\/\/[^\s]+/g,'[url]').replace(/Bearer\s+[^\s]+/gi,'[credential]').replace(/(?:AIza[A-Za-z0-9_-]{20,}|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g,'[redacted]').replace(/[\x00-\x1f]/g,' ').slice(0,1000):'';
+const safeDetailDescription=value=>safeProviderMessage(value).replace(/gs:\/\/[^\s]+/g,'[resource]').replace(/(?:originals|results|projects)\/[^\s,;]+/g,'[resource]').replace(/["'`][^"'`]*(?:["'`]|$)/g,'[value]').replace(/(?:api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+/gi,'[credential]').replace(/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/gi,'[identifier]').replace(/\b[A-Za-z0-9_-]{32,}\b/g,'[identifier]').replace(/\b\d{8,}\b/g,'[identifier]').slice(0,512);
+const diagnosticFieldNames=new Set(['generation_config','generationConfig','response_schema','responseSchema','response_mime_type','responseMimeType','max_output_tokens','maxOutputTokens','contents','parts','text','fileData','fileUri','mimeType','system_instruction','systemInstruction','model','tools','tool_config','toolConfig','safety_settings','safetySettings','properties','items','type','enum','nullable','required','minItems','maxItems','anyOf','title','summary','categories','useful_information','claim','application','application_evidence','classification','evidence','source','sourceIdentity','key','generation','captureId','excerpt','start_ref','end_ref','visual_observations','observation','knowledge','fields','keywords','qualityEvidenceV2','contextualSignals','taxonomySignals']);
+const safeDetailField=value=>typeof value==='string'&&value.length<=256&&/^[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*|\[\d{1,4}\])*$/u.test(value)&&value.replace(/\[\d+\]/g,'').split('.').every(v=>diagnosticFieldNames.has(v))?value:'[field redacted]';
+function safeProviderDetails(value){
+ if(!Array.isArray(value))return [];
+ const result=[];
+ for(const detail of value.slice(0,4)){
+  if(detail?.['@type']==='type.googleapis.com/google.rpc.BadRequest'){
+   const violations=Array.isArray(detail.fieldViolations)?detail.fieldViolations.slice(0,4):[];
+   result.push({'@type':detail['@type'],fieldViolations:violations.filter(v=>v&&typeof v==='object').map(v=>({field:safeDetailField(v.field),description:safeDetailDescription(v.description)}))});
+  }else if(detail?.['@type']==='type.googleapis.com/google.rpc.ErrorInfo'){
+   result.push({'@type':detail['@type'],reason:typeof detail.reason==='string'&&/^[A-Z][A-Z_]{0,63}$/.test(detail.reason)?detail.reason:'[reason redacted]',domain:typeof detail.domain==='string'&&/^(?:[a-z][a-z0-9-]{0,30}\.)?googleapis\.com$/.test(detail.domain)?detail.domain:'[domain redacted]'});
+  }
+ }
+ return result;
+}
 async function providerDiagnostic(response){
-  const reader=response.body?.getReader();if(!reader)return null;
-  let size=0;const chunks=[];
-  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8192){await reader.cancel();return null;}chunks.push(Buffer.from(value));}}
-  catch{return null;}finally{reader.releaseLock();}
-  try{const error=JSON.parse(Buffer.concat(chunks).toString()).error;return {status:/^[A-Z_]{1,64}$/.test(error?.status??'')?error.status:null,message:safeProviderMessage(error?.message)};}catch{return null;}
+ const reader=response.body?.getReader();if(!reader)return {diagnostic:null,bodyComplete:response.body==null,bodyBytes:0,jsonParsed:false};
+ let size=0,complete=false;const chunks=[];
+ try{while(true){const {done,value}=await reader.read();if(done){complete=true;break;}size+=value.length;if(size>8192){await reader.cancel();return {diagnostic:null,bodyComplete:false,bodyBytes:size,jsonParsed:false};}chunks.push(Buffer.from(value));}}
+ catch{return {diagnostic:null,bodyComplete:false,bodyBytes:size,jsonParsed:false};}finally{reader.releaseLock();}
+ try{const body=JSON.parse(Buffer.concat(chunks).toString()),error=body?.error,details=safeProviderDetails(error?.details);return {diagnostic:{status:/^[A-Z_]{1,64}$/.test(error?.status??'')?error.status:null,message:safeProviderMessage(error?.message),...(details.length?{details}:{} )},bodyComplete:complete,bodyBytes:size,jsonParsed:true};}catch{return {diagnostic:null,bodyComplete:complete,bodyBytes:size,jsonParsed:false};}
 }
 export const defaultAnalysisTimeoutMs=120000;
 export const maximumAnalysisTimeoutMs=840000;
@@ -25,7 +41,9 @@ export function safeAnalysisFailureDiagnostic(error){
  const bounded=(v,max)=>Number.isSafeInteger(v)&&v>=0&&v<=max?v:null;
  const google_diagnostic={api_service:'vertex_ai',operation_step:'submit_analysis',request_stage:stages.includes(d.request_stage)?d.request_stage:null,dispatch_attempted:typeof d.dispatch_attempted==='boolean'?d.dispatch_attempted:null,response_received:typeof d.response_received==='boolean'?d.response_received:null,response_body_complete:typeof d.response_body_complete==='boolean'?d.response_body_complete:null,elapsed_ms:bounded(d.elapsed_ms,maximumAnalysisTimeoutMs+60000),error_name:safeErrorName(d.error_name),error_code:safeErrorCode(d.error_code),http_status:Number.isInteger(d.http_status)&&d.http_status>=100&&d.http_status<=599?d.http_status:null,request_id:safeRequestId(d.request_id),model:typeof d.model==='string'&&/^gemini-[a-z0-9.-]{1,56}$/.test(d.model)?d.model:null,attempt:Number.isSafeInteger(d.attempt)&&d.attempt>=1&&d.attempt<=3?d.attempt:null,timeout_ms:Number.isSafeInteger(d.timeout_ms)&&d.timeout_ms>=1&&d.timeout_ms<=maximumAnalysisTimeoutMs?d.timeout_ms:null};
  const p=error.provider_diagnostic;
- const provider_diagnostic=p&&typeof p==='object'?{status:typeof p.status==='string'&&/^[A-Z_]{1,64}$/.test(p.status)?p.status:null,message:safeProviderMessage(p.message)}:null;
+ const provider_diagnostic=p&&typeof p==='object'?{status:typeof p.status==='string'&&/^[A-Z_]{1,64}$/.test(p.status)?p.status:null,message:safeProviderMessage(p.message),...(safeProviderDetails(p.details).length?{details:safeProviderDetails(p.details)}:{})}:null;
+ if(Number.isSafeInteger(d.response_body_bytes)&&d.response_body_bytes>=0&&d.response_body_bytes<=100000000)google_diagnostic.response_body_bytes=d.response_body_bytes;
+ if(typeof d.response_error_json_parsed==='boolean')google_diagnostic.response_error_json_parsed=d.response_error_json_parsed;
  return {google_diagnostic,provider_diagnostic};
 }
 const forbiddenProject='megabrain-stt';
@@ -49,9 +67,9 @@ export class GoogleREST {
     if(parsed.hostname==='us-speech.googleapis.com'&&!parsed.pathname.startsWith(`/v2/projects/${this.project}/locations/us/`)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname)&&!/^\/v2\/projects\/711042421394\/locations\/us\/operations\/[A-Za-z0-9_-]+$/.test(parsed.pathname))throw new Error('Endpoint STT regional deve usar a região us.');
     if(json!==undefined&&body!==undefined)throw new Error('Corpo ambíguo.');
     if(Object.keys(headers).some(h=>['authorization','x-goog-user-project'].includes(h.toLowerCase())))throw new Error('Cabeçalhos de identidade não podem ser substituídos.');
-    const started=performance.now();let response,requestStage='credential',dispatchAttempted=false,responseBodyComplete=false;
+    const started=performance.now();let response,requestStage='credential',dispatchAttempted=false,responseBodyComplete=false,errorBody=null;
     const apiService=({'aiplatform.googleapis.com':'vertex_ai','firestore.googleapis.com':'firestore','cloudtasks.googleapis.com':'cloud_tasks','storage.googleapis.com':'storage','speech.googleapis.com':'speech','us-speech.googleapis.com':'speech'})[parsed.hostname];
-    const diagnostic=error=>({api_service:apiService,request_stage:requestStage,dispatch_attempted:dispatchAttempted,response_received:Boolean(response),response_body_complete:responseBodyComplete,operation_step:['submit_analysis','submit_stt'].includes(operationStep)?operationStep:null,elapsed_ms:Math.max(0,Math.round(performance.now()-started)),error_name:safeErrorName(error?.name),error_code:safeErrorCode(error?.code),http_status:Number.isInteger(response?.status)?response.status:null,request_id:safeRequestId(response?.headers?.get('x-request-id')),model:typeof model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(model)?model:null,attempt:Number.isSafeInteger(attempt)&&attempt>0&&attempt<=3?attempt:null,timeout_ms:timeoutMs});
+    const diagnostic=error=>({api_service:apiService,request_stage:requestStage,dispatch_attempted:dispatchAttempted,response_received:Boolean(response),response_body_complete:responseBodyComplete,operation_step:['submit_analysis','submit_stt'].includes(operationStep)?operationStep:null,elapsed_ms:Math.max(0,Math.round(performance.now()-started)),error_name:safeErrorName(error?.name),error_code:safeErrorCode(error?.code),http_status:Number.isInteger(response?.status)?response.status:null,request_id:safeRequestId(response?.headers?.get('x-request-id')),model:typeof model==='string'&&/^[a-z][a-z0-9_.-]{0,63}$/.test(model)?model:null,attempt:Number.isSafeInteger(attempt)&&attempt>0&&attempt<=3?attempt:null,timeout_ms:timeoutMs,...(errorBody?{response_body_bytes:errorBody.bodyBytes,response_error_json_parsed:errorBody.jsonParsed}:{})});
     let completed=false;
     try{
       const token=await this.tokenProvider();
@@ -60,7 +78,7 @@ export class GoogleREST {
       requestStage='fetch_started';dispatchAttempted=true;
       response=await this.fetch(url,{method,headers:{...headers,Authorization:`Bearer ${token}`,'x-goog-user-project':this.project,...(json!==undefined?{'Content-Type':'application/json'}:{})},body:requestBody,redirect:'error',signal:AbortSignal.timeout(timeoutMs)});
       requestStage='http_response_received';
-      if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;error.provider_diagnostic=await providerDiagnostic(response);throw error;}
+      if(!response.ok){const error=new Error(`Google HTTP ${response.status}; nenhuma repetição automática.`);error.status=response.status;errorBody=await providerDiagnostic(response);responseBodyComplete=errorBody.bodyComplete;error.provider_diagnostic=errorBody.diagnostic;throw error;}
       requestStage='response_body_read';
       if(responseMode==='bytes'){
         if(!Number.isSafeInteger(maxResponseBytes)||maxResponseBytes<1)throw new Error('Limite de resposta inválido.');

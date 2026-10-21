@@ -175,7 +175,7 @@ test('application and visual evidence indices cannot silently discard a bad or d
  const r=record(),p=report(r);p.qualityEvidenceV2.applications=[{index:8,evidence:p.qualityEvidenceV2.title}];
  const gate=evaluateQualityGateV2({record:r,report:p,...evidence(r)});assert.equal(gate.accepted,false);assert.ok(gate.checks.some(c=>c.code==='INDEXED_EVIDENCE_INVALID'));
  const request=buildAnalysisRequest({record:r,preset:{version:'fixture',system_instruction:'Analyze',user_instruction:'Summarize'},bucket:'fixture-bucket',qualityGateV2Enabled:true});
- assert.ok(request.generationConfig.responseSchema.properties.qualityEvidenceV2.required.includes('applications'));assert.equal(Object.hasOwn(request.generationConfig.responseSchema.properties.qualityEvidenceV2.properties,'visualObservations'),false);assert.ok(request.generationConfig.responseSchema.properties.visual_observations.items.required.includes('evidence'));
+ assert.equal(Object.hasOwn(request.generationConfig.responseSchema.properties.qualityEvidenceV2.properties,'applications'),false);assert.ok(request.generationConfig.responseSchema.properties.useful_information.items.required.includes('application_evidence'));assert.equal(Object.hasOwn(request.generationConfig.responseSchema.properties.qualityEvidenceV2.properties,'visualObservations'),false);assert.ok(request.generationConfig.responseSchema.properties.visual_observations.items.required.includes('evidence'));
 });
 
 test('contextual visual evidence and typed-role reviews respect their own source windows',()=>{

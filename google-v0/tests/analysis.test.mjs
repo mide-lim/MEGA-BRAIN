@@ -23,16 +23,16 @@ test('gate-v2 provider evidence uses flat objects and finite time references wit
  assert.deepEqual(payload.source_time_anchors.map(a=>a.seconds),[0,0.125,2.75,60]);
  const keys=[];const walk=value=>{if(!value||typeof value!=='object')return;keys.push(...Object.keys(value.properties??{}));for(const child of Object.values(value))if(typeof child==='object'){if(Array.isArray(child))child.forEach(walk);else walk(child);}};
  walk(schema);for(const key of ['start_seconds','end_seconds','startSeconds','endSeconds','timeRange'])assert.ok(!keys.includes(key),key);
- const paths=[schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.title,schema.properties.qualityEvidenceV2.properties.summary,schema.properties.qualityEvidenceV2.properties.applications.items.properties.evidence];
+ const paths=[schema.properties.useful_information.items.properties.evidence,schema.properties.knowledge.properties.fields.items.properties.evidence,schema.properties.knowledge.properties.keywords.items.properties.evidence,schema.properties.qualityEvidenceV2.properties.title,schema.properties.qualityEvidenceV2.properties.summary,schema.properties.useful_information.items.properties.application_evidence];
  for(const evidence of paths){
   const item=evidence.items;assert.equal(item.type,'OBJECT');assert.equal(item.anyOf,undefined);
   assert.deepEqual(item.properties.source.enum,['caption','transcript','video']);assert.ok(item.required.includes('sourceIdentity'));
   assert.equal(item.properties.sourceIdentity.type,'OBJECT');assert.deepEqual(item.properties.sourceIdentity.required,['key','generation','captureId']);assert.ok(item.required.includes('start_ref'));assert.ok(item.required.includes('end_ref'));
-  for(const property of Object.values(item.properties.sourceIdentity.properties)){assert.equal(property.type,'STRING');assert.equal(property.enum,undefined);}
+  for(const property of Object.values(item.properties.sourceIdentity.properties)){assert.equal(property.type,'STRING');assert.ok(Array.isArray(property.enum)&&property.enum.length>0);}
   assert.equal(item.properties.start_ref.type,'STRING');assert.deepEqual(item.properties.start_ref.enum,[...payload.source_time_anchors.map(a=>a.ref),'untimed']);assert.equal(item.properties.start_ref.nullable,undefined);
   assert.deepEqual(item.properties.end_ref.enum,item.properties.start_ref.enum);
  }
- const contextual=schema.properties.contextualSignals.properties.evidence.items;assert.equal(contextual.type,'OBJECT');assert.equal(contextual.anyOf,undefined);assert.deepEqual(contextual.properties.sourceKind.enum,['caption','transcript','video']);assert.equal(contextual.properties.sourceIdentity.type,'STRING');assert.equal(contextual.properties.sourceIdentity.enum,undefined);
+ const contextual=schema.properties.contextualSignals.properties.evidence.items;assert.equal(contextual.type,'OBJECT');assert.equal(contextual.anyOf,undefined);assert.deepEqual(contextual.properties.sourceKind.enum,['caption','transcript','video']);assert.equal(contextual.properties.sourceIdentity.type,'STRING');assert.deepEqual(contextual.properties.sourceIdentity.enum,[manifest.caption.captureId,manifest.transcript.key+'@'+manifest.transcript.generation,manifest.video.key+'@'+manifest.video.generation]);
  assert.deepEqual(buildAnalysisRequest(args),request);
  assert.equal(buildAnalysisRequest({record,bucket:'megabrain-v0-media',preset}).generationConfig.responseSchema.properties.evidence_contract,undefined);
 });

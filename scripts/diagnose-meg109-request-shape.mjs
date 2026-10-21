@@ -16,14 +16,14 @@ function metrics(schema){
  function walk(x,path='$',depth=0){
   if(!x||typeof x!=='object'||Array.isArray(x))return;maxDepth=Math.max(maxDepth,depth);
   const row={path,depth,minItems:x.minItems??null,maxItems:x.maxItems??null,type:x.type,required:x.required??[],nullable:x.nullable===true,enumCount:x.enum?.length??0,enumBytes:Buffer.byteLength(JSON.stringify(x.enum??[])),properties:Object.keys(x.properties??{}).length};
-  if(!['STRING','INTEGER','NUMBER','BOOLEAN','OBJECT','ARRAY'].includes(x.type))issues.push({path,issue:'unknown schema type',type:x.type});
+  if(!(x.type===undefined&&Array.isArray(x.anyOf)&&x.anyOf.length)&&!['STRING','INTEGER','NUMBER','BOOLEAN','OBJECT','ARRAY'].includes(x.type))issues.push({path,issue:'unknown schema type',type:x.type});
   if(x.nullable!==undefined&&typeof x.nullable!=='boolean')issues.push({path,issue:'nonboolean nullable'});
   if(x.enum&&x.type!=='STRING')issues.push({path,issue:'enum on non-string type'});
   for(const key of ['minItems','maxItems'])if(x[key]!==undefined&&(!Number.isInteger(x[key])||x[key]<0))issues.push({path,issue:'invalid array bound',key});
   if(x.minItems!==undefined&&x.maxItems!==undefined&&x.minItems>x.maxItems)issues.push({path,issue:'inverted array bounds'});
   rows.push(row);if(x.enum){enumValues+=x.enum.length;enumBytes+=row.enumBytes;if(!x.enum.length||x.enum.some(v=>typeof v!=='string'))issues.push({path,issue:'empty/non-string enum'});}
   for(const k of x.required??[])if(!Object.hasOwn(x.properties??{},k))issues.push({path,issue:'required missing property',key:k});
-  for(const [k,v] of Object.entries(x.properties??{}))walk(v,path+'.'+k,depth+1);if(x.items)walk(x.items,path+'[]',depth+1);
+  for(const [k,v] of Object.entries(x.properties??{}))walk(v,path+'.'+k,depth+1);if(x.items)walk(x.items,path+'[]',depth+1);for(const [i,v] of (x.anyOf??[]).entries())walk(v,path+'.anyOf['+i+']',depth+1);
  }
  walk(schema);return {schemaBytes:Buffer.byteLength(JSON.stringify(schema)),maxDepth,enumValues,enumBytes,nullableEnums:rows.filter(r=>r.nullable&&r.enumCount).length,issues,paths:rows};
 }

@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "2a6538abf9d34d556169d700fa2e0e77308c5c08",
+  "objective": "Preserve bounded sanitized provider error details and accurate error-body completion while retaining offline request diagnosis and unchanged uncertainty/retry decisions.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "No provider/API invocation during diagnostics or tests; product change limited to error observability.",
+    "Reconstructed requests explicitly distinguished from unavailable original request; catalogue proxy limitations recorded.",
+    "Preserve source string lengths, temporal anchor values/cardinality and compare exact PR98 base with PR99.",
+    "Publish schema/request/metrics artifacts via GitHub Actions with per-path enum, nullable, required and depth checks.",
+    "Do not claim offline metrics prove Vertex acceptance or exact root cause; preserve uncertain status.",
+    "Body completeness reflects stream done independently of JSON parse success; malformed/absent/oversized/truncated cases remain explicit.",
+    "Only bounded sanitized BadRequest fields/descriptions and ErrorInfo reason/domain are retained; reject dynamic field paths and discard arbitrary metadata/debug details.",
+    "Existing uncertain execution, retry and finance decisions remain unchanged; no repair, replay or schema optimization."
+  ],
+  "allowed_paths": [
+    "scripts/diagnose-meg109-request-shape.mjs",
+    "google-v0/tests/fixtures/meg109-request-shape.json",
+    ".github/workflows/meg109-request-diagnostic.yml",
+    "tasks/MEG-109-request-diagnostic.json",
+    "google-v0/lib/google-rest.mjs",
+    "google-v0/tests/google-rest.test.mjs"
+  ],
+  "context": [
+    {
+      "path": "scripts/diagnose-meg109-request-shape.mjs",
+      "reason": "Offline reconstruction and dimensional diagnostics only",
+      "sections": [
+        "whole file for bounded diagnosis"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/tests/fixtures/meg109-request-shape.json",
+      "reason": "Offline reconstruction and dimensional diagnostics only",
+      "sections": [
+        "whole file for bounded diagnosis"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": ".github/workflows/meg109-request-diagnostic.yml",
+      "reason": "Offline reconstruction and dimensional diagnostics only",
+      "sections": [
+        "whole file for bounded diagnosis"
+      ],
+      "max_chars": 2000
+    },
+    {
+      "path": "google-v0/lib/google-rest.mjs",
+      "reason": "Error-body observation, safe diagnostic propagation and no-retry regressions",
+      "sections": [
+        "providerDiagnostic and safeAnalysisFailureDiagnostic"
+      ],
+      "max_chars": 1800
+    },
+    {
+      "path": "google-v0/tests/google-rest.test.mjs",
+      "reason": "Error-body observation, safe diagnostic propagation and no-retry regressions",
+      "sections": [
+        "providerDiagnostic and safeAnalysisFailureDiagnostic"
+      ],
+      "max_chars": 1800
+    }
+  ],
+  "validation_commands": [
+    "GitHub Actions MEG109 offline request diagnosis",
+    "GitHub Actions Documentation CI",
+    "GitHub Actions existing integration tests and builds"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "Independent review and exact-head GitHub CI required before integration."
+  }
+}

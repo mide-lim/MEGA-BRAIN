@@ -1,0 +1,534 @@
+{
+  "provenance": {
+    "kind": "sanitized reconstruction, not original submitted request",
+    "recordReadbackUpdateTime": "2026-10-21T00:24:14.000860Z",
+    "preserves": [
+      "source identity lengths and distinctness",
+      "transcript/caption UTF-8 lengths",
+      "word timestamps and cardinality"
+    ],
+    "limitations": [
+      "failed request and exact live catalogue not saved",
+      "saved prior catalogue is a labeled proxy; null catalogue comparison included",
+      "offline checks cannot certify Vertex compiler acceptance"
+    ]
+  },
+  "record": {
+    "transcript_key": "results/instagram/DiagReel001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/transcription.json",
+    "transcript_words": [
+      {
+        "word": "xxx",
+        "start_seconds": 0.44,
+        "end_seconds": 0.52
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 0.52,
+        "end_seconds": 0.6
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 1.56,
+        "end_seconds": 1.64
+      },
+      {
+        "word": "xx",
+        "start_seconds": 1.64,
+        "end_seconds": 1.72
+      },
+      {
+        "word": "xx",
+        "start_seconds": 2.04,
+        "end_seconds": 2.08
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 2.08,
+        "end_seconds": 2.16
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 2.16,
+        "end_seconds": 2.24
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 3.08,
+        "end_seconds": 3.16
+      },
+      {
+        "word": "xx",
+        "start_seconds": 3.16,
+        "end_seconds": 3.24
+      },
+      {
+        "word": "xxx'x",
+        "start_seconds": 3.24,
+        "end_seconds": 3.36
+      },
+      {
+        "word": "xxxxxxx.",
+        "start_seconds": 3.36,
+        "end_seconds": 3.56
+      },
+      {
+        "word": "xxx'x",
+        "start_seconds": 12.2,
+        "end_seconds": 12.32
+      },
+      {
+        "word": "xx",
+        "start_seconds": 12.56,
+        "end_seconds": 12.64
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 13.16,
+        "end_seconds": 13.28
+      },
+      {
+        "word": "xx",
+        "start_seconds": 16.28,
+        "end_seconds": 16.36
+      },
+      {
+        "word": "xxxxx",
+        "start_seconds": 16.6,
+        "end_seconds": 16.76
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 18.44,
+        "end_seconds": 18.56
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 20.64,
+        "end_seconds": 20.76
+      },
+      {
+        "word": "xxxx",
+        "start_seconds": 20.76,
+        "end_seconds": 20.84
+      },
+      {
+        "word": "xxx'x",
+        "start_seconds": 20.84,
+        "end_seconds": 20.96
+      },
+      {
+        "word": "xxx,",
+        "start_seconds": 20.96,
+        "end_seconds": 21.04
+      },
+      {
+        "word": "\"xx'x",
+        "start_seconds": 23,
+        "end_seconds": 23.36
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 23.36,
+        "end_seconds": 24.24
+      },
+      {
+        "word": "x",
+        "start_seconds": 25.16,
+        "end_seconds": 25.2
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 25.36,
+        "end_seconds": 25.68
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 25.68,
+        "end_seconds": 25.84
+      },
+      {
+        "word": "x'x",
+        "start_seconds": 27.28,
+        "end_seconds": 27.48
+      },
+      {
+        "word": "xx",
+        "start_seconds": 27.48,
+        "end_seconds": 27.56
+      },
+      {
+        "word": "xx",
+        "start_seconds": 27.56,
+        "end_seconds": 27.64
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 27.64,
+        "end_seconds": 27.72
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 28.68,
+        "end_seconds": 28.8
+      },
+      {
+        "word": "x'x",
+        "start_seconds": 28.8,
+        "end_seconds": 29.24
+      },
+      {
+        "word": "x",
+        "start_seconds": 29.24,
+        "end_seconds": 29.28
+      },
+      {
+        "word": "xxxxx",
+        "start_seconds": 29.28,
+        "end_seconds": 30.04
+      },
+      {
+        "word": "xxxx.",
+        "start_seconds": 30.04,
+        "end_seconds": 30.16
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 32.36,
+        "end_seconds": 32.44
+      },
+      {
+        "word": "xxxxx",
+        "start_seconds": 32.44,
+        "end_seconds": 33.32
+      },
+      {
+        "word": "xxxxx",
+        "start_seconds": 33.32,
+        "end_seconds": 34.16
+      },
+      {
+        "word": "xxx'x",
+        "start_seconds": 34.16,
+        "end_seconds": 34.36
+      },
+      {
+        "word": "xxx.\"",
+        "start_seconds": 35.08,
+        "end_seconds": 35.2
+      },
+      {
+        "word": "xxx",
+        "start_seconds": 37.72,
+        "end_seconds": 37.88
+      },
+      {
+        "word": "xxxx",
+        "start_seconds": 37.88,
+        "end_seconds": 37.96
+      },
+      {
+        "word": "xxx'x",
+        "start_seconds": 37.96,
+        "end_seconds": 38.08
+      },
+      {
+        "word": "xxx,",
+        "start_seconds": 38.8,
+        "end_seconds": 38.88
+      },
+      {
+        "word": "\"xx'x",
+        "start_seconds": 40.16,
+        "end_seconds": 40.48
+      },
+      {
+        "word": "xxxxxxx.",
+        "start_seconds": 40.48,
+        "end_seconds": 40.64
+      }
+    ],
+    "id": "DiagReel001",
+    "video_key": "originals/instagram/DiagReel001/video.mp4",
+    "duration_seconds": 41.982,
+    "transcript_generation": "2222222222222222",
+    "transcript": "xxx xxx xxx xx xx xxx xxxx. xxx xx xxx'x xxxxxxx. xxx'x xx xxxx. xx xxxxx xxxx. xxx xxxx xxx'x xxx, \"xx'x xxxx. x xxx xxxx. x'x xx xx xxx xxx x'x x xxxxx xxxx. xxx xxxxx xxxxx xxx'x xxx.\" xxx xxxx xxx'x xxx, \"xx'x xxxxxxx.",
+    "source_caption": {
+      "text": "بببب ببببب xx 😀 #ببببب #xxxx #xxxxxxx #xxxxx #xx #xxxxxxxxx #xxx #xxxxxx #xxxxxx #xxxxxxxxxx #xxx #xxx #xxxxx #xxxxxxxx",
+      "capture_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "method": "yt-dlp-download-metadata",
+      "scope": "Post description supplied by Instagram extractor"
+    },
+    "video_generation": "1111111111111111",
+    "media_verified": true,
+    "audio_key": "results/instagram/DiagReel001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/audio.flac",
+    "audio_generation": "3333333333333333",
+    "source_url": "https://www.instagram.com/p/DiagReel001/"
+  },
+  "priorCatalogueProxy": {
+    "version": "semantic-curator-v1",
+    "state": "available",
+    "policyVersion": "2026-10-18T03:51:38.063897Z",
+    "sourceVersionHash": "f91d535f8f3cca54eb2d56487452685deddf11c15fca68883c7804f8676a5068",
+    "groups": [],
+    "groupCount": 0,
+    "totalGroupCount": 0,
+    "editorial_taxonomy": {
+      "version": "categories-v2",
+      "revision": 39,
+      "updateTime": "2026-10-18T22:51:17.229064Z",
+      "authority": "editorial_reference_only",
+      "nodes": [
+        {
+          "id": "group-alimentacao",
+          "name": "xxxxxxxxببx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-tecnologia",
+          "name": "xxxxxxxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-saude",
+          "name": "xxبxx x xxx-xxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-trabalho",
+          "name": "xxxxxxxx x xxxبxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-casa",
+          "name": "xxxx x xxxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-viagens",
+          "name": "xxxxxxx x xxxxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "group-outros",
+          "name": "xxxxxx xxxxx",
+          "parentId": null,
+          "manual": false
+        },
+        {
+          "id": "receitas",
+          "name": "xxxxxxxx x xxxxxxx",
+          "parentId": "group-alimentacao",
+          "manual": false
+        },
+        {
+          "id": "nutricao",
+          "name": "xxxxxببx x xxxxxxxxxxببx",
+          "parentId": "group-alimentacao",
+          "manual": false
+        },
+        {
+          "id": "sustentabilidade-alimentar",
+          "name": "xxxxxxxxxxxxxxxx",
+          "parentId": "group-alimentacao",
+          "manual": false
+        },
+        {
+          "id": "desenvolvimento-software",
+          "name": "xxxxxxxxxxxxxxx xx xxxxxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "inteligencia-artificial",
+          "name": "xxxxxxxبxxxx xxxxxxxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "ferramentas-produtividade",
+          "name": "xxxxxxxxxxx x xxxxxxxxxxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "hardware-setup",
+          "name": "xxxxxxxx x xxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "design-digital",
+          "name": "xxxxxx xxxxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "tecnologia-geral",
+          "name": "xxxxxxxxxx xxxxx",
+          "parentId": "group-tecnologia",
+          "manual": false
+        },
+        {
+          "id": "exercicio-fisico",
+          "name": "xxxxxبxxx xبxxxx",
+          "parentId": "group-saude",
+          "manual": false
+        },
+        {
+          "id": "bem-estar",
+          "name": "xxx-xxxxx",
+          "parentId": "group-saude",
+          "manual": false
+        },
+        {
+          "id": "marketing-comunicacao",
+          "name": "xxxxxxxxx x xxxxxxxxببx",
+          "parentId": "group-trabalho",
+          "manual": false
+        },
+        {
+          "id": "carreira",
+          "name": "xxxxxxxx",
+          "parentId": "group-trabalho",
+          "manual": false
+        },
+        {
+          "id": "casa-decoracao",
+          "name": "xxxx x xxxxxxببx",
+          "parentId": "group-casa",
+          "manual": false
+        },
+        {
+          "id": "faca-voce-mesmo",
+          "name": "xxبx xxxب xxxxx",
+          "parentId": "group-casa",
+          "manual": false
+        },
+        {
+          "id": "moda-acessorios",
+          "name": "xxxx x xxxxxبxxxx",
+          "parentId": "group-casa",
+          "manual": false
+        },
+        {
+          "id": "destinos-experiencias",
+          "name": "xxxxxxxx x xxxxxxبxxxxx",
+          "parentId": "group-viagens",
+          "manual": false
+        },
+        {
+          "id": "onde-comer",
+          "name": "xxxx xxxxx",
+          "parentId": "group-viagens",
+          "manual": false
+        },
+        {
+          "id": "a-organizar",
+          "name": "x xxxxxxxxx",
+          "parentId": "group-outros",
+          "manual": false
+        },
+        {
+          "id": "ctx_05f5d5047b72e48abf63487a158a",
+          "name": "xxxxxxxx xxx xxxxxx (xx xx xxxxx xx xxxxxxx)",
+          "parentId": "receitas",
+          "manual": false
+        },
+        {
+          "id": "ctx_cdce03faef938482f1dc583aa1f4",
+          "name": "xxxxxxxx xxx xxx (xx xx xxxxx xx xxxxxxx)",
+          "parentId": "receitas",
+          "manual": false
+        },
+        {
+          "id": "3427b886d2f5b9fd20687f4178c00b02",
+          "name": "xxxxxxx بxxxx",
+          "parentId": "receitas",
+          "manual": true
+        },
+        {
+          "id": "596dc86f7b6b662dc32076bc067e8633",
+          "name": "xبxxxx xxxxxxxx",
+          "parentId": "receitas",
+          "manual": true
+        },
+        {
+          "id": "a35b764a4d52644949ed63284bedd415",
+          "name": "xxxxxببxx x xxxxxxxxxxxxxxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "0932555e19748d795e8dda7bf9a9531e",
+          "name": "xxxxxxx x xبxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "b18b64b81445aaae86bfef49b6a5d6d1",
+          "name": "xxxxx x xxxxxxxxxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "acabf6d985aae50cca5aeaaa0ad89cc8",
+          "name": "xxxxxx, xxxxxxxx x xxxxxxxxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "2c4f26154319c16e355b92417bff2be1",
+          "name": "xxxxxxx x xxxxxxxxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "5c13f711c7a5563bc77229b5887c2129",
+          "name": "xxxxxx x xxxxxx",
+          "parentId": "3427b886d2f5b9fd20687f4178c00b02",
+          "manual": true
+        },
+        {
+          "id": "71bf6fd4223c948af0875c46de710b0e",
+          "name": "xxxxxxx x xxxxxxxxxxxx",
+          "parentId": null,
+          "manual": true
+        },
+        {
+          "id": "c723cdb9ef70344255143ba364ce0c7f",
+          "name": "xxxx x xxxxxxxxxxxxxx",
+          "parentId": "71bf6fd4223c948af0875c46de710b0e",
+          "manual": true
+        },
+        {
+          "id": "a9bc9d630b56614a130a303cb0423795",
+          "name": "xxxxxxبx x xxxxبxxx",
+          "parentId": "71bf6fd4223c948af0875c46de710b0e",
+          "manual": true
+        },
+        {
+          "id": "38f6ec374b188aff2c055d3df75e36e6",
+          "name": "xxxبxxxx x xxxxxبxx",
+          "parentId": "group-trabalho",
+          "manual": true
+        },
+        {
+          "id": "101b44964c40fdb6f8e14a0e9a4b2bef",
+          "name": "xxxxxxxx xxx x xxxx x xxxxxx",
+          "parentId": "group-casa",
+          "manual": true
+        }
+      ]
+    },
+    "complete": true,
+    "dataAsOf": "2026-10-20T23:52:46.440Z",
+    "noProviders": true,
+    "snapshotHash": "15d074a373765f78f0cb7c9fed84bd70f670b64097e61bc8aed8331f123ee704"
+  }
+}

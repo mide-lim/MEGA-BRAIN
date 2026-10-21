@@ -1,0 +1,142 @@
+{
+  "task": "Preservação integral da lista autoritativa de Reels antes de descomissionamento",
+  "executor": "codex-native",
+  "identity": "/root/revisor_recuperacao_c4",
+  "entryStateRevision": 520,
+  "source": "https://firestore.googleapis.com/v1/projects/megabrain-v0-1017370021431/databases/(default)/documents/videos",
+  "startedAt": "2026-10-21T00:46:39.565931+00:00",
+  "completedAt": "2026-10-21T00:46:43.835372+00:00",
+  "method": "Firestore REST listDocuments GET; pageSize500; orderBy __name__; explicit field mask; follow all nextPageToken until absent; no retries/provider/writes",
+  "fields": [
+    "id",
+    "source_url",
+    "url",
+    "shortcode",
+    "platform",
+    "title",
+    "status",
+    "stage",
+    "uncertain",
+    "created_at",
+    "updated_at"
+  ],
+  "expectedCount": 3005,
+  "count": 3005,
+  "uniqueDocumentIds": 3005,
+  "duplicateDocumentIds": [],
+  "uniquePreservationUrls": 3005,
+  "urlProvenanceCounts": {
+    "stored_source_url": 3005
+  },
+  "pages": [
+    {
+      "page": 1,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/B0EmU9ulXsV",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/C5_nF0SOkdR",
+      "observedAt": "2026-10-21T00:46:41.133313+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 2,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/C5bUz7dLpmP",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Ctz5wT5goTL",
+      "observedAt": "2026-10-21T00:46:41.424894+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 3,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/CtzQH3orleP",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Cx6tROlOCpG",
+      "observedAt": "2026-10-21T00:46:41.691191+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 4,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Cx7sm2FIneS",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Czee7V9qikp",
+      "observedAt": "2026-10-21T00:46:41.958105+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 5,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/CzeieAdpcff",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DHXEk6ExR26",
+      "observedAt": "2026-10-21T00:46:42.216733+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 6,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DHYzX_BIOA5",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DPWswpJEZ06",
+      "observedAt": "2026-10-21T00:46:42.482094+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 7,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DPXIOcZDCd7",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DVn3ThYgDwF",
+      "observedAt": "2026-10-21T00:46:42.747401+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 8,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DVoOyZfjTNi",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DZLFpjuN58a",
+      "observedAt": "2026-10-21T00:46:43.023722+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 9,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DZLYWa6TKdT",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DbqATISvWaD",
+      "observedAt": "2026-10-21T00:46:43.286681+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 10,
+      "count": 300,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Dbq_uGlDLIz",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/Ddwgg2euXTx",
+      "observedAt": "2026-10-21T00:46:43.564645+00:00",
+      "hasNextPage": true
+    },
+    {
+      "page": 11,
+      "count": 5,
+      "first": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DdwkyhrDdng",
+      "last": "projects/megabrain-v0-1017370021431/databases/(default)/documents/videos/DeAkyDSRyIY",
+      "observedAt": "2026-10-21T00:46:43.771429+00:00",
+      "hasNextPage": false
+    }
+  ],
+  "paginationExhausted": true,
+  "countMatchesExpected": true,
+  "limitations": [
+    "ListDocuments pagination is a time-window observation, not a transaction snapshot.",
+    "Minimal metadata export; not a backup of media, transcripts, analyses or entire Firestore.",
+    "Derived URL, if present, is explicitly labeled and not independently fetched."
+  ],
+  "files": {
+    "reels-complete.json": {
+      "sha256": "e096dff5099fe257b6ecfd3cecfb20d8fdc60bcbd325b597162b3a288b37101c",
+      "bytes": 1583472
+    },
+    "reels-complete.csv": {
+      "sha256": "ff3a2408f1b5b0ab6e04da3c70acdfa4150dc45eee3f9140366cc9d376ab4415",
+      "bytes": 879049
+    },
+    "export-reels-readonly.py": {
+      "sha256": "eb8034ae9694a21847b105828115b142f5f9da34e7b856f52d644a9195bf93b4",
+      "bytes": 4404
+    }
+  }
+}

@@ -1,0 +1,38 @@
+name: MEG109 offline request diagnosis
+on:
+  pull_request:
+    paths:
+      - scripts/diagnose-meg109-request-shape.mjs
+      - google-v0/tests/fixtures/meg109-request-shape.json
+      - .github/workflows/meg109-request-diagnostic.yml
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: current
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 3d5f97fd0dd8ccf79ca5b506c95c300531b596cc
+          path: pr98
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 2a6538abf9d34d556169d700fa2e0e77308c5c08
+          path: pr99
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build sanitized requests offline without provider or credentials
+        run: node current/scripts/diagnose-meg109-request-shape.mjs pr98 pr99 diagnosis
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: meg109-offline-request-shape
+          path: diagnosis
+          retention-days: 7

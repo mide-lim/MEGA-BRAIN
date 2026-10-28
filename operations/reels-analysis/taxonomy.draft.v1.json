@@ -1,0 +1,31 @@
+{
+  "version": "taxonomy.draft.v1",
+  "status": "proposal_not_approved",
+  "categories": [
+    "technology",
+    "culture_reading",
+    "travel_outdoors",
+    "home_building",
+    "business_branding",
+    "food_cooking",
+    "practical_skills",
+    "other_uncertain"
+  ],
+  "rules": [
+    "Choose one category by dominant instructional or narrative purpose.",
+    "Category is broad; topics describe subjects; keywords are retrieval terms; entities are named referents.",
+    "Do not infer entity identity from resemblance.",
+    "Use other_uncertain when evidence is insufficient or mixed; include reason and require review.",
+    "Taxonomy approval is manual and cannot authorize provider execution."
+  ],
+  "boundaries": {
+    "technology": "Software, computing, devices and technology methods.",
+    "culture_reading": "Books, reading, arts and cultural interpretation.",
+    "travel_outdoors": "Travel, destinations and outdoor activities.",
+    "home_building": "Home maintenance, construction, design and building.",
+    "business_branding": "Business operations, marketing, branding and sales.",
+    "food_cooking": "Ingredients, recipes and cooking methods.",
+    "practical_skills": "Other demonstrable practical skills.",
+    "other_uncertain": "Insufficient evidence, unresolved overlap or outside proposed categories."
+  }
+}

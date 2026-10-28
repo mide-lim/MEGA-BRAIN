@@ -1,0 +1,1190 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "analysis.v1"
+    },
+    "contract_variant": {
+      "const": "stored_video.v1"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reel_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,80}$"
+        },
+        "source_kind": {
+          "enum": [
+            "stored_video",
+            "synthetic_bytes_not_video"
+          ]
+        },
+        "source_video_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "synthetic_fixture_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_metadata_reference": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "relative_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "relative_path",
+                "sha256"
+              ]
+            }
+          ]
+        }
+      },
+      "required": [
+        "reel_id",
+        "source_kind",
+        "source_video_sha256",
+        "synthetic_fixture_sha256",
+        "source_metadata_reference"
+      ]
+    },
+    "analysis_state": {
+      "enum": [
+        "completed",
+        "needs_review",
+        "failed",
+        "uncertain"
+      ]
+    },
+    "model_payload": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "A": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "primary_category": {
+                  "enum": [
+                    "technology",
+                    "culture_reading",
+                    "travel_outdoors",
+                    "home_building",
+                    "business_branding",
+                    "food_cooking",
+                    "practical_skills",
+                    "other_uncertain"
+                  ]
+                },
+                "category_reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "topics": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "keywords": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "entities": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "type": {
+                        "enum": [
+                          "person",
+                          "organization",
+                          "place",
+                          "product",
+                          "work",
+                          "other"
+                        ]
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "type",
+                      "evidence_ids"
+                    ]
+                  }
+                },
+                "language": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "content_type": {
+                  "enum": [
+                    "tutorial",
+                    "commentary",
+                    "demonstration",
+                    "review",
+                    "story",
+                    "advertisement",
+                    "other_uncertain"
+                  ]
+                },
+                "summary": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "primary_category",
+                "category_reason",
+                "topics",
+                "keywords",
+                "entities",
+                "language",
+                "content_type",
+                "summary"
+              ]
+            },
+            "B": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "insights": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "evidence_ids",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "audio": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "evidence_ids",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "visual": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "evidence_ids",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "screen_text": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "evidence_ids",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "connections": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "evidence_ids",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "modality": {
+                        "enum": [
+                          "audio",
+                          "visual",
+                          "screen_text",
+                          "mixed",
+                          "unknown"
+                        ]
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "epistemic_status": {
+                        "enum": [
+                          "observed",
+                          "author_claim",
+                          "inference",
+                          "unverified"
+                        ]
+                      },
+                      "timestamp": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "start_seconds": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "minimum": 0
+                              },
+                              "end_seconds": {
+                                "type": [
+                                  "number",
+                                  "null"
+                                ],
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "start_seconds",
+                              "end_seconds"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "evidence_id",
+                      "modality",
+                      "description",
+                      "epistemic_status"
+                    ]
+                  }
+                },
+                "full_transcript": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "insights",
+                "audio",
+                "visual",
+                "screen_text",
+                "connections",
+                "evidence",
+                "full_transcript"
+              ]
+            },
+            "quality": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "uncertainties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "review_required": {
+                  "type": "boolean"
+                },
+                "review_reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "limitations": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "uncertainties",
+                "review_required",
+                "review_reasons",
+                "limitations"
+              ]
+            }
+          },
+          "required": [
+            "A",
+            "B",
+            "quality"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "$id": "urn:megabrain:analysis-model-payload:v1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "technical_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider_mode": {
+          "enum": [
+            "mock",
+            "google_cloud"
+          ]
+        },
+        "requested_model": {
+          "const": "gemini-3.8-flash"
+        },
+        "used_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "const": "global"
+        },
+        "api_version": {
+          "const": "v1beta1"
+        },
+        "processing_utc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "run_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "executor_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "implementation_identity": {
+          "const": "codex-native/developer"
+        },
+        "input_state_revision": {
+          "const": 11
+        },
+        "versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "const": "analysis.v1"
+            },
+            "contract_variant": {
+              "const": "stored_video.v1"
+            },
+            "task": {
+              "const": "stored-video-task.v1"
+            },
+            "prompt": {
+              "const": "stored-multimodal.v1"
+            },
+            "taxonomy": {
+              "const": "taxonomy.draft.v1"
+            },
+            "rerun": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,40}$"
+            }
+          },
+          "required": [
+            "schema",
+            "contract_variant",
+            "task",
+            "prompt",
+            "taxonomy",
+            "rerun"
+          ]
+        },
+        "bundle_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "provider_request_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "real_inference_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "raw_response_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage_metadata": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unknown"
+            },
+            "gross_amount": {
+              "type": "null"
+            },
+            "currency": {
+              "const": "USD"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "gross_amount",
+            "currency",
+            "reason"
+          ]
+        },
+        "multimodal_validated": {
+          "type": "boolean"
+        },
+        "download_state": {
+          "const": "not_managed"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider_mode",
+        "requested_model",
+        "used_model",
+        "project_id",
+        "location",
+        "api_version",
+        "processing_utc",
+        "run_id",
+        "executor_identity",
+        "implementation_identity",
+        "input_state_revision",
+        "versions",
+        "bundle_sha256",
+        "provider_request_attempts",
+        "real_inference_attempts",
+        "raw_response_sha256",
+        "usage_metadata",
+        "cost",
+        "multimodal_validated",
+        "download_state",
+        "error"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "contract_variant",
+    "identity",
+    "analysis_state",
+    "model_payload",
+    "technical_envelope"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:megabrain:analysis-stored-video:v1",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "analysis_state": {
+            "enum": [
+              "completed",
+              "needs_review"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "model_payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "A": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "primary_category": {
+                    "enum": [
+                      "technology",
+                      "culture_reading",
+                      "travel_outdoors",
+                      "home_building",
+                      "business_branding",
+                      "food_cooking",
+                      "practical_skills",
+                      "other_uncertain"
+                    ]
+                  },
+                  "category_reason": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "topics": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "type": {
+                          "enum": [
+                            "person",
+                            "organization",
+                            "place",
+                            "product",
+                            "work",
+                            "other"
+                          ]
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "type",
+                        "evidence_ids"
+                      ]
+                    }
+                  },
+                  "language": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "content_type": {
+                    "enum": [
+                      "tutorial",
+                      "commentary",
+                      "demonstration",
+                      "review",
+                      "story",
+                      "advertisement",
+                      "other_uncertain"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "primary_category",
+                  "category_reason",
+                  "topics",
+                  "keywords",
+                  "entities",
+                  "language",
+                  "content_type",
+                  "summary"
+                ]
+              },
+              "B": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "insights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "evidence_ids",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "audio": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "evidence_ids",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "visual": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "evidence_ids",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "screen_text": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "evidence_ids",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "connections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidence_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "evidence_ids",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "evidence_id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "modality": {
+                          "enum": [
+                            "audio",
+                            "visual",
+                            "screen_text",
+                            "mixed",
+                            "unknown"
+                          ]
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "epistemic_status": {
+                          "enum": [
+                            "observed",
+                            "author_claim",
+                            "inference",
+                            "unverified"
+                          ]
+                        },
+                        "timestamp": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "start_seconds": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ],
+                                  "minimum": 0
+                                },
+                                "end_seconds": {
+                                  "type": [
+                                    "number",
+                                    "null"
+                                  ],
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "start_seconds",
+                                "end_seconds"
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "evidence_id",
+                        "modality",
+                        "description",
+                        "epistemic_status"
+                      ]
+                    }
+                  },
+                  "full_transcript": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "insights",
+                  "audio",
+                  "visual",
+                  "screen_text",
+                  "connections",
+                  "evidence",
+                  "full_transcript"
+                ]
+              },
+              "quality": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "uncertainties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "review_required": {
+                    "type": "boolean"
+                  },
+                  "review_reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "uncertainties",
+                  "review_required",
+                  "review_reasons",
+                  "limitations"
+                ]
+              }
+            },
+            "required": [
+              "A",
+              "B",
+              "quality"
+            ],
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "urn:megabrain:analysis-model-payload:v1"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "model_payload": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "identity": {
+            "properties": {
+              "source_kind": {
+                "const": "synthetic_bytes_not_video"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "identity": {
+            "properties": {
+              "source_video_sha256": {
+                "type": "null"
+              },
+              "synthetic_fixture_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_metadata_reference": {
+                "type": "null"
+              }
+            }
+          },
+          "technical_envelope": {
+            "properties": {
+              "provider_mode": {
+                "const": "mock"
+              },
+              "real_inference_attempts": {
+                "const": 0
+              },
+              "multimodal_validated": {
+                "const": false
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "identity": {
+            "properties": {
+              "source_video_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "synthetic_fixture_sha256": {
+                "type": "null"
+              }
+            }
+          },
+          "technical_envelope": {
+            "properties": {
+              "provider_mode": {
+                "const": "google_cloud"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

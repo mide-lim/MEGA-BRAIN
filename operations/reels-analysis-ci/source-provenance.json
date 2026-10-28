@@ -1,0 +1,275 @@
+{
+  "schema_version": "repository-provenance.v1",
+  "kind": "sanitized_offline_code_integration",
+  "source_snapshots": [
+    "offline-contract-baseline",
+    "stored-video-preparation-baseline"
+  ],
+  "runtime_data_included": false,
+  "credentials_included": false,
+  "real_media_included": false,
+  "public_file_mappings": [
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "worker.py",
+      "repository_path": "operations/reels-analysis/worker.py",
+      "source_sha256": "d39598746bf5c1d9519a6ef9762f23e0f525d0cd82304d748003170c1bc23b08",
+      "repository_sha256": "2ad48c3ebc0d7c0ff2562df5665a53458ebba8ef3de91c987cbe35456f40a37f",
+      "adaptations": [
+        "generic_implementation_identity"
+      ]
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "taxonomy.draft.v1.json",
+      "repository_path": "operations/reels-analysis/taxonomy.draft.v1.json",
+      "source_sha256": "646a66f7d5254efcac3bf740d02f1d54becf8ad7f8ffa7bbf6339328f16a0461",
+      "repository_sha256": "646a66f7d5254efcac3bf740d02f1d54becf8ad7f8ffa7bbf6339328f16a0461",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "contracts/analysis-task.v1.schema.json",
+      "repository_path": "operations/reels-analysis/contracts/analysis-task.v1.schema.json",
+      "source_sha256": "f3b3b69fc26b3927c8223934b946444569ea119d57c1fb5ecbfe503b486b2cfc",
+      "repository_sha256": "f3b3b69fc26b3927c8223934b946444569ea119d57c1fb5ecbfe503b486b2cfc",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "contracts/analysis.v1.schema.json",
+      "repository_path": "operations/reels-analysis/contracts/analysis.v1.schema.json",
+      "source_sha256": "82a40a5b6b193a56bb092a2b1ca299b33e94ac0b60bf3827c8d231529b928323",
+      "repository_sha256": "ac574bd9a851732233cd029ecd4e34d4e381acb82669fa2f51d9b7cd6028707b",
+      "adaptations": [
+        "generic_implementation_identity"
+      ]
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "contracts/model-payload.v1.schema.json",
+      "repository_path": "operations/reels-analysis/contracts/model-payload.v1.schema.json",
+      "source_sha256": "a0ad0c51e912d0cc22432d5e5934028b7dea9cbe13812d98378ec9eaaf97e781",
+      "repository_sha256": "a0ad0c51e912d0cc22432d5e5934028b7dea9cbe13812d98378ec9eaaf97e781",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "prompts/multimodal.v1.txt",
+      "repository_path": "operations/reels-analysis/prompts/multimodal.v1.txt",
+      "source_sha256": "fc564ed80ea12bb5562e5cab7871206da9017b15588f01dbf5a6487c94cfdea1",
+      "repository_sha256": "fc564ed80ea12bb5562e5cab7871206da9017b15588f01dbf5a6487c94cfdea1",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "fixtures/synthetic-source.txt",
+      "repository_path": "operations/reels-analysis/fixtures/synthetic-source.txt",
+      "source_sha256": "d2f33a8cc8d5de74fb2db808de434d5abeda39ebe20f7db1c32974f741538395",
+      "repository_sha256": "d2f33a8cc8d5de74fb2db808de434d5abeda39ebe20f7db1c32974f741538395",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "fixtures/model-payload.json",
+      "repository_path": "operations/reels-analysis/fixtures/model-payload.json",
+      "source_sha256": "8a4ce39b449b96352c8f020460352452976f6ec225493af577a584b23302e6e4",
+      "repository_sha256": "8a4ce39b449b96352c8f020460352452976f6ec225493af577a584b23302e6e4",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "fixtures/synthetic-metadata.json",
+      "repository_path": "operations/reels-analysis/fixtures/synthetic-metadata.json",
+      "source_sha256": "6807c9ab10d0724b72e8fdf1a8fefd07a5285cfd4450a115e789568d437fad4c",
+      "repository_sha256": "6807c9ab10d0724b72e8fdf1a8fefd07a5285cfd4450a115e789568d437fad4c",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "tests/test_offline.py",
+      "repository_path": "operations/reels-analysis/tests/test_offline.py",
+      "source_sha256": "29f09673e588b634bed96e462b887fec9ac59e7d3a8ade56341cb8b50379118a",
+      "repository_sha256": "41b01ae8f9c867c85f6b22dd4933f5db1724c04708c94fdde3d6b007f770fee3",
+      "adaptations": [
+        "generic_implementation_identity",
+        "single_synthetic_example_reference"
+      ]
+    },
+    {
+      "source_module": "reels-analysis",
+      "source_relative_path": "examples/analysis-task.mock-v3.json",
+      "repository_path": "operations/reels-analysis/examples/offline-task.json",
+      "source_sha256": "a2b79999b55d3d0f31556e8793fa8ce75f632761e5c4163156370891dd237ac4",
+      "repository_sha256": "a2b79999b55d3d0f31556e8793fa8ce75f632761e5c4163156370891dd237ac4",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "authorization.py",
+      "repository_path": "operations/reels-analysis-live/authorization.py",
+      "source_sha256": "54f5b48ef7af44953be0b788d69d64fe161cf9dfc67fcb1cacff6c10b91a0aa8",
+      "repository_sha256": "54f5b48ef7af44953be0b788d69d64fe161cf9dfc67fcb1cacff6c10b91a0aa8",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "cloud_adapter.py",
+      "repository_path": "operations/reels-analysis-live/cloud_adapter.py",
+      "source_sha256": "ab5c4f226693a004400b84a1d892a9ff089dd15a755a1510e900bc468acd16ce",
+      "repository_sha256": "20e5750730629d0c8bad06a266208d811928bffcd41a7c6799ff2833e1b5098f",
+      "adaptations": [
+        "strict_bounded_impersonated_adc_profile_from_trusted_external_grant"
+      ]
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "common.py",
+      "repository_path": "operations/reels-analysis-live/common.py",
+      "source_sha256": "ce8b5fece6974ae43cf8f13eb83b625e96f2b5dbedb1964c0dad44b75ac4ae60",
+      "repository_sha256": "ce8b5fece6974ae43cf8f13eb83b625e96f2b5dbedb1964c0dad44b75ac4ae60",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "semantic_payload.py",
+      "repository_path": "operations/reels-analysis-live/semantic_payload.py",
+      "source_sha256": "0c740186c2041d6b06228a227a9f77bf65f3f88c54cde43edee2ea8134218b2a",
+      "repository_sha256": "0c740186c2041d6b06228a227a9f77bf65f3f88c54cde43edee2ea8134218b2a",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "storage.py",
+      "repository_path": "operations/reels-analysis-live/storage.py",
+      "source_sha256": "939d9bbb8ea121aec793aefb1ba586fd96d467ff61a9d4602f2eb6c776f7b164",
+      "repository_sha256": "939d9bbb8ea121aec793aefb1ba586fd96d467ff61a9d4602f2eb6c776f7b164",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "worker.py",
+      "repository_path": "operations/reels-analysis-live/worker.py",
+      "source_sha256": "bf9374c27c1dd8aed089180bf8bf63cfdda11b73620bb5479af4eb58d5f2dfdc",
+      "repository_sha256": "1cf810e308ccb0ed99ed469fbb98703c34616292f1e393df5c3106daf0f96e8d",
+      "adaptations": [
+        "generic_implementation_identity",
+        "strict_bounded_impersonated_adc_profile_from_trusted_external_grant",
+        "trusted_auth_target_configuration_checked_before_any_media_access"
+      ]
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "requirements.lock.txt",
+      "repository_path": "operations/reels-analysis-live/requirements.lock.txt",
+      "source_sha256": "3b9289c436db83668df41bfa2a7c786d1978bb05138872460af9d37b12640bdd",
+      "repository_sha256": "3b9289c436db83668df41bfa2a7c786d1978bb05138872460af9d37b12640bdd",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "taxonomy.draft.v1.json",
+      "repository_path": "operations/reels-analysis-live/taxonomy.draft.v1.json",
+      "source_sha256": "646a66f7d5254efcac3bf740d02f1d54becf8ad7f8ffa7bbf6339328f16a0461",
+      "repository_sha256": "646a66f7d5254efcac3bf740d02f1d54becf8ad7f8ffa7bbf6339328f16a0461",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "contracts/analysis.stored-video.v1.schema.json",
+      "repository_path": "operations/reels-analysis-live/contracts/analysis.stored-video.v1.schema.json",
+      "source_sha256": "769953f38d7e3c6e9ee23881aa2e42fb1a6d2ecb405ee4ee52226fa7189b755c",
+      "repository_sha256": "95eff0315972db2a5db562a49b893b48cdb3ddae517be5713b537b748be0cfce",
+      "adaptations": [
+        "generic_implementation_identity"
+      ]
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "contracts/model-payload.v1.schema.json",
+      "repository_path": "operations/reels-analysis-live/contracts/model-payload.v1.schema.json",
+      "source_sha256": "a0ad0c51e912d0cc22432d5e5934028b7dea9cbe13812d98378ec9eaaf97e781",
+      "repository_sha256": "a0ad0c51e912d0cc22432d5e5934028b7dea9cbe13812d98378ec9eaaf97e781",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "contracts/stored-video-task.v1.schema.json",
+      "repository_path": "operations/reels-analysis-live/contracts/stored-video-task.v1.schema.json",
+      "source_sha256": "c5c2753fb4993fe1a4e74592a204ebaffa0f975e2cd492872ae38c14e2e23f90",
+      "repository_sha256": "c5c2753fb4993fe1a4e74592a204ebaffa0f975e2cd492872ae38c14e2e23f90",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "prompts/stored-multimodal.v1.txt",
+      "repository_path": "operations/reels-analysis-live/prompts/stored-multimodal.v1.txt",
+      "source_sha256": "ceda290fe0a50d3c39fc8eb58b7f5f285941796fb9819d74e17c12069a05ee23",
+      "repository_sha256": "ceda290fe0a50d3c39fc8eb58b7f5f285941796fb9819d74e17c12069a05ee23",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "fixtures/fake-media.txt",
+      "repository_path": "operations/reels-analysis-live/fixtures/fake-media.txt",
+      "source_sha256": "442c6af26ee5abceb89378ff39701290c0ef6854fac43688a1b344893fc2cc2a",
+      "repository_sha256": "442c6af26ee5abceb89378ff39701290c0ef6854fac43688a1b344893fc2cc2a",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "fixtures/model-payload.json",
+      "repository_path": "operations/reels-analysis-live/fixtures/model-payload.json",
+      "source_sha256": "8a4ce39b449b96352c8f020460352452976f6ec225493af577a584b23302e6e4",
+      "repository_sha256": "8a4ce39b449b96352c8f020460352452976f6ec225493af577a584b23302e6e4",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "fixtures/response.json",
+      "repository_path": "operations/reels-analysis-live/fixtures/response.json",
+      "source_sha256": "e72f85a031728c7adbbbeccd13b9600d6a9f23c7ea4f42a534d9957044f8fa49",
+      "repository_sha256": "e72f85a031728c7adbbbeccd13b9600d6a9f23c7ea4f42a534d9957044f8fa49",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "examples/stored-video.preparation.json",
+      "repository_path": "operations/reels-analysis-live/examples/stored-video.preparation.json",
+      "source_sha256": "73c6f402877115170f87b14e8f09e64d3252d0671ac18c7ab8be01f7b9b5896e",
+      "repository_sha256": "73c6f402877115170f87b14e8f09e64d3252d0671ac18c7ab8be01f7b9b5896e",
+      "adaptations": []
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "tests/test_preparation.py",
+      "repository_path": "operations/reels-analysis-live/tests/test_preparation.py",
+      "source_sha256": "943a1c9a4f1b86298f55c8029c50fa25bb67ec350a1fbc0f05737996f85ed8d1",
+      "repository_sha256": "9136b0d96400ceb398a92dd2f6c30156055a5a93c97ecae5021f614d99c17aca",
+      "adaptations": [
+        "generic_example_executor"
+      ]
+    }
+  ],
+  "excluded_classes": [
+    "runtime",
+    "outputs",
+    "journals",
+    "evidence",
+    "private_audits",
+    "real_candidates",
+    "real_metadata",
+    "implementation_receipts",
+    "state",
+    "billing",
+    "personal_reports"
+  ],
+  "public_integration_delta": {
+    "scope": "prepared_auth_profile_only; external authority remains denied",
+    "sdk_api_target": "google-auth 2.62.0",
+    "official_loader": "load_credentials_from_dict on validated explicit-path profile",
+    "maximum_auth_http_steps": 2,
+    "maximum_inference_http_steps": 1,
+    "real_credentials_or_requests_executed": false
+  }
+}

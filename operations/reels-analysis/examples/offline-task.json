@@ -1,0 +1,35 @@
+{
+  "operation": "analyze_synthetic_offline.v1",
+  "task_id": "synthetic-analysis-003",
+  "reel_id": "synthetic-003",
+  "provider_mode": "mock",
+  "requested_model": "gemini-3.8-flash",
+  "source": {
+    "kind": "synthetic_bytes_not_video",
+    "ref": "synthetic-source.txt",
+    "expected_sha256": "d2f33a8cc8d5de74fb2db808de434d5abeda39ebe20f7db1c32974f741538395",
+    "duration_seconds": null
+  },
+  "payload_fixture": "model-payload.json",
+  "versions": {
+    "schema": "analysis.v1",
+    "task": "analysis-task.v1",
+    "prompt": "multimodal.v1",
+    "taxonomy": "taxonomy.draft.v1",
+    "rerun": "initial"
+  },
+  "authorizations": {
+    "real_media": false,
+    "google": false,
+    "inference": false,
+    "subscription_inference": false,
+    "queue_access": false
+  },
+  "budget": {
+    "real_calls": 0,
+    "max_amount": 0,
+    "currency": "USD"
+  },
+  "mock_scenario": "success",
+  "source_metadata_reference": null
+}

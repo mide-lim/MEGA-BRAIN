@@ -1,0 +1,193 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "const": "analyze_synthetic_offline.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+    },
+    "reel_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$"
+    },
+    "provider_mode": {
+      "const": "mock"
+    },
+    "requested_model": {
+      "enum": [
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "offline-fixture-mock.v1"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "synthetic_bytes_not_video"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "duration_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "kind",
+        "ref",
+        "expected_sha256",
+        "duration_seconds"
+      ]
+    },
+    "payload_fixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "analysis.v1"
+        },
+        "task": {
+          "const": "analysis-task.v1"
+        },
+        "prompt": {
+          "const": "multimodal.v1"
+        },
+        "taxonomy": {
+          "const": "taxonomy.draft.v1"
+        },
+        "rerun": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]{1,40}$"
+        }
+      },
+      "required": [
+        "schema",
+        "task",
+        "prompt",
+        "taxonomy",
+        "rerun"
+      ]
+    },
+    "authorizations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "real_media": {
+          "const": false
+        },
+        "google": {
+          "const": false
+        },
+        "inference": {
+          "const": false
+        },
+        "subscription_inference": {
+          "const": false
+        },
+        "queue_access": {
+          "const": false
+        }
+      },
+      "required": [
+        "real_media",
+        "google",
+        "inference",
+        "subscription_inference",
+        "queue_access"
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "real_calls": {
+          "const": 0
+        },
+        "max_amount": {
+          "const": 0
+        },
+        "currency": {
+          "const": "USD"
+        }
+      },
+      "required": [
+        "real_calls",
+        "max_amount",
+        "currency"
+      ]
+    },
+    "mock_scenario": {
+      "enum": [
+        "success",
+        "authorization_failure",
+        "provider_failure",
+        "timeout",
+        "missing_result",
+        "copy_interrupted",
+        "copy_hash_mismatch"
+      ]
+    },
+    "source_metadata_reference": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "ref",
+            "expected_sha256"
+          ],
+          "properties": {
+            "kind": {
+              "const": "synthetic_metadata_fixture"
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expected_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "task_id",
+    "reel_id",
+    "provider_mode",
+    "requested_model",
+    "source",
+    "payload_fixture",
+    "versions",
+    "authorizations",
+    "budget",
+    "mock_scenario"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:megabrain:analysis-task:v1"
+}

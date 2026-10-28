@@ -1,0 +1,47 @@
+{
+  "operation": "analyze_stored_video.preparation.v1",
+  "task_id": "stored-preparation-001",
+  "reel_id": "synthetic-live-001",
+  "mode": "preparation_only",
+  "cloud": {
+    "project_id": "megabrain-project-placeholder",
+    "model": "gemini-3.8-flash",
+    "location": "global",
+    "api_version": "v1beta1"
+  },
+  "source": {
+    "kind": "stored_video",
+    "relative_video_path": "media/reels/synthetic-live-001/video.mp4",
+    "source_video_sha256": "442c6af26ee5abceb89378ff39701290c0ef6854fac43688a1b344893fc2cc2a",
+    "declared_bytes": 62,
+    "declared_duration_seconds": 12,
+    "relative_metadata_path": "media/reels/synthetic-live-001/metadata.json",
+    "metadata_sha256": null
+  },
+  "generation": {
+    "video_processing": "STATIC",
+    "audio": "embedded_in_video",
+    "media_resolution": "MEDIA_RESOLUTION_LOW",
+    "thinking_level": "LOW",
+    "max_output_tokens": 4096,
+    "response_mime_type": "application/json"
+  },
+  "budget": {
+    "currency": "USD",
+    "current_authorized_gross_amount": 0,
+    "current_authorized_inference_calls": 0
+  },
+  "authorization_snapshot": {
+    "media_transmission": false,
+    "inference": false,
+    "google_spending": false
+  },
+  "versions": {
+    "schema": "analysis.v1",
+    "contract_variant": "stored_video.v1",
+    "task": "stored-video-task.v1",
+    "prompt": "stored-multimodal.v1",
+    "taxonomy": "taxonomy.draft.v1",
+    "rerun": "initial"
+  }
+}

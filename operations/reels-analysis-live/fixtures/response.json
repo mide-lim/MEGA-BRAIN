@@ -1,0 +1,21 @@
+{
+  "modelVersion": "offline-transport-mock.v1",
+  "candidates": [
+    {
+      "finishReason": "STOP",
+      "content": {
+        "parts": [
+          {
+            "text": "{\"A\": {\"primary_category\": \"other_uncertain\", \"category_reason\": \"Synthetic fixture has no media for classification.\", \"topics\": [\"offline validation\"], \"keywords\": [\"synthetic\", \"fixture\"], \"entities\": [], \"language\": \"und\", \"content_type\": \"other_uncertain\", \"summary\": \"Synthetic fixture exercises the contract; no audiovisual observations were made.\"}, \"B\": {\"insights\": [], \"audio\": [], \"visual\": [], \"screen_text\": [], \"connections\": [], \"evidence\": [{\"evidence_id\": \"fixture-1\", \"modality\": \"unknown\", \"description\": \"Synthetic text fixture only; no audiovisual evidence.\", \"epistemic_status\": \"unverified\", \"timestamp\": null}], \"full_transcript\": null}, \"quality\": {\"uncertainties\": [\"No real audio or video was analyzed.\"], \"review_required\": true, \"review_reasons\": [\"other_uncertain category\", \"Taxonomy is a proposal pending user approval.\"], \"limitations\": [\"Offline mock only; multimodal capacity and model availability unvalidated.\"]}}"
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 0,
+    "candidatesTokenCount": 0,
+    "totalTokenCount": 0,
+    "synthetic": true
+  }
+}

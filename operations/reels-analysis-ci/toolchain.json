@@ -1,0 +1,70 @@
+{
+  "actions/checkout": {
+    "release": "v7.0.1",
+    "commit": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "published_at": "2026-07-20T15:10:05Z",
+    "release_url": "https://github.com/actions/checkout/releases/tag/v7.0.1",
+    "ref_api_url": "https://api.github.com/repos/actions/checkout/git/ref/tags/v7.0.1"
+  },
+  "actions/setup-python": {
+    "release": "v7.1.0",
+    "commit": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
+    "published_at": "2026-10-22T02:56:04Z",
+    "release_url": "https://github.com/actions/setup-python/releases/tag/v7.1.0",
+    "ref_api_url": "https://api.github.com/repos/actions/setup-python/git/ref/tags/v7.1.0"
+  },
+  "python": {
+    "version": "3.14.10",
+    "stable": true,
+    "manifest_url": "https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json",
+    "ubuntu24_x64": true
+  },
+  "offline_dependencies": {
+    "source": "reviewed preparation dependency lock; public wheels independently matched on PyPI",
+    "source_version_lock_sha256": "3b9289c436db83668df41bfa2a7c786d1978bb05138872460af9d37b12640bdd",
+    "packages": [
+      {
+        "package": "attrs",
+        "version": "26.1.0",
+        "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+        "wheel": "attrs-26.1.0-py3-none-any.whl",
+        "public_metadata_url": "https://pypi.org/pypi/attrs/26.1.0/json",
+        "yanked": false
+      },
+      {
+        "package": "jsonschema",
+        "version": "4.26.0",
+        "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
+        "wheel": "jsonschema-4.26.0-py3-none-any.whl",
+        "public_metadata_url": "https://pypi.org/pypi/jsonschema/4.26.0/json",
+        "yanked": false
+      },
+      {
+        "package": "jsonschema-specifications",
+        "version": "2025.9.1",
+        "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+        "wheel": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+        "public_metadata_url": "https://pypi.org/pypi/jsonschema-specifications/2025.9.1/json",
+        "yanked": false
+      },
+      {
+        "package": "referencing",
+        "version": "0.37.0",
+        "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
+        "wheel": "referencing-0.37.0-py3-none-any.whl",
+        "public_metadata_url": "https://pypi.org/pypi/referencing/0.37.0/json",
+        "yanked": false
+      },
+      {
+        "package": "rpds-py",
+        "version": "2026.9.1",
+        "sha256": "eac2f5dbafd585dfe31f86a23ebf0d3ba480a9d49ebc87947267b5608d4ea0cd",
+        "wheel": "rpds_py-2026.9.1-cp314-cp314-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+        "public_metadata_url": "https://pypi.org/pypi/rpds-py/2026.9.1/json",
+        "yanked": false
+      }
+    ],
+    "google_auth_installed_in_ci": false,
+    "requests_installed_in_ci": false
+  }
+}

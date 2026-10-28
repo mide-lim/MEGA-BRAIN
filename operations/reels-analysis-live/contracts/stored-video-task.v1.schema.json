@@ -1,0 +1,215 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "const": "analyze_stored_video.preparation.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "reel_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,80}$"
+    },
+    "mode": {
+      "const": "preparation_only"
+    },
+    "cloud": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{4,61}[a-z0-9]$"
+        },
+        "model": {
+          "const": "gemini-3.8-flash"
+        },
+        "location": {
+          "const": "global"
+        },
+        "api_version": {
+          "const": "v1beta1"
+        }
+      },
+      "required": [
+        "project_id",
+        "model",
+        "location",
+        "api_version"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "stored_video"
+        },
+        "relative_video_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_video_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "declared_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000000
+        },
+        "declared_duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 180
+        },
+        "relative_metadata_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata_sha256": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "relative_video_path",
+        "source_video_sha256",
+        "declared_bytes",
+        "declared_duration_seconds",
+        "relative_metadata_path",
+        "metadata_sha256"
+      ]
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "video_processing": {
+          "const": "STATIC"
+        },
+        "audio": {
+          "const": "embedded_in_video"
+        },
+        "media_resolution": {
+          "const": "MEDIA_RESOLUTION_LOW"
+        },
+        "thinking_level": {
+          "const": "LOW"
+        },
+        "max_output_tokens": {
+          "const": 4096
+        },
+        "response_mime_type": {
+          "const": "application/json"
+        }
+      },
+      "required": [
+        "video_processing",
+        "audio",
+        "media_resolution",
+        "thinking_level",
+        "max_output_tokens",
+        "response_mime_type"
+      ]
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "const": "USD"
+        },
+        "current_authorized_gross_amount": {
+          "const": 0
+        },
+        "current_authorized_inference_calls": {
+          "const": 0
+        }
+      },
+      "required": [
+        "currency",
+        "current_authorized_gross_amount",
+        "current_authorized_inference_calls"
+      ]
+    },
+    "authorization_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "media_transmission": {
+          "const": false
+        },
+        "inference": {
+          "const": false
+        },
+        "google_spending": {
+          "const": false
+        }
+      },
+      "required": [
+        "media_transmission",
+        "inference",
+        "google_spending"
+      ]
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "analysis.v1"
+        },
+        "contract_variant": {
+          "const": "stored_video.v1"
+        },
+        "task": {
+          "const": "stored-video-task.v1"
+        },
+        "prompt": {
+          "const": "stored-multimodal.v1"
+        },
+        "taxonomy": {
+          "const": "taxonomy.draft.v1"
+        },
+        "rerun": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,40}$"
+        }
+      },
+      "required": [
+        "schema",
+        "contract_variant",
+        "task",
+        "prompt",
+        "taxonomy",
+        "rerun"
+      ]
+    }
+  },
+  "required": [
+    "operation",
+    "task_id",
+    "reel_id",
+    "mode",
+    "cloud",
+    "source",
+    "generation",
+    "budget",
+    "authorization_snapshot",
+    "versions"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:megabrain:stored-video-task:v1"
+}

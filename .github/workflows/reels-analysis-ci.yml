@@ -1,0 +1,47 @@
+name: Reels analysis offline CI
+on:
+  pull_request:
+    paths:
+      - 'operations/reels-analysis/**'
+      - 'operations/reels-analysis-live/**'
+      - 'operations/reels-analysis-ci/**'
+      - 'docs/reels-analysis/**'
+      - '.github/workflows/reels-analysis-ci.yml'
+  push:
+    paths:
+      - 'operations/reels-analysis/**'
+      - 'operations/reels-analysis-live/**'
+      - 'operations/reels-analysis-ci/**'
+      - 'docs/reels-analysis/**'
+      - '.github/workflows/reels-analysis-ci.yml'
+permissions:
+  contents: read
+  id-token: none
+concurrency:
+  group: reels-offline-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.14.10'
+          architecture: x64
+          check-latest: false
+      - name: Install only hash-locked offline validation dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: --no-deps --index-url https://pypi.org/simple -r operations/reels-analysis-ci/requirements.offline.lock.txt
+          python -m pip check
+      - name: Verify public surface and run isolated offline suites without network
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          sudo unshare --net -- "$PYTHON_BIN" operations/reels-analysis-ci/run_ci.py --require-network-namespace
+      - name: Check repository documentation and existing bounded packet structure
+        run: |
+          python scripts/check_links.py
+          python scripts/check_task_packets.py

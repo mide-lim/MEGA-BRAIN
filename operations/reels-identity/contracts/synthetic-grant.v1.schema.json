@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:megabrain:synthetic-grant:v1",
+  "title": "Synthetic future-grant rehearsal; never a live authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "mode",
+    "grant_id",
+    "authority",
+    "issued_at",
+    "not_before",
+    "expires_at",
+    "bindings",
+    "limits",
+    "persistence"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1.0"
+    },
+    "mode": {
+      "const": "SYNTHETIC_SIMULATION_ONLY"
+    },
+    "grant_id": {
+      "type": "string",
+      "pattern": "^synthetic-[a-z0-9-]{1,64}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "issuer",
+        "signer",
+        "signature"
+      ],
+      "properties": {
+        "status": {
+          "const": "DENIED"
+        },
+        "issuer": {
+          "const": "synthetic://offline-issuer"
+        },
+        "signer": {
+          "const": "synthetic://offline-signer"
+        },
+        "signature": {
+          "const": "SYNTHETIC_NOT_A_SIGNATURE"
+        }
+      }
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "not_before": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media",
+        "target",
+        "artifacts",
+        "filesystem",
+        "policy_version"
+      ],
+      "properties": {
+        "media": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "sha256",
+            "digest_verified"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^synthetic-[a-z0-9-]+$"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "digest_verified": {
+              "const": true
+            }
+          }
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "project",
+            "service_account",
+            "model",
+            "location"
+          ],
+          "properties": {
+            "project": {
+              "type": "string",
+              "minLength": 1
+            },
+            "service_account": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "worker",
+            "prompt",
+            "schema"
+          ],
+          "properties": {
+            "worker": {
+              "$ref": "#/$defs/artifact"
+            },
+            "prompt": {
+              "$ref": "#/$defs/artifact"
+            },
+            "schema": {
+              "$ref": "#/$defs/artifact",
+              "description": "Version and digest of a manifest binding every task, provider-payload, result, and grant contract version and hash; synthetic in this rehearsal."
+            }
+          }
+        },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "media_root",
+            "result_root",
+            "ledger_root",
+            "runtime_identity"
+          ],
+          "properties": {
+            "media_root": {
+              "$ref": "#/$defs/root"
+            },
+            "result_root": {
+              "$ref": "#/$defs/root"
+            },
+            "ledger_root": {
+              "$ref": "#/$defs/root"
+            },
+            "runtime_identity": {
+              "type": "string",
+              "pattern": "^synthetic:[a-z0-9-]+$"
+            }
+          }
+        },
+        "policy_version": {
+          "const": "future-contract-1"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_calls",
+        "gross_budget",
+        "currency"
+      ],
+      "properties": {
+        "max_calls": {
+          "const": 1
+        },
+        "gross_budget": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,11})(\\.[0-9]{1,8})?$"
+        },
+        "currency": {
+          "enum": [
+            "USD",
+            "BRL"
+          ]
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reservation",
+        "result",
+        "uncertain",
+        "reconcile"
+      ],
+      "properties": {
+        "reservation": {
+          "const": "DURABLE_ATOMIC_BEFORE_IO"
+        },
+        "result": {
+          "const": "DURABLE_ATOMIC_AFTER_RESPONSE"
+        },
+        "uncertain": {
+          "const": "NO_RETRY_NO_AUTOMATIC_REFUND"
+        },
+        "reconcile": {
+          "const": "MANUAL_EVIDENCE_ONLY_NO_REARM"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "filesystem_id",
+        "object_id",
+        "owner",
+        "mode"
+      ],
+      "properties": {
+        "root_id": {
+          "type": "string",
+          "pattern": "^synthetic:[a-z0-9-]+$"
+        },
+        "filesystem_id": {
+          "type": "string",
+          "pattern": "^synthetic:[a-z0-9-]+$"
+        },
+        "object_id": {
+          "type": "string",
+          "pattern": "^synthetic:[a-z0-9-]+$"
+        },
+        "owner": {
+          "type": "string",
+          "pattern": "^synthetic:[a-z0-9-]+$"
+        },
+        "mode": {
+          "const": "0700"
+        }
+      }
+    }
+  }
+}

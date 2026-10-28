@@ -1,5 +1,13 @@
 # Regras para agentes
 
+## Coordenação nativa sob demanda — Sprint 2E
+
+A autorização explícita do proprietário para esta Sprint permite subagentes nativos Desenvolvedor e Revisor, correções, PRs e merges após revisão independente e CI. Isso não altera os limites do launcher histórico nem habilita scheduler, heartbeat ou modelos externos.
+
+Use o packet tasks/MEG-109-sprint2e.json e o escopo vigente. Inferência real, leitura/transmissão de mídia, IAM de inferência, billing e deploy permanecem sujeitos à autorização correspondente. Somente o Orquestrador integra o estado. Não invente tarefas ou identidades de execução.
+
+As regras abaixo descrevem o fluxo histórico do launcher. A autorização nativa explícita desta Sprint prevalece em coordenação e merges; mantenha suas proteções de segredos, escopo, validação e revisão. Autorizações antigas de google-v0 não autorizam o novo pipeline.
+
 ## Antes de executar
 O operador valida um Task Packet de `tasks/` antes de autorizar uma execução. Sem packet válido, não iniciar o modelo. O agente deve seguir o packet indicado pela tarefa e parar se faltar informação essencial.
 

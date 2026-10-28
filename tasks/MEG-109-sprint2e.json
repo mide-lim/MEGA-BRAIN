@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "MEG-109",
+  "paperclip_issue_id": "ef37478a-2048-446b-8c9a-4daf355c7871",
+  "repository": "mide-lim/MEGA-BRAIN",
+  "base_commit": "3fb65f6dde3ee485c220441155ecd65822acb89a",
+  "objective": "Sprint2E: preserve legacy main, review and merge101/102, implement external one-call grant and durable SQLite reservation with integrated Vertex A+B transport and versioned Windows writer. No real media/inference/IAM/deploy.",
+  "risk": "high",
+  "acceptance_criteria": [
+    "Immutable legacy reference before merge; current PR head CI and independent review before merge",
+    "Real transport/payload and bounded auth implemented and fake-provider chain tested offline",
+    "External trusted approval signer inaccessible to worker; SQLite atomic reserve and UNKNOWN no-retry survive restart/concurrency",
+    "Versioned writer and recovery validated with synthetic source only; legacy/front-end intact",
+    "Final main CI and reviewed one-call approval package; no actual media or inference"
+  ],
+  "allowed_paths": [
+    "README.md",
+    "AGENTS.md",
+    "docs/reels-analysis/",
+    "docs/reels-identity/",
+    "docs/SPRINT2E.md",
+    "docs/adr/",
+    "operations/reels-analysis-live/",
+    "operations/reels-analysis-ci/",
+    "operations/reels-identity/",
+    "operations/reels-pilot/",
+    "scripts/test_sprint2e.py",
+    ".github/workflows/reels-analysis-ci.yml",
+    "tasks/MEG-109-sprint2e.json"
+  ],
+  "context": [
+    {
+      "path": "operations/reels-identity/grant_spec.py",
+      "reason": "Reuse existing grant specification",
+      "sections": [
+        "full module"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "operations/reels-analysis-live/worker.py",
+      "reason": "Reuse existing worker orchestration",
+      "sections": [
+        "execution boundary"
+      ],
+      "max_chars": 4000
+    },
+    {
+      "path": "operations/reels-analysis-live/cloud_adapter.py",
+      "reason": "Integrate bounded transport/auth without bypass",
+      "sections": [
+        "adapter"
+      ],
+      "max_chars": 4000
+    }
+  ],
+  "validation_commands": [
+    "python3 scripts/check_links.py",
+    "python3 scripts/check_task_packets.py",
+    "python3 operations/reels-analysis-ci/run_ci.py --require-network-namespace"
+  ],
+  "execution_budget": {
+    "worker_runs": 1,
+    "reviewer_runs": 1,
+    "fix_runs": 0,
+    "timeout_minutes": 15,
+    "reasoning": "high"
+  },
+  "review": {
+    "mode": "independent_agent_and_human",
+    "status": "pending",
+    "reason": "User explicitly authorizes native independent review, fixes and merges in Sprint2E; old launcher execution limits remain separate."
+  },
+  "native_coordination_authority": "Current explicit user Sprint2E and workspace protocol permit scoped native Developers and fresh Revisor; legacy launcher budget is not used; no scheduler/background model.",
+  "issue_reference_status": "ID read from existing repository packet; current Paperclip status unavailable; no new issue or heartbeat fabricated"
+}

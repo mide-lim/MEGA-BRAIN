@@ -72,7 +72,7 @@ def build_request(task, media_bytes):
             "responseMimeType": "application/json",
             "responseSchema": provider_schema(schema),
             "thinkingConfig": {"thinkingLevel": "LOW"},
-            "maxOutputTokens": 4096, "temperature": 0}}
+            "maxOutputTokens": 4096}}
 
 class SingleHTTPTransport:
     is_simulated_transport = False
@@ -256,6 +256,7 @@ class GoogleOfficialTokenSource:
         import requests
         from requests.adapters import HTTPAdapter
         session = requests.Session()
+        session.trust_env = False  # Credentials never follow environment proxies or netrc.
         session.mount("https://", HTTPAdapter(max_retries=0))
         session.mount("http://", HTTPAdapter(max_retries=0))
         try:

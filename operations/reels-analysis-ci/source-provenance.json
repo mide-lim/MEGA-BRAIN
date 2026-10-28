@@ -117,10 +117,12 @@
       "source_relative_path": "cloud_adapter.py",
       "repository_path": "operations/reels-analysis-live/cloud_adapter.py",
       "source_sha256": "ab5c4f226693a004400b84a1d892a9ff089dd15a755a1510e900bc468acd16ce",
-      "repository_sha256": "20e5750730629d0c8bad06a266208d811928bffcd41a7c6799ff2833e1b5098f",
+      "repository_sha256": "80f21d893b5d7a0b6e1b7a190e14f97eb1ed736e15187af03e98157ef07de04a",
       "adaptations": [
         "strict_bounded_impersonated_adc_profile_from_trusted_external_grant"
-      ]
+      ],
+      "sprint2c_repository_sha256": "20e5750730629d0c8bad06a266208d811928bffcd41a7c6799ff2833e1b5098f",
+      "sprint2e_transformation": "Remove unsupported temperature override and disable ambient Requests proxy/credential inheritance in bounded auth transport; original operational snapshot unchanged"
     },
     {
       "source_module": "reels-analysis-live",

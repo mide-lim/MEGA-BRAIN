@@ -1,10 +1,18 @@
 # MEGA-BRAIN
 
-Repositório para documentação e validação do fluxo Paperclip → Codex → PR → GitHub CI.
+MEGABRAIN reúne o desenvolvimento de Reels, com execução nativa Codex sob demanda e validação por PR/GitHub CI.
+
+O caminho atual de análise multimodal é o [worker Python VPS → Vertex AI](docs/SPRINT2E.md). O diretório google-v0 preserva a implementação anterior e o frontend; seus serviços externos não são alterados automaticamente pelo novo pipeline.
+
+Inferência e mídia reais exigem autorização específica, grant externo e reserva durável. Merge não autoriza deploy.
 
 O backup MegaBrain é uma referência histórica. Seu conteúdo não comprova a existência de serviços na VPS.
 
 ## Documentação
+
+- [Pipeline atual, legado e operação Sprint 2E](docs/SPRINT2E.md)
+- [Contratos A+B e validação offline](docs/reels-analysis/README.md)
+- [Diagnóstico de identidade e contrato de autorização](docs/reels-identity/README.md)
 
 - [Piloto Paperclip e Codex](docs/PILOT.md)
 - [Regras dos agentes](AGENTS.md)

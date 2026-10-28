@@ -1,0 +1,13 @@
+{
+  "files": [
+    "operations/reels-pilot/approval.py",
+    "operations/reels-pilot/contracts/analysis.pilot.v1.schema.json",
+    "operations/reels-pilot/contracts/grant.v1.schema.json",
+    "operations/reels-pilot/ledger.py",
+    "operations/reels-pilot/provider.py",
+    "operations/reels-pilot/tests/test_approval_ledger.py",
+    "operations/reels-pilot/tests/test_worker_provider.py",
+    "operations/reels-pilot/worker.py"
+  ],
+  "expected_tests": 68
+}

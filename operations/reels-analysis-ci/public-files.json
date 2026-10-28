@@ -42,7 +42,9 @@
     "operations/reels-analysis/prompts/multimodal.v1.txt",
     "operations/reels-analysis/taxonomy.draft.v1.json",
     "operations/reels-analysis/tests/test_offline.py",
-    "operations/reels-analysis/worker.py"
+    "operations/reels-analysis/worker.py",
+    "operations/reels-analysis-ci/run_pilot_ci.py",
+    "operations/reels-analysis-ci/pilot-public-files.json"
   ],
   "optional_files": []
 }

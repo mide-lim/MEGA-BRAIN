@@ -6,6 +6,8 @@ on:
       - 'operations/reels-analysis-live/**'
       - 'operations/reels-analysis-ci/**'
       - 'operations/reels-identity/**'
+      - 'operations/reels-pilot/**'
+      - 'docs/SPRINT2E.md'
       - 'docs/reels-identity/**'
       - 'docs/reels-analysis/**'
       - '.github/workflows/reels-analysis-ci.yml'
@@ -15,6 +17,8 @@ on:
       - 'operations/reels-analysis-live/**'
       - 'operations/reels-analysis-ci/**'
       - 'operations/reels-identity/**'
+      - 'operations/reels-pilot/**'
+      - 'docs/SPRINT2E.md'
       - 'docs/reels-identity/**'
       - 'docs/reels-analysis/**'
       - '.github/workflows/reels-analysis-ci.yml'
@@ -110,3 +114,7 @@ jobs:
               suite = run_module("reels-identity", tests, scratch, env)
           print(json.dumps({"identity_public_files": len(actual), "identity_suite": suite, "identity_tests_by_file": tests_by_file, "guard_probes": probes, "google_calls": 0}, sort_keys=True))
           PY
+      - name: Validate signed grants and durable provider chain using synthetic data only
+        run: |
+          PYTHON_BIN="$(command -v python)"
+          sudo unshare --net -- "$PYTHON_BIN" operations/reels-analysis-ci/run_pilot_ci.py

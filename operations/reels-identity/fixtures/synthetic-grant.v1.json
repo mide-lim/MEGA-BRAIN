@@ -1,0 +1,77 @@
+{
+  "contract_version": "1.0",
+  "mode": "SYNTHETIC_SIMULATION_ONLY",
+  "grant_id": "synthetic-one",
+  "authority": {
+    "status": "DENIED",
+    "issuer": "synthetic://offline-issuer",
+    "signer": "synthetic://offline-signer",
+    "signature": "SYNTHETIC_NOT_A_SIGNATURE"
+  },
+  "issued_at": "2030-01-01T00:00:00Z",
+  "not_before": "2030-01-01T00:00:00Z",
+  "expires_at": "2030-01-01T00:05:00Z",
+  "bindings": {
+    "media": {
+      "id": "synthetic-media",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest_verified": true
+    },
+    "target": {
+      "project": "synthetic-project",
+      "service_account": "synthetic-service-account",
+      "model": "synthetic-model",
+      "location": "synthetic-location"
+    },
+    "artifacts": {
+      "worker": {
+        "version": "synthetic-v1",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "prompt": {
+        "version": "synthetic-v1",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "schema": {
+        "version": "synthetic-v1",
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    "filesystem": {
+      "media_root": {
+        "root_id": "synthetic:media-root",
+        "filesystem_id": "synthetic:fs",
+        "object_id": "synthetic:media-root-object",
+        "owner": "synthetic:worker",
+        "mode": "0700"
+      },
+      "result_root": {
+        "root_id": "synthetic:result-root",
+        "filesystem_id": "synthetic:fs",
+        "object_id": "synthetic:result-root-object",
+        "owner": "synthetic:worker",
+        "mode": "0700"
+      },
+      "ledger_root": {
+        "root_id": "synthetic:ledger-root",
+        "filesystem_id": "synthetic:fs",
+        "object_id": "synthetic:ledger-root-object",
+        "owner": "synthetic:worker",
+        "mode": "0700"
+      },
+      "runtime_identity": "synthetic:worker"
+    },
+    "policy_version": "future-contract-1"
+  },
+  "limits": {
+    "max_calls": 1,
+    "gross_budget": "0.01000000",
+    "currency": "USD"
+  },
+  "persistence": {
+    "reservation": "DURABLE_ATOMIC_BEFORE_IO",
+    "result": "DURABLE_ATOMIC_AFTER_RESPONSE",
+    "uncertain": "NO_RETRY_NO_AUTOMATIC_REFUND",
+    "reconcile": "MANUAL_EVIDENCE_ONLY_NO_REARM"
+  }
+}

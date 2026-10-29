@@ -207,8 +207,9 @@
       "source_relative_path": "prompts/stored-multimodal.v1.txt",
       "repository_path": "operations/reels-analysis-live/prompts/stored-multimodal.v1.txt",
       "source_sha256": "ceda290fe0a50d3c39fc8eb58b7f5f285941796fb9819d74e17c12069a05ee23",
-      "repository_sha256": "ceda290fe0a50d3c39fc8eb58b7f5f285941796fb9819d74e17c12069a05ee23",
-      "adaptations": []
+      "repository_sha256": "d909eee5016478c09f61887216fa572577246534161bb4a91657de987a3a7fcd",
+      "adaptations": [],
+      "reviewed_repository_change": "Hermes pt-BR prompt adaptation; original source lineage SHA retained."
     },
     {
       "source_module": "reels-analysis-live",

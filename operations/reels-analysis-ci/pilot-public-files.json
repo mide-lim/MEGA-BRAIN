@@ -4,12 +4,18 @@
     "operations/reels-pilot/approval.py",
     "operations/reels-pilot/contracts/analysis.pilot.v1.schema.json",
     "operations/reels-pilot/contracts/grant.v1.schema.json",
+    "operations/reels-pilot/governance.py",
     "operations/reels-pilot/ledger.py",
     "operations/reels-pilot/provider.py",
-    "operations/reels-pilot/tests/test_approval_ledger.py",
+    "operations/reels-pilot/recurrence.py",
     "operations/reels-pilot/tests/test_api_token.py",
+    "operations/reels-pilot/tests/test_approval_ledger.py",
+    "operations/reels-pilot/tests/test_governance.py",
+    "operations/reels-pilot/tests/test_recurrence.py",
+    "operations/reels-pilot/tests/test_second_attempt.py",
+    "operations/reels-pilot/tests/test_vertex_request.py",
     "operations/reels-pilot/tests/test_worker_provider.py",
     "operations/reels-pilot/worker.py"
   ],
-  "expected_tests": 87
+  "expected_tests": 147
 }

@@ -135,7 +135,7 @@ def validate_usage(value):
     return copy.deepcopy(value)
 
 
-def parse_response(response, *, duration, synthetic=False):
+def parse_response(response, *, duration, synthetic=False, governance_separate=False):
     if response.truncated or len(response.body) > MAX_RESPONSE_BYTES:
         raise ContractError("provider response truncated")
     if response.status != 200:
@@ -181,7 +181,11 @@ def parse_response(response, *, duration, synthetic=False):
     if not answer:
         raise ContractError("no structured answer")
     payload = parse_json("".join(answer))
-    validate_payload(payload, duration)
+    if governance_separate:
+        from governance import validate_content
+        validate_content(payload, duration)
+    else:
+        validate_payload(payload, duration)
     model = outer.get("modelVersion")
     if not isinstance(model, str) or not model:
         raise ContractError("modelVersion required for provenance")

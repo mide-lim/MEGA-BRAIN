@@ -129,6 +129,13 @@ def validate_document(grant):
         raise ApprovalDenied("grant schema rejected") from exc
     if errors:
         raise ApprovalDenied("grant schema rejected")
+    if "successor" in grant:
+        proof = grant["successor"]
+        if (proof["approval_id"] != grant["authority"]["approval_id"] or
+                proof["parent_grant_id"] == grant["grant_id"] or
+                _money(grant["limits"]["gross_budget"]) != Decimal("3") or
+                grant["limits"]["currency"] != "USD"):
+            raise ApprovalDenied("distinct explicit successor approval and USD3 required")
     return deepcopy(grant)
 
 

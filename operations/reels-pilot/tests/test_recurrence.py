@@ -26,7 +26,7 @@ class RecurrenceTests(unittest.TestCase):
         self.f.manifest['manifest_version'] = 'reels-pilot-run.v2'
         self.f.grant['manifest_sha256'] = sha(canonical(self.f.manifest))
         self.f.envelope = self.f.sign(self.f.grant)
-        self.control_tmp = tempfile.TemporaryDirectory(prefix='synthetic-recurrence-', dir='/opt')
+        self.control_tmp = tempfile.TemporaryDirectory(prefix='synthetic-recurrence-', dir='/etc')
         self.addCleanup(self.control_tmp.cleanup)
         self.control = Path(self.control_tmp.name)
         control_patch = mock.patch.object(r, 'CONTROL', self.control)

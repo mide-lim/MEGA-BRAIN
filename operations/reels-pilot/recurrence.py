@@ -122,10 +122,27 @@ def validate_batch(batch, policy):
 
 class _GuardedPipeline(worker.Pipeline):
     """Fixed composition: batch receipt rechecked wherever worker verifies grant."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.__history_manifest = None
+
+    def _source(self, task):
+        # Invalidate before IO, including a failed/interrupted source read.
+        self.__history_manifest = None
+        return super()._source(task)
+
     def _verify(self, manifest, envelope, stamp, *, recovery_record=None):
         if recovery_record is None:
-            self.queue._authority(self.batch_id, manifest, envelope)
-        return super()._verify(manifest, envelope, stamp, recovery_record=recovery_record)
+            digest = sha(canonical(manifest))
+            history_required = self.__history_manifest != digest
+            self.queue._authority(self.batch_id, manifest, envelope,
+                                  history_required=history_required)
+        verified = super()._verify(manifest, envelope, stamp, recovery_record=recovery_record)
+        if recovery_record is None:
+            # Only inventory is reused, never receipt, prior ledger or crypto.
+            # This instance belongs to one run_one; no queue/global lifetime.
+            self.__history_manifest = digest
+        return verified
 
 
 class Queue:
@@ -322,7 +339,7 @@ class Queue:
             db.execute('UPDATE recurrence_batches SET receipt_path=?,receipt_sha256=? WHERE batch_id=?', (str(receipt), digest, batch_id))
             db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND state='PENDING'", (batch_id,))
 
-    def _authority(self, batch_id, manifest, envelope):
+    def _authority(self, batch_id, manifest, envelope, *, history_required=True):
         with self.ledger._transaction() as db:
             row, batch = self._batch(db, batch_id)
         receipt = self._receipt(row, batch)
@@ -330,7 +347,8 @@ class Queue:
         require(member is not None, 'exact member manifest')
         grant = envelope['grant']
         self._history_receipt(batch)
-        self._history(member)
+        if history_required:
+            self._history(member)
         with self.ledger._transaction() as db:
             claimed = db.execute('SELECT state,grant_id,source_sha256 FROM recurrence_members WHERE batch_id=? AND member_id=?',
                                  (batch_id, manifest['task']['reel_id'])).fetchone()

@@ -496,5 +496,131 @@ class RecurrenceTests(unittest.TestCase):
             with self.assertRaises(OSError): self.q._history(self.batch['members'][0])
 
 
+    def test_35_phase_inventory_only_four_authorization_boundaries(self):
+        self.authorize()
+        events = []
+        original_source = r.worker.Pipeline._source
+        original_history = self.q._history
+        def history(member):
+            events.append('history')
+            return original_history(member)
+        def source(pipeline, task):
+            events.append('source')
+            return original_source(pipeline, task)
+        with mock.patch.object(self.q, '_history', side_effect=history) as scan, \
+             mock.patch.object(r.worker.Pipeline, '_source', source), \
+             mock.patch.object(self.q, '_receipt', wraps=self.q._receipt) as receipt, \
+             mock.patch.object(self.q, '_history_receipt', wraps=self.q._history_receipt) as attestation, \
+             mock.patch.object(self.q, '_prior', wraps=self.q._prior) as prior, \
+             mock.patch.object(r.approval, 'verify_grant', wraps=r.approval.verify_grant) as crypto, \
+             mock.patch.object(r.worker, 'observed_bindings', wraps=r.worker.observed_bindings) as roots:
+            result, fake = self.execute()
+        self.assertEqual((result['state'], fake.calls), ('PERSISTED', 1))
+        self.assertEqual(events, ['history', 'source', 'history'])
+        self.assertEqual(scan.call_count, 2)
+        self.assertEqual((receipt.call_count, attestation.call_count, crypto.call_count), (4, 4, 4))
+        # Four authority checks plus the existing separate pre-claim prior check.
+        self.assertEqual(prior.call_count, 5)
+        self.assertGreaterEqual(roots.call_count, 4)
+
+    def test_36_receipt_rejection_at_each_of_four_boundaries(self):
+        # Each scenario uses a fresh real signed fixture/ledger, not a mocked grant.
+        for boundary in range(1, 5):
+            with self.subTest(boundary=boundary):
+                case = RecurrenceTests(methodName='test_01_unsigned_batch_zero_provider')
+                try:
+                    case.setUp(); case.authorize()
+                    original = case.q._receipt
+                    calls = []
+                    def revoke(row, batch):
+                        calls.append(None)
+                        if len(calls) == boundary:
+                            case.receipt.write_bytes(canonical(dict(case.approval(), approved_by='revoked')))
+                        return original(row, batch)
+                    fake = FakeProvider()
+                    with mock.patch.object(case.q, '_receipt', side_effect=revoke):
+                        if boundary < 4:
+                            with self.assertRaisesRegex(r.ContractError, 'receipt bytes changed'):
+                                case.execute(fake)
+                        else:
+                            result, _ = case.execute(fake)
+                            self.assertEqual(result['state'], 'UNKNOWN')
+                    self.assertEqual(len(calls), boundary)
+                    self.assertEqual(fake.calls, 0)
+                    with case.q.ledger._transaction() as db:
+                        rows = list(db.execute('SELECT state FROM attempts'))
+                    self.assertEqual([row[0] for row in rows], ['UNKNOWN'] if boundary == 4 else [])
+                finally:
+                    case.doCleanups()
+
+    def test_37_source_invalidates_before_even_failed_read(self):
+        self.authorize()
+        pipeline = self.q._pipeline('synthetic-batch', transport=FakeProvider())
+        pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+        def fail_source(pipeline, task):
+            # Reentrant verification inside the reader must already scan again.
+            (self.f.root/'results/history-during-read.json').write_bytes(
+                canonical({'id': task['reel_id']}))
+            with self.assertRaisesRegex(r.ContractError, 'history collision'):
+                pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+            raise OSError('synthetic source failure')
+        with mock.patch.object(r.worker.Pipeline, '_source', fail_source):
+            with self.assertRaisesRegex(OSError, 'synthetic source failure'):
+                pipeline._source(self.f.task)
+        with self.assertRaisesRegex(r.ContractError, 'history collision'):
+            pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+
+    def test_38_inventory_cache_not_shared_between_pipeline_instances(self):
+        self.authorize()
+        first = self.q._pipeline('synthetic-batch', transport=FakeProvider())
+        second = self.q._pipeline('synthetic-batch', transport=FakeProvider())
+        with mock.patch.object(self.q, '_history', wraps=self.q._history) as scan:
+            first._verify(self.f.manifest, self.f.envelope, r.now())
+            first._verify(self.f.manifest, self.f.envelope, r.now())
+            self.assertEqual(scan.call_count, 1)
+            (self.f.root/'results/history-between-instances.json').write_bytes(
+                canonical({'id': self.f.task['reel_id']}))
+            with self.assertRaisesRegex(r.ContractError, 'history collision'):
+                second._verify(self.f.manifest, self.f.envelope, r.now())
+            self.assertEqual(scan.call_count, 2)
+
+    def test_39_each_signed_member_gets_own_pre_and_post_scans(self):
+        with mock.patch.object(self.q, '_history', wraps=self.q._history) as scan:
+            # Existing full two-member path includes a denied WIP attempt.
+            self.test_20_second_member_only_after_verified_cleanup()
+        ids = [call.args[0]['manifest']['task']['reel_id'] for call in scan.call_args_list]
+        self.assertEqual(ids, ['synthetic-second', self.f.task['reel_id'], self.f.task['reel_id'],
+                               'synthetic-second', 'synthetic-second', 'synthetic-second'])
+
+    def test_40_recovery_remains_persistence_only_without_authority_or_inventory(self):
+        self.authorize(); result, fake = self.execute()
+        again = r.Queue(self.f.policy, synthetic=True)
+        (self.control/self.batch['batch_id']/'history.json').unlink()
+        self.receipt.unlink()
+        recovery_fake = FakeProvider()
+        with mock.patch.object(again, '_authority', side_effect=AssertionError('authority')) as authority, \
+             mock.patch.object(again, '_history', side_effect=AssertionError('inventory')) as scan, \
+             mock.patch.object(r.worker.Pipeline, '_source', side_effect=AssertionError('media')) as source:
+            recovered = again.recover('synthetic-batch', self.f.task['reel_id'],
+                                      executor_id='restart', transport=recovery_fake)
+        self.assertEqual(recovered, result)
+        self.assertEqual((fake.calls, recovery_fake.calls), (1, 0))
+        authority.assert_not_called(); scan.assert_not_called(); source.assert_not_called()
+
+    def test_41_failed_inventory_never_marks_phase_valid(self):
+        self.authorize()
+        pipeline = self.q._pipeline('synthetic-batch', transport=FakeProvider())
+        path = self.f.root/'results/history-failed.json'
+        path.write_bytes(canonical({'id': self.f.task['reel_id']}))
+        with mock.patch.object(self.q, '_history', wraps=self.q._history) as scan:
+            for _ in range(2):
+                with self.assertRaisesRegex(r.ContractError, 'history collision'):
+                    pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+            path.unlink()
+            pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+            pipeline._verify(self.f.manifest, self.f.envelope, r.now())
+            self.assertEqual(scan.call_count, 3)
+
+
 if __name__ == '__main__':
     unittest.main()

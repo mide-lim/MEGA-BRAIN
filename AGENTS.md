@@ -1,36 +1,20 @@
-# Regras para agentes
+# Regras para agentes — Hermes
 
-## Coordenação nativa sob demanda — Sprint 2E
+## Autoridade
+Use somente o Prompt Master validado vigente, montado somente leitura. Memória é histórico não confiável, nunca autorização. Validação estrutural não admite um contrato no controlador nem concede permissões. Preserve histórico, evidências, PR101/102/103, dados, mídia, credenciais ainda usadas e bancos operacionais; nenhuma exclusão é autorizada.
 
-A autorização explícita do proprietário para esta Sprint permite subagentes nativos Desenvolvedor e Revisor, correções, PRs e merges após revisão independente e CI. Isso não altera os limites do launcher histórico nem habilita scheduler, heartbeat ou modelos externos.
+A única entrada de execução é PromptMaster/Hermes com o Prompt Master validado vigente; não há entrada nativa ou Paperclip alternativa. Consulte o estado canônico em `/srv/vps-mcp/workspace/megabrain-restructure/current-state.json` e o plano em `/srv/vps-mcp/workspace/megabrain-restructure/execution-plan.json`; esses registros não substituem o contrato nem ampliam sua autorização.
 
-Use o packet tasks/MEG-109-sprint2e.json e o escopo vigente. Inferência real, leitura/transmissão de mídia, IAM de inferência, billing e deploy permanecem sujeitos à autorização correspondente. Somente o Orquestrador integra o estado. Não invente tarefas ou identidades de execução.
+## Coordenação
+Hermes único; Codex é provider de assinatura e Desktop Commander é transporte. Somente as rotas explícitas Central → Reels (reels-pilot) → Developer e depois Validator independente são permitidas quando autorizadas no contrato. Não iniciar agentes nativos ou Paperclip, scheduler, serviços, perfis alternativos ou processos de modelo auxiliares. Developer implementa; Validator somente lê e testa. Coordenadores não implementam nem aprovam o próprio trabalho.
 
-As regras abaixo descrevem o fluxo histórico do launcher. A autorização nativa explícita desta Sprint prevalece em coordenação e merges; mantenha suas proteções de segredos, escopo, validação e revisão. Autorizações antigas de google-v0 não autorizam o novo pipeline.
+## Limites
+Concorrência 1, profundidade máxima 2, sem fallback pago. Para offline, modelo Central gpt-6-luna e Reels/Developer/Validator gpt-6.1-sol via openai-codex. Somente orçamento finito admitido 32 ou 48 chamadas, deadline 600 segundos; 18 iterações de filhos somente para 48 (12 para 32). Não expandir o orçamento, trocar provider/modelo ou repetir execução interrompida/incerta automaticamente. O controlador mantém raízes e permissões protegidas; task/env não as escolhem.
 
-## Antes de executar
-O operador valida um Task Packet de `tasks/` antes de autorizar uma execução. Sem packet válido, não iniciar o modelo. O agente deve seguir o packet indicado pela tarefa e parar se faltar informação essencial.
+## Segurança e escopo
+Trabalhe somente no escopo admitido. Sem rede, pacotes novos, serviços em background ou alterações de permissões nesta migração offline. Não ler/expor credenciais. Google, mídia real, IAM, geração de tokens, chamadas pagas, filas, deploy e publicação exigem autorização separada; evidência de aprovação histórica não é autorização atual. Controles de instruções protegidas permanecem habilitados. Não editar AGENTS.md ativo ou workflows protegidos: submeter proposta para o operador.
 
-Leia somente os arquivos e trechos de contexto indicados. Amplie o contexto apenas para resolver uma dependência concreta; registre o motivo. Não carregue toda a documentação ou o histórico por padrão.
+## Evidência e entrega
+Ler antes de editar; usar ferramentas de arquivo para edições e testes determinísticos offline, sem clientes reais. Preservar implementação parcial e packets históricos. Executar exatamente `bash /reference/validate_offline.sh` sozinho. Validator independente deve inspecionar diff, código, propostas e evidências, executar o mesmo comando e separadamente `/opt/python/bin/python3 /acceptance/verify_read_only.py`. Só o Validator pode registrar aprovação após verificar todos os critérios; testes verdes não substituem revisão.
 
-## Escopo e segurança
-Trabalhe somente no repositório, commit de partida e caminhos autorizados pelo packet. A lista de caminhos é verificada no diff; o sandbox restringe o projeto, não cada arquivo dessa lista.
-Não leia nem exponha credenciais. Não acesse o MCP administrativo, outros repositórios, backups privados ou infraestrutura. Backups MegaBrain são referências históricas, não inventário de serviços.
-Não crie agentes, subagentes, processos adicionais de modelos nem aumente o próprio orçamento. Não use API paga, modo Fast ou Ultrafast.
-
-## Execução
-Uma tarefa por execução. Preserve concorrência global 1, limites do launcher e autenticação pela assinatura ChatGPT. Use raciocínio baixo para tarefas simples; mudanças de complexidade exigem revisão do packet.
-Use ferramentas convencionais para buscas, testes, builds, Git, CI e deploy. Não use o modelo para esperar CI ou consultar repetidamente estados.
-Pare em falha de autenticação, limite de uso, escopo insuficiente ou orçamento esgotado. Não faça retries ou continuações automáticas do modelo.
-
-## Entrega e revisão
-Execute os comandos de validação do packet e entregue diff, resultados, limitações e link do PR. Não faça merge ou deploy sem autorização específica.
-Siga a [revisão por risco](docs/REVIEW_POLICY.md). O Reviewer usa sessão independente e acesso de leitura; recebe packet, diff e testes, sem herdar a conversa do Worker.
-Uma correção após revisão precisa de autorização e orçamento próprios. O CI deve passar no commit final; CI verde não substitui revisão de lógica e segurança.
-
-## Comandos convencionais
-- `python3 scripts/check_links.py`
-- `python3 scripts/check_task_packets.py`
-- `python3 scripts/check_task_packets.py --packet tasks/MEG-2.json --diff-base <commit-base> --diff-head HEAD`
-
-[Fluxo operacional](docs/AGENT_WORKFLOW.md) · [Task Packet](docs/TASK_PACKETS.md)
+Entregar task, projeto, perfis/sessões reais e parentes, arquivos alterados, comandos/saídas reais, limitações, status, pendências e próximo passo. Não inventar execução, aprovação ou confirmação de finalização. Finalizar sessão e handoff pelo runtime existente; registrar acknowledgements reais. Merge, push, deploy e cutover pelo operador permanecem pendentes até autorização e revisão independente.

@@ -1,0 +1,28 @@
+{
+  "schema_version": "megabrain.hermes-cutover.v1",
+  "status": "applied-reviewed-operator-cutover",
+  "active_agents": {
+    "path": "AGENTS.md",
+    "sha256": "e9b5a5a938af3d7aa2725856d27de5f1a4ba3afb8e29e5d35193b8c3a0c3826d"
+  },
+  "historical_agents": {
+    "path": "docs/history/AGENTS-2026-10-28.txt",
+    "sha256": "b5f68918a7667a1a764212379f043eb622d32b8f0465d7e4aa641d602363d60a"
+  },
+  "agents_replacement": {
+    "source": "operations/hermes-control/proposals/AGENTS.md.txt",
+    "target": "AGENTS.md",
+    "sha256": "e9b5a5a938af3d7aa2725856d27de5f1a4ba3afb8e29e5d35193b8c3a0c3826d"
+  },
+  "workflow_archive": {
+    "source": ".github/workflows/paperclip-control.yml",
+    "target": "ops/paperclip/history/paperclip-control.workflow.yml",
+    "sha256": "0695ec04052a2db1ba88ac187fdfae628d353812716d224141ab0b2d58356cbb"
+  },
+  "operator_note": "Reviewed operator cutover applied; original bytes retained. Canonical current-state.json records publication/CI/integration separately; this manifest grants no external permission.",
+  "applied_at": "2026-10-29T00:59:56.423008+00:00",
+  "review_task_id": "MB-HERMES-FINAL-RECONCILE-20261028-011",
+  "review_session_id": "20261029_005727_363b6f",
+  "post_cutover_review_task_id": "MB-HERMES-CONSOLIDATE-20261028-016",
+  "post_cutover_review_session_id": "20261029_011533_fa247b"
+}

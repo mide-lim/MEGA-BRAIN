@@ -1,0 +1,21 @@
+{
+  "schema_version": "megabrain.prompt-master.v1",
+  "task_id": "MB-HERMES-OFFLINE-EXAMPLE-20261028",
+  "project_id": "reels",
+  "objective": "Illustrate offline documentation maintenance without live authorization",
+  "scope": {"workspace": "/srv/vps-mcp/workspace/megabrain-restructure/work/hermes-migration-sprint2e", "data": "offline-code-only"},
+  "allowed_operations": ["offline_repository_maintenance", "offline_tests", "hermes_delegation", "memory_handoff"],
+  "prohibited_operations": ["real_media", "google", "paid_api", "deploy", "iam", "background_services"],
+  "context_refs": ["docs/AGENT_WORKFLOW.md", "Example only: no valid worktree pin or dispatch authorization"],
+  "acceptance_criteria": ["Structural checker accepts independent MB identity without Paperclip id"],
+  "resource_policy": {
+    "model": {"central": "gpt-6-luna", "reels": "gpt-6.1-sol", "developer": "gpt-6.1-sol", "validator": "gpt-6.1-sol"},
+    "provider": "openai-codex", "max_model_calls": 48, "deadline_seconds": 600,
+    "max_spawn_depth": 2, "concurrency": 1, "paid_fallback": false
+  },
+  "approval_requirements": ["Example is expired and unauthorized; operator must review a new contract before dispatch"],
+  "output_contract": {"format": "structured receipt and real session transcripts", "handoff": ["task", "project", "profiles", "changes", "tests", "evidence", "status", "pending", "next_action"]},
+  "evidence_requirements": ["Real session lineage", "Actual tool outputs", "Finalization acknowledgements"],
+  "expires_at": "2026-10-28T00:00:00+00:00",
+  "authorization_ref": "EXAMPLE-NOT-AUTHORIZED"
+}

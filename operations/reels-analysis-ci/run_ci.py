@@ -78,7 +78,7 @@ def main():
         integration_count = re.search(r"Ran (\d+) tests?", guard_suite.stdout + guard_suite.stderr)
         assert integration_count, "integration test count missing"
         suites = [run_module("reels-analysis", 36, scratch, env),
-                  run_module("reels-analysis-live", 41, scratch, env)]
+                  run_module("reels-analysis-live", 43, scratch, env)]
     print(json.dumps({"public_checks": checks, "guard_probes": probes, "integration_unit_tests": int(integration_count.group(1)), "suites": suites,
                       "module_tests": sum(row["tests"] for row in suites),
                       "total_tests": sum(row["tests"] for row in suites) + int(integration_count.group(1)),

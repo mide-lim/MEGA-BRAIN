@@ -30,6 +30,76 @@ class SimTransport:
             raise self.error
         return self.response
 
+class ProviderSchemaTests(unittest.TestCase):
+    def test_string_enum_conversion_and_invalid_shapes(self):
+        for source, expected in (
+                ({"enum": ["second", "first", ""]},
+                 {"type": "STRING", "enum": ["second", "first", ""]}),
+                ({"type": "string", "enum": ["b", "a"]},
+                 {"type": "STRING", "enum": ["b", "a"]}),
+                ({"type": ["string", "null"], "enum": ["b", "a"]},
+                 {"type": "STRING", "nullable": True, "enum": ["b", "a"]}),
+                ({"type": "number", "minimum": 0, "maximum": 7},
+                 {"type": "NUMBER", "minimum": 0, "maximum": 7}),
+                ({"type": "object", "required": ["kind"],
+                  "properties": {"kind": {"enum": ["b", "a"]}}},
+                 {"type": "OBJECT", "required": ["kind"],
+                  "properties": {"kind": {"type": "STRING", "enum": ["b", "a"]}}}),
+                ({"anyOf": [{"type": "null"}, {"enum": ["b", "a"]}]},
+                 {"type": "STRING", "nullable": True, "enum": ["b", "a"]})):
+            with self.subTest(source=source):
+                original = copy.deepcopy(source)
+                self.assertEqual(provider_schema(source), expected)
+                self.assertEqual(source, original)
+        invalid = [True, [], {}, {"properties": {}}, {"type": "unknown"},
+                   {"type": None, "enum": ["a"]}, {"type": "", "enum": ["a"]},
+                   {"type": ["string"]}, {"type": ["null"]},
+                   {"type": ["string", "number"]}, {"type": ["string", "null", "null"]},
+                   {"anyOf": []}, {"anyOf": [True, {"type": "null"}]},
+                   {"anyOf": [{"type": "string"}, {"type": "number"}]},
+                   {"anyOf": [{"type": "string"}, {"type": "null"}], "enum": ["a"]}]
+        for enum in ([], "a", None, {}, [1, 2], ["a", 1], [True], [None],
+                     [["a"]], [{"a": 1}], ["a", "a"]):
+            invalid.extend(({"enum": enum}, {"type": "string", "enum": enum}))
+        invalid.extend({"type": typ, "enum": ["a"]}
+                       for typ in ("number", "integer", "boolean", "object", "array"))
+        for source in invalid:
+            with self.subTest(invalid=source), self.assertRaises(ContractError):
+                provider_schema(source)
+
+    def test_full_request_schema_types_and_ten_string_enums(self):
+        task = parse_json((ROOT / "examples/stored-video.preparation.json").read_bytes())
+        data = (ROOT / "fixtures/fake-media.txt").read_bytes()
+        source = parse_json((ROOT / "contracts/model-payload.v1.schema.json").read_bytes())
+        original = copy.deepcopy(source)
+        converted = build_request(task, data)["generationConfig"]["responseSchema"]
+        enums = []
+
+        def check(local, remote):
+            self.assertIn(remote["type"], {"STRING", "NUMBER", "INTEGER", "BOOLEAN", "OBJECT", "ARRAY"})
+            if "anyOf" in local:
+                self.assertTrue(remote["nullable"])
+                local = next(node for node in local["anyOf"] if node.get("type") != "null")
+            if isinstance(local.get("type"), list):
+                self.assertTrue(remote["nullable"])
+            for key in ("required", "minimum", "maximum"):
+                if key in local:
+                    self.assertEqual(remote[key], local[key])
+            if "enum" in local:
+                self.assertEqual(remote["type"], "STRING")
+                self.assertTrue(all(isinstance(value, str) for value in local["enum"]))
+                self.assertEqual(remote["enum"], local["enum"])
+                enums.append(local["enum"])
+            self.assertEqual(set(remote.get("properties", {})), set(local.get("properties", {})))
+            for key, node in local.get("properties", {}).items():
+                check(node, remote["properties"][key])
+            if "items" in local:
+                check(local["items"], remote["items"])
+
+        check(source, converted)
+        self.assertEqual(len(enums), 10)
+        self.assertEqual(source, original)
+
 class PreparationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="tests-", dir=ROOT / "outputs")

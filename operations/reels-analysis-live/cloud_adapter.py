@@ -31,8 +31,16 @@ def endpoint(task):
 
 def provider_schema(value):
     """Reviewed provider subset; full strict JSON Schema remains local."""
+    if not isinstance(value, dict):
+        raise ContractError("unsupported provider schema shape")
     if "anyOf" in value:
-        choices = [x for x in value["anyOf"] if x.get("type") != "null"]
+        union = value["anyOf"]
+        if (not isinstance(union, list) or len(union) != 2 or
+                any(not isinstance(x, dict) for x in union) or
+                union.count({"type": "null"}) != 1 or
+                set(value) - {"anyOf", "description", "title"}):
+            raise ContractError("unsupported provider schema union")
+        choices = [x for x in union if x != {"type": "null"}]
         if len(choices) != 1:
             raise ContractError("unsupported provider schema union")
         result = provider_schema(choices[0])
@@ -42,12 +50,22 @@ def provider_schema(value):
     typ = value.get("type")
     if isinstance(typ, list):
         nonnull = [t for t in typ if t != "null"]
-        if len(nonnull) != 1:
+        if len(typ) != 2 or typ.count("null") != 1 or len(nonnull) != 1:
             raise ContractError("unsupported provider schema type")
         typ = nonnull[0]
         result["nullable"] = True
-    if typ:
-        result["type"] = typ.upper()
+    if "enum" in value:
+        enum = value["enum"]
+        if (not isinstance(enum, list) or not enum or
+                any(not isinstance(x, str) for x in enum) or len(set(enum)) != len(enum)):
+            raise ContractError("unsupported provider schema enum")
+        if "type" not in value:
+            typ = "string"
+        if typ != "string":
+            raise ContractError("unsupported provider schema enum type")
+    if not isinstance(typ, str) or typ not in ("string", "number", "integer", "boolean", "object", "array"):
+        raise ContractError("unsupported provider schema type")
+    result["type"] = typ.upper()
     for key in ("enum", "required", "minimum", "maximum"):
         if key in value:
             result[key] = value[key]

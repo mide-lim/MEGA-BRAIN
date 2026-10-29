@@ -1,23 +1,13 @@
-# Task Packets
+# Prompt Master task contracts
 
-Um packet reúne o necessário para uma tarefa e deixa explícitos objetivo, aceitação, risco, commit de partida, caminhos permitidos, contexto selecionado, comandos e orçamento.
+A versioned Prompt Master contract declares task identity, project, objective, scope, allowed and prohibited operations, context, acceptance criteria, resource limits, approvals, evidence, and expiry. Use `templates/prompt-master.schema.json` and the versioned template/example; independent `MB-` task IDs are required. Paperclip issue identifiers are not required.
 
-## Preparar
-Copie [o modelo JSON](templates/task-packet.json) para `tasks/<identificador>.json`. Substitua todos os campos de exemplo, associe o UUID da tarefa Paperclip e fixe o commit base. Escolha caminhos específicos; um caminho terminado em `/` autoriza a subárvore, sem globbing. Nunca use caminhos absolutos, `..`, `.git`, arquivos de credenciais ou backups privados.
+Historical `tasks/*.json` packets are retained unchanged as archive material. `scripts/check_task_packets.py` validates both their legacy format and current Prompt Master contracts. A contract is not a system permission or a live-service approval.
 
-Para o contexto, indique arquivo, motivo, seções ou trechos, e um limite planejado de caracteres. O preflight aceita até 8 referências e 12.000 caracteres planejados somados. Isso limita o contexto selecionado, não todo o prompt interno do Codex/Paperclip. Não anexar a documentação inteira por padrão.
+## Controls
 
-## Validar antes do modelo
-- `python3 scripts/check_task_packets.py`: valida os packets em `tasks/`.
-- `python3 scripts/check_task_packets.py --packet tasks/MEG-2.json --diff-base <commit-base> --diff-head HEAD`: também confere caminhos alterados e confirma o commit base.
+Only explicitly configured Hermes profile routes are valid. Developer writes and tests; Validator independently reviews read-only. Preserve actual session lineage and results. Never automatically replay an uncertain interruption. Live media, Google, IAM, paid API, and deployment remain separately gated.
 
-O CI valida a estrutura e os links; o operador verifica o diff contra o packet da tarefa. O arquivo JSON não concede permissões do sistema nem restringe a credencial GitHub àquele repositório.
+The migration operator cutover is pending: protected active `AGENTS.md`, the active workflow, and repository publication have not been changed. Historical Paperclip and Codex-pilot assets are preserved, not executed.
 
-## Autorizar e executar
-Na VPS, o operador usa `/opt/paperclip/authorize-packet.py --packet <caminho-no-host> --role worker`. O helper confere a tarefa, o orçamento e o histórico de execuções antes de emitir a autorização. Ele não inicia nem retoma o agente. O launcher verifica identidade da tarefa, hash, validade e packet antes de iniciar o Codex.
-
-Uma autorização de reviewer exige o packet revisado com review independente, papel correto, outra sessão e configuração somente de leitura. O helper atual autoriza worker e uma correção (`--role fix`) registrada como `changes_requested`; reviewer permanece uma etapa manual até existir um ambiente de revisão independente. A documentação não habilita esse agente automaticamente.
-
-Os limites globais continuam valendo. O packet [MEG-2](../tasks/MEG-2.json) exemplifica uma entrega convencional com orçamento de modelo zero; ele não pode autorizar o Codex.
-
-[Revisão por risco](REVIEW_POLICY.md) · [Início](../README.md)
+[Workflow](AGENT_WORKFLOW.md) · [Review policy](REVIEW_POLICY.md) · [Home](../README.md)

@@ -1,4 +1,6 @@
-# Controle de execução na VPS
+# Controles históricos Paperclip — não executar
+
+Arquitetura atual: Hermes único, provider Codex e transporte Desktop Commander. Estes controles são preservados como evidência histórica, não são instruções de ativação. A cópia exata do workflow está em `history/paperclip-control.workflow.yml`; o workflow ativo permanece intocado até revisão independente e cutover pelo operador. Ver `../hermes/cutover.json` e `../../docs/HERMES-MIGRATION-2026-10-28.md`. Nenhum serviço ou contêiner foi alterado nesta tarefa offline.
 
 Estes arquivos registram controles de execução para `/opt/paperclip`. A presença no repositório não comprova que a versão está instalada. Não contêm credenciais.
 
@@ -8,7 +10,7 @@ Estes arquivos registram controles de execução para `/opt/paperclip`. A presen
 
 A cópia de `scripts/check_task_packets.py` em `/opt/paperclip/packet-preflight.py` é montada somente para leitura como `/usr/local/bin/packet-preflight.py`. Alterar o verificador no repositório não promove automaticamente a nova versão para a trava instalada; a promoção é uma operação do administrador após revisão.
 
-O runtime atual não provisiona Reviewer. Uma revisão por modelo exigirá sessão e ambiente de leitura independentes antes de habilitar o papel. Não criar autorizações para esse papel com o helper atual.
+O runtime histórico Paperclip não provisionava Reviewer. O caminho Hermes usa Validator independente somente leitura; não criar autorizações Paperclip para esse papel com o helper histórico.
 
 [Fluxo](../../docs/AGENT_WORKFLOW.md)
 

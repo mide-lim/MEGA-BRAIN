@@ -11,7 +11,7 @@ Código de validação e controles de execução contam pelo impacto sobre o flu
 ## Independência
 O Reviewer recebe objetivo, critérios, diff e resultados de testes. Usa uma sessão nova, com permissões de leitura e credencial restrita ao repositório; não implementa a própria correção. Ele procura defeitos e evidências insuficientes, em vez de confirmar a narrativa do Worker.
 
-Hoje só há um agente provisionado. Tarefas que exigem Reviewer independente não são consideradas prontas até essa revisão existir ou uma revisão humana independente cumprir explicitamente a etapa. Não registrar revisão de modelo que não foi executada.
+O caminho Hermes Central → Reels → Developer/Validator foi exercitado no E2E de 28/10/2026; isso não aprova este diff. O Validator usa sessão independente e workspace somente leitura. A implementação atual aguarda revisão independente, prova de somente leitura e execução dos testes. Não registrar revisão de modelo que não foi executada.
 
 ## Decisão
 Registrar: aprovar, solicitar alterações ou bloquear; commit revisado; critérios verificados; achados com caminhos e linhas; testes executados e limitações. Use o [modelo de revisão](templates/review.md).

@@ -1,6 +1,6 @@
 # MEGA-BRAIN
 
-MEGABRAIN reúne o desenvolvimento de Reels, com execução nativa Codex sob demanda e validação por PR/GitHub CI.
+MEGABRAIN reúne o desenvolvimento de Reels. A arquitetura operacional aprovada é Hermes único, com provider Codex, transporte Desktop Commander e rotas de perfil explícitas. O operador cutover permanece pendente.
 
 O caminho atual de análise multimodal é o [worker Python VPS → Vertex AI](docs/SPRINT2E.md). O diretório google-v0 preserva a implementação anterior e o frontend; seus serviços externos não são alterados automaticamente pelo novo pipeline.
 
@@ -20,6 +20,8 @@ O backup MegaBrain é uma referência histórica. Seu conteúdo não comprova a 
 - [Task Packets](docs/TASK_PACKETS.md)
 - [Revisão por risco](docs/REVIEW_POLICY.md)
 - [Referências históricas](docs/HISTORY.md)
+- [Migração Hermes e pendências](docs/HERMES-MIGRATION-2026-10-28.md)
+- [Instruções históricas preservadas](docs/history/AGENTS-2026-10-28.txt)
 - [Alinhamento após manutenção — 11/10/2026](docs/MAINTENANCE-2026-10-11.md)
 
 ## Validação local

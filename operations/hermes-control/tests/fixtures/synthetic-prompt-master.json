@@ -1,0 +1,69 @@
+{
+  "schema_version": "megabrain.prompt-master.v1",
+  "task_id": "MB-HERMES-E2E-20261028-004",
+  "project_id": "reels",
+  "objective": "Prove actual Hermes Central -> Reels -> Developer then independent Validator on normalize_ids synthetic task",
+  "scope": {
+    "workspace": "/srv/vps-mcp/workspace/megabrain-restructure/operations/hermes-migration/synthetic-workspace",
+    "data": "synthetic-only"
+  },
+  "allowed_operations": [
+    "synthetic_implementation",
+    "offline_tests",
+    "hermes_delegation",
+    "memory_handoff"
+  ],
+  "prohibited_operations": [
+    "real_media",
+    "google",
+    "paid_api",
+    "deploy",
+    "iam",
+    "background_services"
+  ],
+  "context_refs": [
+    "current-state.json revision28",
+    "Validated contract /contract/prompt-master.json; real lineage /contract/run-context.json",
+    "Corrected explicit named profile routing; keep existing command-approval security unchanged",
+    "Developer: write via printf and shell redirection; execute locked test file. Validator: run locked verify_read_only.py probe. No interpreter -c/-e or heredoc."
+  ],
+  "acceptance_criteria": [
+    "Real delegated sessions in correct profiles",
+    "Implement normalize_ids; four locked deterministic tests pass",
+    "Separate Validator re-runs tests and proves read-only workspace",
+    "Consolidate evidence; finalize ai-memory before runtime stop"
+  ],
+  "resource_policy": {
+    "model": "gpt-6-luna",
+    "provider": "openai-codex",
+    "max_model_calls": 16,
+    "deadline_seconds": 240,
+    "max_spawn_depth": 2,
+    "concurrency": 1,
+    "paid_fallback": false
+  },
+  "approval_requirements": [
+    "User architectural correction authorizes synthetic migration test; no external authority is granted"
+  ],
+  "output_contract": {
+    "format": "structured receipt and real session transcripts",
+    "handoff": [
+      "task",
+      "project",
+      "profiles",
+      "changes",
+      "tests",
+      "evidence",
+      "status",
+      "pending",
+      "next_action"
+    ]
+  },
+  "evidence_requirements": [
+    "Real session/subagent lineage",
+    "Actual tool outputs",
+    "Finalization acknowledgements"
+  ],
+  "expires_at": "2026-10-28T23:57:05.024117+00:00",
+  "authorization_ref": "fb97f74ca49dd860dcaed12899a5e87399f3cc85e0df79c67d2113a3f1aac1e0"
+}

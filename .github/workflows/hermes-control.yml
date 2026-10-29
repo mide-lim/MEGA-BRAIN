@@ -1,0 +1,30 @@
+{
+  "name": "Hermes control CI",
+  "on": ["push", "pull_request"],
+  "permissions": {"contents": "read"},
+  "jobs": {
+    "offline-contracts": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 5,
+      "env": {"PYTHONDONTWRITEBYTECODE": "1"},
+      "steps": [
+        {
+          "uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "with": {"persist-credentials": false}
+        },
+        {
+          "name": "Validate workflow syntax (JSON subset of YAML)",
+          "run": "python3 -m json.tool .github/workflows/hermes-control.yml"
+        },
+        {
+          "name": "Check portable contracts and cutover preservation",
+          "run": "python3 scripts/check_links.py\npython3 scripts/check_task_packets.py\npython3 scripts/check_hermes_cutover.py"
+        },
+        {
+          "name": "Test portable controller without models or services",
+          "run": "python3 -m unittest discover -s operations/hermes-control/tests -p 'test_*.py' -v"
+        }
+      ]
+    }
+  }
+}

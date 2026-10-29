@@ -1,0 +1,21 @@
+{
+  "schema_version": "megabrain.prompt-master.v1",
+  "task_id": "MB-TEMPLATE-OFFLINE-00001",
+  "project_id": "reels",
+  "objective": "Replace this template with an operator-reviewed finite offline objective",
+  "scope": {"workspace": "OPERATOR_REVIEW_REQUIRED", "data": "offline-code-only"},
+  "allowed_operations": ["offline_repository_maintenance", "offline_tests", "hermes_delegation", "memory_handoff"],
+  "prohibited_operations": ["real_media", "google", "paid_api", "deploy", "iam", "background_services"],
+  "context_refs": ["Select bounded context and immutable baseline/worktree pins before admission"],
+  "acceptance_criteria": ["Replace with observable acceptance tests"],
+  "resource_policy": {
+    "model": {"central": "gpt-6-luna", "reels": "gpt-6.1-sol", "developer": "gpt-6.1-sol", "validator": "gpt-6.1-sol"},
+    "provider": "openai-codex", "max_model_calls": 32, "deadline_seconds": 600,
+    "max_spawn_depth": 2, "concurrency": 1, "paid_fallback": false
+  },
+  "approval_requirements": ["Operator must replace scope, objective, evidence, expiry and authorization; template grants nothing"],
+  "output_contract": {"format": "structured receipt and real session transcripts", "handoff": ["task", "project", "profiles", "changes", "tests", "evidence", "status", "pending", "next_action"]},
+  "evidence_requirements": ["Actual session lineage", "Actual tool output", "Finalization acknowledgements"],
+  "expires_at": "2000-01-01T00:00:00+00:00",
+  "authorization_ref": "TEMPLATE-NOT-AUTHORIZED"
+}

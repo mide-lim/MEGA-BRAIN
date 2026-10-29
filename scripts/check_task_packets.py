@@ -30,7 +30,43 @@ def text_list(value, name):
         raise ValueError(name + " must contain non-empty strings")
 
 
+PROMPT_FIELDS = {'schema_version','task_id','project_id','objective','scope','allowed_operations',
+    'prohibited_operations','context_refs','acceptance_criteria','resource_policy','approval_requirements',
+    'output_contract','evidence_requirements','expires_at','authorization_ref'}
+
+def validate_prompt(packet):
+    import datetime as dt
+    if set(packet) != PROMPT_FIELDS:raise ValueError('Prompt Master fields rejected')
+    if not re.fullmatch(r'MB-[A-Z0-9-]{8,90}',str(packet['task_id'])):raise ValueError('Independent MB id required')
+    for key in ('project_id','objective','authorization_ref'):
+        if not isinstance(packet[key],str) or not packet[key].strip():raise ValueError('Empty '+key)
+    for key in ('allowed_operations','prohibited_operations','context_refs','acceptance_criteria',
+                'approval_requirements','evidence_requirements'):text_list(packet[key],key)
+    scope=packet['scope']
+    if not isinstance(scope,dict) or set(scope)!={'workspace','data'} or any(not isinstance(v,str) or not v.strip() for v in scope.values()):
+        raise ValueError('Explicit scope required')
+    resource=packet['resource_policy']
+    fields={'model','provider','max_model_calls','deadline_seconds','max_spawn_depth','concurrency','paid_fallback'}
+    if not isinstance(resource,dict) or set(resource)!=fields:raise ValueError('Resource fields rejected')
+    model=resource['model']
+    if not ((isinstance(model,str) and model.strip()) or (isinstance(model,dict) and set(model)=={'central','reels','developer','validator'} and all(isinstance(v,str) and v.strip() for v in model.values()))):
+        raise ValueError('Explicit model required')
+    if resource['provider']!='openai-codex' or resource['paid_fallback'] is not False:raise ValueError('Subscription only')
+    if type(resource['max_model_calls']) is not int or resource['max_model_calls'] not in (16,32,48):
+        raise ValueError('Invalid max_model_calls')
+    for key,limit in [('deadline_seconds',600),('max_spawn_depth',2),('concurrency',1)]:
+        if type(resource[key]) is not int or not 1<=resource[key]<=limit:raise ValueError('Invalid '+key)
+    output=packet['output_contract']
+    if not isinstance(output,dict) or set(output)!={'format','handoff'} or not isinstance(output['format'],str) or not output['format'].strip():raise ValueError('Output contract required')
+    text_list(output['handoff'],'handoff')
+    expiry=dt.datetime.fromisoformat(packet['expires_at'])
+    if expiry.tzinfo is None:raise ValueError('Timezone required')
+    # Structural repository check, not runtime admission/authorization or an expiry grant.
+    return packet
+
 def validate(packet, root):
+    if isinstance(packet,dict) and packet.get('schema_version')=='megabrain.prompt-master.v1':
+        return validate_prompt(packet)
     if not isinstance(packet, dict) or packet.get("schema_version") != 1:
         raise ValueError("schema_version must be 1")
     if not re.fullmatch(r"MEG-[1-9][0-9]*", str(packet.get("id", ""))):
@@ -118,15 +154,19 @@ def main():
     root = args.root.resolve()
     if args.diff_base and not args.packet:
         parser.error("--diff-base requires --packet")
-    paths = [args.packet.resolve()] if args.packet else sorted((root / "tasks").glob("*.json"))
+    paths = [args.packet.resolve()] if args.packet else sorted(
+        list((root / "tasks").glob("*.json")) + list((root / "contracts").glob("*.json")))
     if not paths:
         print("No task packets found", file=sys.stderr)
         return 1
     try:
         for path in paths:
             packet = validate(json.loads(path.read_text()), root)
-            print("Valid packet:", packet["id"])
+            print("Valid Prompt Master:" if 'task_id' in packet else "Valid packet:",
+                  packet.get('task_id', packet.get('id')))
             if args.diff_base:
+                if 'task_id' in packet:
+                    raise ValueError('Legacy --diff-base is not a Prompt Master scope authorization')
                 print("Changed paths within scope:", audit_diff(packet, root, args.diff_base, args.diff_head))
     except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError) as error:
         print("Task packet rejected:", str(error), file=sys.stderr)

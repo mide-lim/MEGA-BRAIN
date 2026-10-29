@@ -39,7 +39,7 @@ A future upstream release requires a new audited overlay and tests.
 
 ## Validation
 
-[CI](../../.github/workflows/paperclip-control.yml) builds the candidate image on
+[CI](history/paperclip-control.workflow.yml) builds the candidate image on
 GitHub, checks compiled JavaScript syntax and exercises the actual image's
 scheduling, outcome classification and recovery functions with synthetic inputs.
 The boundary harness uses stubbed dependencies. A second harness boots the

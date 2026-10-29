@@ -5,6 +5,7 @@ import datetime as dt
 import http.client
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 import relay
@@ -54,13 +55,14 @@ def sdk_bearer(sdk, account, config, runner=subprocess.run):
     return token
 
 
-def post_once(target, bearer):
+def post_once(target, bearer, quota_project):
     """Direct TLS only: no proxy, redirect, retry, refresh or fallback implementation."""
     connection = http.client.HTTPSConnection(HOST, timeout=20)
     deadline = time.monotonic()+20
     try:
         connection.request('POST', '/v1/projects/-/serviceAccounts/'+target+':generateAccessToken',
                            body=BODY, headers={'Authorization': 'Bearer '+bearer,
+                                               'x-goog-user-project': quota_project,
                                                'Content-Type': 'application/json', 'Content-Length': str(len(BODY))})
         response = connection.getresponse()
         remaining = deadline-time.monotonic()
@@ -74,6 +76,39 @@ def post_once(target, bearer):
         return response.status, raw
     finally:
         connection.close()
+
+
+def failure_metadata(status, raw):
+    """Allowlist bounded HTTP status and Google ErrorInfo identifiers, never messages."""
+    safe = {'status': status} if type(status) is int and 100 <= status <= 599 else {}
+    try:
+        error = relay.strict(raw).get('error')
+    except (ValueError, TypeError, RecursionError):
+        return safe
+    if not isinstance(error, dict) or not isinstance(error.get('details'), list):
+        return safe
+    for detail in error['details']:
+        if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.ErrorInfo' or detail.get('domain') != 'googleapis.com':
+            continue
+        fields = {'reason': detail.get('reason')}
+        metadata = detail.get('metadata')
+        if isinstance(metadata, dict):
+            fields.update(service=metadata.get('service'), consumer=metadata.get('consumer'))
+        for key, pattern in (
+                ('reason', r'[A-Z][A-Z0-9_]{0,63}'),
+                ('service', r'[a-z][a-z0-9-]{0,62}\.googleapis\.com'),
+                ('consumer', r'projects/(?:[0-9]{1,20}|[a-z][a-z0-9-]{4,28}[a-z0-9])')):
+            value = fields.get(key)
+            if isinstance(value, str) and re.fullmatch(pattern, value):
+                safe[key] = value
+        break
+    return safe
+
+
+class HTTPRejected(relay.Rejected):
+    def __init__(self, status, raw):
+        self.metadata = failure_metadata(status, raw)
+        super().__init__('transport rejected: '+relay.canonical(self.metadata).decode('ascii'))
 
 
 def encrypt(request, value, pwsh, config, runner=subprocess.run):
@@ -106,10 +141,10 @@ def mint(request_raw, request_sha256, authority, *, sdk, account, config, pwsh,
     r = relay.strict(request_raw)
     relay.validate_request(r, authority, clock())
     bearer = sdk_bearer(sdk, account, config, runner)
-    status, raw = http_post(r['target_service_account'], bearer)  # Exactly one call.
+    status, raw = http_post(r['target_service_account'], bearer, r['quota_project'])  # Exactly one call.
     del bearer
     if status != 200:
-        relay.deny()
+        raise HTTPRejected(status, raw)
     response = relay.strict(raw)
     if set(response) != {'accessToken', 'expireTime'}:
         relay.deny()

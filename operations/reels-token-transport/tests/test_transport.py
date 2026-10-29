@@ -294,7 +294,7 @@ class TransportTests(unittest.TestCase):
             value = relay.strict(kw['input'])
             return types.SimpleNamespace(returncode=0, stdout=relay.canonical(encrypted(value['request'], value['payload'])), stderr=b'')
         posts = []
-        def post(target, bearer):
+        def post(target, bearer, quota_project):
             posts.append((target, bearer))
             return status, response if response is not None else relay.canonical({'accessToken': DUMMY, 'expireTime': self.value['expires_at']})
         with mock.patch.object(controller, 'executable', side_effect=lambda p: str(p)):
@@ -370,13 +370,96 @@ class TransportTests(unittest.TestCase):
             with self.subTest(status=status, response=response), self.assertRaises(ValueError):
                 self.fake_mint(response, status)
 
+    def test_authorized_quota_project_actual_post_capture_no_retry(self):
+        raw = relay.canonical(self.r)
+        for status in (200, 403, 302, 503, None):
+            with self.subTest(status=status):
+                connection = mock.Mock()
+                response = connection.getresponse.return_value
+                response.status = status
+                response.read.return_value = relay.canonical(
+                    {'accessToken': DUMMY, 'expireTime': self.value['expires_at']})
+                if status is None:
+                    connection.request.side_effect = TimeoutError('synthetic timeout')
+                with mock.patch.object(controller.http.client, 'HTTPSConnection', return_value=connection) as constructor, \
+                        mock.patch.object(controller, 'sdk_bearer', return_value='SYNTHETIC-OWNER') as sdk, \
+                        mock.patch.object(controller, 'encrypt', return_value=self.e) as encrypt, \
+                        mock.patch.dict(os.environ, {'GOOGLE_CLOUD_QUOTA_PROJECT': 'untrusted-project',
+                                                     'CLOUDSDK_BILLING_QUOTA_PROJECT': 'untrusted-project'}):
+                    def mint():
+                        return controller.mint(raw, relay.digest(raw), self.a,
+                                               sdk='/synthetic/sdk', account='synthetic@example.test',
+                                               config=str(self.base), pwsh='/synthetic/pwsh',
+                                               http_post=controller.post_once, clock=lambda: NOW)
+                    if status == 200:
+                        self.assertEqual(mint()[0], self.e)
+                        encrypt.assert_called_once()
+                    else:
+                        with self.assertRaises(TimeoutError if status is None else controller.HTTPRejected):
+                            mint()
+                        encrypt.assert_not_called()
+                    sdk.assert_called_once()
+                constructor.assert_called_once_with('iamcredentials.googleapis.com', timeout=20)
+                connection.request.assert_called_once_with(
+                    'POST', '/v1/projects/-/serviceAccounts/'+self.a['target_service_account']+':generateAccessToken',
+                    body=b'{"lifetime":"900s","scope":["https://www.googleapis.com/auth/cloud-platform"]}',
+                    headers={'Authorization': 'Bearer SYNTHETIC-OWNER',
+                             'x-goog-user-project': self.a['quota_project'],
+                             'Content-Type': 'application/json', 'Content-Length': str(len(controller.BODY))})
+                connection.close.assert_called_once()
+                if status is not None:
+                    connection.getresponse.assert_called_once_with()
+                    response.read.assert_called_once_with(relay.MAX+1)
+        untrusted = relay.canonical(dict(self.r, quota_project='untrusted-project'))
+        with mock.patch.object(controller, 'sdk_bearer') as sdk, \
+                mock.patch.object(controller.http.client, 'HTTPSConnection') as constructor:
+            with self.assertRaises(relay.Rejected):
+                controller.mint(untrusted, relay.digest(untrusted), self.a,
+                                sdk='/synthetic/sdk', account='synthetic@example.test',
+                                config=str(self.base), pwsh='/synthetic/pwsh', clock=lambda: NOW)
+            sdk.assert_not_called()
+            constructor.assert_not_called()
+
+    def test_http403_metadata_allowlist_and_redaction(self):
+        detail = {'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'domain': 'googleapis.com',
+                  'reason': 'SERVICE_DISABLED', 'metadata': {'service': 'iamcredentials.googleapis.com',
+                  'consumer': 'projects/123456789', 'accessToken': DUMMY, 'headers': {'Authorization': DUMMY}}}
+        error = {'error': {'code': 403, 'message': DUMMY, 'body': DUMMY, 'headers': DUMMY,
+                          'details': [detail]}, 'accessToken': DUMMY}
+        expected = {'status': 403, 'reason': 'SERVICE_DISABLED',
+                    'service': 'iamcredentials.googleapis.com', 'consumer': 'projects/123456789'}
+        with self.assertRaises(controller.HTTPRejected) as caught:
+            self.fake_mint(relay.canonical(error), 403)
+        self.assertEqual(caught.exception.metadata, expected)
+        self.assertEqual(caught.exception.args, ('transport rejected: '+relay.canonical(expected).decode(),))
+        self.assertNotIn(DUMMY, str(caught.exception)+repr(vars(caught.exception)))
+        for key in ('reason', 'service', 'consumer'):
+            for value in (None, 403, {}, [], DUMMY, 'bad\nvalue', 'ＡＢＣ', 'x'*256):
+                with self.subTest(key=key, value=value):
+                    bad = copy.deepcopy(error)
+                    fields = bad['error']['details'][0]
+                    (fields if key == 'reason' else fields['metadata'])[key] = value
+                    self.assertEqual(controller.failure_metadata(403, relay.canonical(bad)),
+                                     {k: v for k, v in expected.items() if k != key})
+        for raw in (b'{', b'[]', b'{"error":{},"error":{}}', b'x'*(relay.MAX+1),
+                    relay.canonical({'error': {'details': [None, {'reason': 'SERVICE_DISABLED'}]}}),
+                    relay.canonical({'error': {'details': 'not-a-list'}})):
+            with self.subTest(raw=raw[:64]):
+                self.assertEqual(controller.failure_metadata(403, raw), {'status': 403})
+        for field in ('@type', 'domain'):
+            bad = copy.deepcopy(error)
+            bad['error']['details'][0][field] = 'untrusted'
+            self.assertEqual(controller.failure_metadata(403, relay.canonical(bad)), {'status': 403})
+        for status in (True, '403', 99, 600):
+            self.assertEqual(controller.failure_metadata(status, b'{}'), {})
+
     def test_real_http_implementation_fixed_endpoint_one_post(self):
         connection = mock.Mock()
         response = connection.getresponse.return_value
         response.status = 503
         response.read.return_value = b'{}'
         with mock.patch.object(controller.http.client, 'HTTPSConnection', return_value=connection) as constructor:
-            self.assertEqual(controller.post_once(self.a['target_service_account'], 'SYNTHETIC'), (503, b'{}'))
+            self.assertEqual(controller.post_once(self.a['target_service_account'], 'SYNTHETIC', self.a['quota_project']), (503, b'{}'))
         constructor.assert_called_once_with('iamcredentials.googleapis.com', timeout=20)
         connection.request.assert_called_once()
         args, kw = connection.request.call_args

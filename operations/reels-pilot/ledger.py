@@ -6,6 +6,7 @@ A received raw response is retained before parsing/persistence, enabling recover
 without asking the provider again.
 """
 from contextlib import contextmanager
+import base64
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -38,8 +39,28 @@ def _digest(value):
     return value
 
 
+class _AttemptDB:
+    """Fixed SQL table namespace, not a source identity substitution.
+
+    Only successor operations use these additive tables. The global pilot_slot
+    deliberately remains shared with the untouched legacy tables.
+    """
+    def __init__(self, connection):
+        self.base = connection
+
+    def execute(self, sql, parameters=()):
+        sql = re.sub(r"\b(attempts|events|persistence_recovery_runs)\b",
+                     lambda m: "second_" + m.group(0), sql)
+        return self.base.execute(sql, parameters)
+
+
 class Ledger:
-    def __init__(self, path, *, create=False, expected_identity=None):
+    def __init__(self, path, *, create=False, expected_identity=None, attempt_grant_id=None):
+        if attempt_grant_id is not None and not re.fullmatch(r"pilot-[a-z0-9-]{1,64}", attempt_grant_id):
+            raise LedgerDenied("exact attempt grant selector required")
+        if create and attempt_grant_id is not None:
+            raise LedgerDenied("initialize legacy ledger only")
+        self.attempt_grant_id = attempt_grant_id
         self.path = Path(path)
         if not self.path.is_absolute() or ".." in self.path.parts:
             raise LedgerDenied("absolute fixed ledger path required")
@@ -145,7 +166,7 @@ class Ledger:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("BEGIN IMMEDIATE")
-            yield db
+            yield _AttemptDB(db) if self.attempt_grant_id else db
             db.commit()
         except BaseException:
             db.rollback()
@@ -158,13 +179,72 @@ class Ledger:
         db.execute("INSERT INTO events(source_sha256,event,at,details) VALUES(?,?,?,?)",
                    (digest, event, _now(), canonical(details or {}).decode()))
 
-    @staticmethod
-    def _record(db, digest):
+    def _record(self, db, digest):
+        if self.attempt_grant_id and not db.base.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='second_attempts'").fetchone():
+            raise LedgerDenied("reservation required")
         row = db.execute("SELECT * FROM attempts WHERE source_sha256=?",
                          (_digest(digest),)).fetchone()
         if row is None:
             raise LedgerDenied("reservation required")
+        if self.attempt_grant_id and row["grant_id"] != self.attempt_grant_id:
+            raise LedgerDenied("selected attempt differs; no sibling or third attempt")
         return row
+
+    def select(self, grant_id=None):
+        return Ledger(self.path, expected_identity=self._file_identity,
+                      attempt_grant_id=grant_id)
+
+    def _admit_successor(self, db, grant, run_id):
+        """Same transaction as reservation; no legacy row/event/recovery mutation."""
+        base = db.base
+        proof = grant.get("successor")
+        if not proof or grant["grant_id"] != self.attempt_grant_id:
+            raise LedgerDenied("signed explicit successor and exact selector required")
+        parent = base.execute("SELECT * FROM attempts WHERE source_sha256=?",
+                              (grant["bindings"]["media"]["sha256"],)).fetchone()
+        if parent is None or parent["state"] != "PERSISTED" or parent["calls"] != 1:
+            raise LedgerDenied("original persisted known failure required")
+        old = json.loads(parent["grant_json"])
+        raw = parent["response"]
+        if (not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != parent["response_sha256"] or
+                proof["parent_grant_id"] != parent["grant_id"] or
+                proof["parent_run_id"] != parent["run_id"] or
+                proof["parent_response_sha256"] != parent["response_sha256"] or
+                "successor" in old or run_id == parent["run_id"] or
+                grant["grant_id"] == parent["grant_id"] or
+                proof["approval_id"] != grant["authority"]["approval_id"] or
+                grant["authority"]["approval_id"] == old["authority"]["approval_id"] or
+                grant["bindings"]["media"] != old["bindings"]["media"] or
+                grant["bindings"]["target"] != old["bindings"]["target"]):
+            raise LedgerDenied("successor parent, identity or distinct approval differs")
+        try:
+            capture = json.loads(raw)
+            body = base64.b64decode(capture["body_base64"], validate=True)
+            error = json.loads(body)
+            if (type(capture["http_status"]) is not int or capture["http_status"] != 400 or
+                    capture["truncated"] is not False or not body or
+                    error["error"]["code"] != 400 or
+                    json.loads(parent["refs_json"])["analysis_state"] != "failed"):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise LedgerDenied("integrity checked complete known HTTP400 required") from None
+        if grant["limits"]["currency"] != "USD" or __import__("decimal").Decimal(grant["limits"]["gross_budget"]) != 3:
+            raise LedgerDenied("incremental USD3 required")
+        # Clone schema definitions only, never original data. All foreign keys in
+        # the successor namespace refer to successor rows; pilot_slot stays global.
+        for name in ("attempts", "events", "persistence_recovery_runs"):
+            schema = base.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()[0]
+            schema = re.sub(r"\b(attempts|events|persistence_recovery_runs)\b",
+                            lambda m: "second_" + m.group(0), schema)
+            schema = schema.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1)
+            base.execute(schema)
+        if base.execute("SELECT 1 FROM second_attempts").fetchone():
+            raise LedgerDenied("only one successor; no third or sibling attempt")
+        for row in base.execute("SELECT grant_id,run_id,grant_json FROM attempts"):
+            if (row["grant_id"] == grant["grant_id"] or row["run_id"] == run_id or
+                    json.loads(row["grant_json"])["authority"]["approval_id"] == grant["authority"]["approval_id"]):
+                raise LedgerDenied("grant, run or approval already consumed")
 
     def reserve(self, checked, *, run_id=None):
         if not isinstance(checked, VerifiedGrant):
@@ -181,6 +261,10 @@ class Ledger:
             with self._transaction() as db:
                 if db.execute("SELECT 1 FROM pilot_slot").fetchone():
                     raise LedgerDenied("another pilot attempt remains reserved or uncertain")
+                if self.attempt_grant_id:
+                    self._admit_successor(db, grant, run_id)
+                elif "successor" in grant:
+                    raise LedgerDenied("successor requires explicit attempt selector")
                 db.execute("""
                     INSERT INTO attempts(
                         source_sha256,grant_id,run_id,request_sha256,model,project,

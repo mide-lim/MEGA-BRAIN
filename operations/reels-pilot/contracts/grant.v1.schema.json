@@ -19,6 +19,18 @@
     "manifest_sha256"
   ],
   "properties": {
+    "successor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "parent_grant_id", "parent_run_id", "parent_response_sha256", "approval_id"],
+      "properties": {
+        "decision": {"const": "AUTHORIZE_ONE_SUCCESSOR_AFTER_KNOWN_HTTP400"},
+        "parent_grant_id": {"type": "string", "pattern": "^pilot-[a-z0-9-]{1,64}$"},
+        "parent_run_id": {"type": "string", "format": "uuid"},
+        "parent_response_sha256": {"$ref": "#/$defs/sha256"},
+        "approval_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$"}
+      }
+    },
     "contract_version": {
       "const": "1.0"
     },

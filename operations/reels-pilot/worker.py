@@ -25,6 +25,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from storage import FileStore, confined, read_bytes
 from cloud_adapter import endpoint, Response, GoogleOfficialTokenSource
 import provider
+import governance
 import approval
 import api_token
 from ledger import Ledger, LedgerDenied
@@ -64,7 +65,7 @@ def root_binding(path):
 
 def version_pins():
     names = [
-        "reels-pilot/worker.py", "reels-pilot/provider.py", "reels-pilot/approval.py",
+        "reels-pilot/worker.py", "reels-pilot/recurrence.py", "reels-pilot/provider.py", "reels-pilot/governance.py", "reels-pilot/approval.py",
         "reels-pilot/ledger.py", "reels-pilot/api_token.py", "reels-pilot/contracts/grant.v1.schema.json",
         "reels-pilot/contracts/analysis.pilot.v1.schema.json",
         "reels-analysis-live/worker.py", "reels-analysis-live/common.py",
@@ -155,7 +156,7 @@ def observed_bindings(policy, task):
 def check_manifest(value):
     if not isinstance(value, dict) or set(value) != {"manifest_version", "task", "request_sha256"}:
         raise ContractError("run manifest shape")
-    if value["manifest_version"] != "reels-pilot-run.v1" or not _DIGEST.fullmatch(str(value["request_sha256"])):
+    if value["manifest_version"] not in ("reels-pilot-run.v1", "reels-pilot-run.v2") or not _DIGEST.fullmatch(str(value["request_sha256"])):
         raise ContractError("run manifest version/request hash")
     legacy.check_task(value["task"])
     return value
@@ -190,15 +191,19 @@ class Pipeline:
                                expected_identity={"device": int(binding["filesystem_id"]),
                                                   "inode": int(binding["object_id"])})
 
-    def _verify(self, manifest, envelope, now):
+    def _verify(self, manifest, envelope, now, *, recovery_record=None):
         task = manifest["task"]
+        bindings = observed_bindings(self.policy, task)
+        if recovery_record is not None:
+            # Historical code/auth pins are evidence, not permission for new IO.
+            bindings["artifacts"] = recovery_record["grant"]["bindings"]["artifacts"]
         verified = approval.verify_grant(
             envelope, trusted_public_key=Path(self.policy["public_key"]),
-            observed_bindings=observed_bindings(self.policy, task), now=now,
+            observed_bindings=bindings, now=now,
             gross_ceiling=self.policy["gross_ceiling"], currency=self.policy["currency"],
             request_sha256=manifest["request_sha256"],
             manifest_sha256=sha(approval.canonical(manifest)))
-        if ("authentication" in self.policy and
+        if (recovery_record is None and "authentication" in self.policy and
                 self.policy["authentication"]["grant_reference"] != verified.grant_id):
             raise approval.ApprovalDenied("authentication grant reference differs")
         return verified
@@ -229,6 +234,7 @@ class Pipeline:
         if not isinstance(executor_id, str) or not executor_id.strip() or len(executor_id) > 200:
             raise ContractError("explicit bounded executor identity required")
         validate_policy(self.policy, real=not self.synthetic)
+        self._select_attempt(envelope)
         digest = manifest["task"]["source"]["source_video_sha256"]
         try:
             self.ledger.get(digest)
@@ -273,17 +279,24 @@ class Pipeline:
         """Persistence-only recovery. This method never reads source or calls auth/provider."""
         check_manifest(manifest)
         validate_policy(self.policy, real=not self.synthetic)
+        self._select_attempt(envelope)
         digest = manifest["task"]["source"]["source_video_sha256"]
         record = self.ledger.get(digest)
         if record is None:
             raise ContractError("no durable attempt to recover")
         stamp = dt.datetime.fromisoformat(record["reserved_at"].replace("Z", "+00:00"))
-        self._verify(manifest, envelope, stamp)
+        self._verify(manifest, envelope, stamp, recovery_record=record)
+        if record["grant"] != envelope["grant"]:
+            raise ContractError("recovery requires exact durable grant")
         if record["request_sha256"] != manifest["request_sha256"] or record["grant_id"] != envelope["grant"]["grant_id"]:
             raise ContractError("recovery identity differs from durable record")
         if record["state"] in ("RESERVED", "UNKNOWN"):
             return {"state": record["state"], "source_sha256": digest, "retry_allowed": False}
         return self._persist(manifest, envelope, executor_id=executor_id)
+
+    def _select_attempt(self, envelope):
+        grant = envelope.get("grant", {})
+        self.ledger = self.ledger.select(grant.get("grant_id") if "successor" in grant else None)
 
     def _put_exact(self, relative, data):
         path = confined(self.store.root, relative)
@@ -316,13 +329,23 @@ class Pipeline:
         digest = task["source"]["source_video_sha256"]
         record = self.ledger.get(digest)
         capture = parse_json(self.ledger.recover_response(digest))
+        if record["state"] == "PERSISTED":
+            refs = record["refs"]
+            prefix = refs["artifact_prefix"]
+            self.store.verify(prefix)
+            if sha(self.store.get(prefix + "/manifest.json")) != refs["manifest_sha256"]:
+                raise ContractError("durable persistence references differ")
+            return {"state": "PERSISTED", "analysis_state": refs["analysis_state"],
+                    "artifact_prefix": prefix, "source_sha256": digest, "retry_allowed": False}
         raw = base64.b64decode(capture["body_base64"], validate=True)
+        separate = manifest["manifest_version"] == "reels-pilot-run.v2"
         response = Response(capture["http_status"], raw, capture["headers"], capture["truncated"])
         outer = payload = None
         error = None
         try:
             outer, payload = provider.parse_response(
-                response, duration=task["source"]["declared_duration_seconds"], synthetic=self.synthetic)
+                response, duration=task["source"]["declared_duration_seconds"], synthetic=self.synthetic,
+                governance_separate=separate)
             state = "needs_review"  # Draft taxonomy is deliberately not silently approved.
         except Exception:
             state = "uncertain" if response.truncated or response.status in (408, 429) or response.status >= 500 else "failed"
@@ -359,6 +382,11 @@ class Pipeline:
             files = {"analysis.v1.json": canonical(result) + b"\n",
                      "provenance.json": canonical(provenance) + b"\n", "raw-response.bin": raw,
                      "response-meta.json": canonical({k: v for k, v in capture.items() if k != "body_base64"}) + b"\n"}
+            if separate and payload is not None:
+                files["governance.v1.json"] = canonical(governance.evaluate(
+                    payload, task["source"]["declared_duration_seconds"])) + b"\n"
+                files["presentation.pt-BR.json"] = canonical(governance.build_presentation(
+                    payload, sha(canonical(payload)))) + b"\n"
             metadata = {"run_id": artifact_run_id, "analysis_state": state, "bundle_sha256": bundle}
             return prefix, files, metadata
         artifact_run_id = record["persistence_run_id"]

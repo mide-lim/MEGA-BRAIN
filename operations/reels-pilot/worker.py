@@ -26,6 +26,7 @@ from storage import FileStore, confined, read_bytes
 from cloud_adapter import endpoint, Response, GoogleOfficialTokenSource
 import provider
 import approval
+import api_token
 from ledger import Ledger, LedgerDenied
 
 _spec = importlib.util.spec_from_file_location("legacy_transaction", LIVE / "worker.py")
@@ -64,7 +65,7 @@ def root_binding(path):
 def version_pins():
     names = [
         "reels-pilot/worker.py", "reels-pilot/provider.py", "reels-pilot/approval.py",
-        "reels-pilot/ledger.py", "reels-pilot/contracts/grant.v1.schema.json",
+        "reels-pilot/ledger.py", "reels-pilot/api_token.py", "reels-pilot/contracts/grant.v1.schema.json",
         "reels-pilot/contracts/analysis.pilot.v1.schema.json",
         "reels-analysis-live/worker.py", "reels-analysis-live/common.py",
         "reels-analysis-live/storage.py", "reels-analysis-live/cloud_adapter.py",
@@ -89,7 +90,7 @@ def load_policy():
 
 
 def validate_policy(policy, *, real):
-    if not isinstance(policy, dict) or set(policy) != POLICY_KEYS:
+    if not isinstance(policy, dict) or set(policy) not in (POLICY_KEYS, POLICY_KEYS | {"authentication"}):
         raise ContractError("trusted policy shape")
     if policy["policy_version"] != POLICY_VERSION:
         raise ContractError("trusted policy version")
@@ -125,6 +126,8 @@ def validate_policy(policy, *, real):
         raise ContractError("installed code differs from root policy pins")
     if type(policy["input_state_revision"]) is not int or policy["input_state_revision"] < 20:
         raise ContractError("state revision")
+    if "authentication" in policy:
+        api_token.validate_descriptor(policy["authentication"], policy["target"])
 
 
 def observed_bindings(policy, task):
@@ -133,11 +136,13 @@ def observed_bindings(policy, task):
                          "location": target["location"], "api_version": "v1beta1"}:
         raise ContractError("task target differs from root policy")
     pins = policy["version_pins"]
+    worker_binding = ({"version_pins": pins, "authentication": policy["authentication"]}
+                      if "authentication" in policy else pins)
     return {"media": {"id": task["reel_id"], "sha256": task["source"]["source_video_sha256"],
                       "digest_verified": True},
             "target": copy.deepcopy(target),
             "artifacts": {
-                "worker": {"version": "reels-pilot.v1", "sha256": sha(canonical(pins))},
+                "worker": {"version": "reels-pilot.v1", "sha256": sha(canonical(worker_binding))},
                 "prompt": {"version": "stored-multimodal.v1",
                            "sha256": pins["reels-analysis-live/prompts/stored-multimodal.v1.txt"]},
                 "schema": {"version": "analysis.v1/stored_video.v1",
@@ -158,6 +163,8 @@ def check_manifest(value):
 
 def token_source(policy):
     target = policy["target"]
+    if "authentication" in policy:
+        return api_token.TemporaryTokenSource(policy["authentication"], target)
     return GoogleOfficialTokenSource(target["service_account"], target["project"], policy["adc_path"])
 
 
@@ -174,8 +181,9 @@ class Pipeline:
         else:
             if transport is not None or auth is not None:
                 raise ContractError("real transport/auth injection forbidden")
-            self.transport = provider.DirectTransport()
-            self.auth = token_source(policy).token
+            # Recovery must not construct authentication or provider clients.
+            self.transport = None
+            self.auth = None
         self.ledger = Ledger(policy["ledger_path"], expected_identity=policy["ledger_identity"])
         binding = policy["roots"]["result_root"]
         self.store = FileStore(binding["root_id"], hook=writer_hook,
@@ -184,12 +192,16 @@ class Pipeline:
 
     def _verify(self, manifest, envelope, now):
         task = manifest["task"]
-        return approval.verify_grant(
+        verified = approval.verify_grant(
             envelope, trusted_public_key=Path(self.policy["public_key"]),
             observed_bindings=observed_bindings(self.policy, task), now=now,
             gross_ceiling=self.policy["gross_ceiling"], currency=self.policy["currency"],
             request_sha256=manifest["request_sha256"],
             manifest_sha256=sha(approval.canonical(manifest)))
+        if ("authentication" in self.policy and
+                self.policy["authentication"]["grant_reference"] != verified.grant_id):
+            raise approval.ApprovalDenied("authentication grant reference differs")
+        return verified
 
     def _source(self, task):
         binding = self.policy["roots"]["media_root"]
@@ -217,9 +229,7 @@ class Pipeline:
         if not isinstance(executor_id, str) or not executor_id.strip() or len(executor_id) > 200:
             raise ContractError("explicit bounded executor identity required")
         validate_policy(self.policy, real=not self.synthetic)
-        now = dt.datetime.now(dt.timezone.utc)
-        verified = self._verify(manifest, envelope, now)  # Before any media read/probe.
-        digest = verified.source_sha256
+        digest = manifest["task"]["source"]["source_video_sha256"]
         try:
             self.ledger.get(digest)
         except LedgerDenied as exc:
@@ -227,6 +237,13 @@ class Pipeline:
                 raise
         else:
             return self.recover(manifest, envelope, executor_id=executor_id)
+        now = dt.datetime.now(dt.timezone.utc)
+        verified = self._verify(manifest, envelope, now)  # Before any media read/probe.
+        if not self.synthetic:
+            # NEW dispatch only: fail closed before media/reservation, but keep
+            # the one-use token byte read after the durable UNKNOWN transition.
+            self.auth = token_source(self.policy).token
+            self.transport = provider.DirectTransport()
         data, duration, metadata = self._source(manifest["task"])
         body = provider.request_bytes(manifest["task"], data)
         if sha(body) != manifest["request_sha256"]:

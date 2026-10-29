@@ -199,15 +199,31 @@ class Queue:
                     root = root / part
                     require(not root.is_symlink(), 'symlink in inventory root')
             require(root.is_dir() and not root.is_symlink(), 'history root missing')
-            for path in root.rglob('*'):
-                scanned += 1
-                require(scanned <= 20000, 'history scan bound; reconcile offline')
-                require(not path.is_symlink(), 'symlink in inventory')
-                require(not (root_name == 'result_root' and path.is_dir() and path.name == task['reel_id']),
-                        'existing result directory collision')
-                if path.is_file() and (path.name.startswith('analysis') or path.name.startswith('history')) and path.suffix == '.json':
-                    require(path.stat().st_size <= 1000000, 'history size')
-                    require(not collision(approval.load_json(path.read_bytes())), 'Windows/analysis history collision')
+            pending = [root]
+            while pending:
+                # Recheck the directory at open, not just its cached entry type.
+                # This is not an atomic snapshot of the changing inventory.
+                current = pending.pop()
+                directory = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    with os.scandir(directory) as entries:
+                        for entry in entries:
+                            scanned += 1
+                            require(scanned <= 20000, 'history scan bound; reconcile offline')
+                            require(not entry.is_symlink(), 'symlink in inventory')
+                            if entry.is_dir(follow_symlinks=False):
+                                require(not (root_name == 'result_root' and entry.name == task['reel_id']),
+                                        'existing result directory collision')
+                                pending.append(current / entry.name)
+                            elif entry.is_file(follow_symlinks=False) and entry.name.startswith(('analysis', 'history')) and entry.name.endswith('.json'):
+                                history = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+                                with os.fdopen(history, 'rb') as stream:
+                                    require(os.fstat(stream.fileno()).st_size <= 1000000, 'history size')
+                                    raw = stream.read(1000001)
+                                require(len(raw) <= 1000000, 'history size')
+                                require(not collision(approval.load_json(raw)), 'Windows/analysis history collision')
+                finally:
+                    os.close(directory)
 
     def _prior(self, db, member, *, current_grant=None):
         task = member['manifest']['task']; source = task['source']

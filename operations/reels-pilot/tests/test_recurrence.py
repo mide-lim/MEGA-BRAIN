@@ -2,8 +2,10 @@
 
 Root-owned synthetic receipts live under /opt; protected() is never patched.
 """
+from contextlib import nullcontext
 import copy
 import datetime as dt
+from itertools import repeat
 import json
 from pathlib import Path
 import sqlite3
@@ -421,6 +423,77 @@ class RecurrenceTests(unittest.TestCase):
         path.write_bytes(b'{}')
         with self.q.ledger._transaction() as db:
             with self.assertRaises(Exception): self.q._prior(db, member)
+
+    def test_31_nested_inventory_symlinks_fail_before_dispatch(self):
+        self.authorize()
+        outside = self.f.root/'outside-inventory'
+        outside.mkdir()
+        target = outside/'ordinary.txt'; target.write_bytes(b'not history')
+        for root in (self.f.root/'media/media/reels', self.f.root/'results'):
+            nested = root/'nested/deeper'; nested.mkdir(parents=True)
+            for name, destination in (('linked-directory', outside),
+                                      ('ordinary.txt', target),
+                                      ('dangling', outside/'missing')):
+                with self.subTest(root=root, name=name):
+                    link = nested/name; link.symlink_to(destination)
+                    fake = FakeProvider()
+                    try:
+                        with self.assertRaisesRegex(r.ContractError, 'symlink in inventory'):
+                            self.execute(fake)
+                        self.assertEqual(fake.calls, 0)
+                        self.assertEqual(self.q.status(self.batch['batch_id'])[0]['state'], 'AUTHORIZED')
+                    finally:
+                        link.unlink()
+
+    def test_32_shared_scan_bound_counts_directories_and_both_roots(self):
+        media = self.f.root/'media/media/reels'
+        nested = media/'bound'; nested.mkdir()
+        (nested/'ordinary.txt').write_bytes(b'fixture')
+        with r.os.scandir(media) as entries:
+            directory = next(entry for entry in entries if entry.name == 'bound')
+        with r.os.scandir(nested) as entries:
+            file = next(entries)
+        # Repeat real cached DirEntries, without creating 20,001 fixture files.
+        # One directory + 10,000 media files + 9,999 result files is allowed.
+        for result_count in (9999, 10000):
+            with self.subTest(result_count=result_count):
+                scans = [nullcontext(iter([directory])),
+                         nullcontext(repeat(file, 10000)),
+                         nullcontext(repeat(file, result_count))]
+                with mock.patch.object(r.os, 'scandir', side_effect=scans) as scan:
+                    if result_count == 9999:
+                        self.q._history(self.batch['members'][0])
+                    else:
+                        with self.assertRaisesRegex(r.ContractError, 'history scan bound'):
+                            self.q._history(self.batch['members'][0])
+                    self.assertEqual(scan.call_count, 3)
+
+    def test_33_nested_history_strict_json_size_and_identity(self):
+        nested = self.f.root/'results/nested/deeper'; nested.mkdir(parents=True)
+        path = nested/'analysis-import.json'
+        for raw, message in ((canonical({'prior': [self.f.task['source']['metadata_sha256']]}), 'history collision'),
+                             (b' ' * 1000001, 'history size')):
+            with self.subTest(message=message):
+                path.write_bytes(raw)
+                with self.assertRaisesRegex(r.ContractError, message):
+                    self.q._history(self.batch['members'][0])
+        for raw in (b'{"duplicate":1,"duplicate":2}', b'{"value":NaN}'):
+            path.write_bytes(raw)
+            with self.assertRaises(Exception): self.q._history(self.batch['members'][0])
+        path.write_bytes(canonical({'prior': ['unrelated']}))
+        self.q._history(self.batch['members'][0])
+
+    def test_34_directory_replaced_by_symlink_is_not_followed(self):
+        nested = self.f.root/'results/nested'; nested.mkdir()
+        outside = self.f.root/'outside'; outside.mkdir()
+        original_open = r.os.open
+        def replace_before_open(path, flags, *args, **kwargs):
+            if path == nested:
+                nested.rmdir()
+                nested.symlink_to(outside, target_is_directory=True)
+            return original_open(path, flags, *args, **kwargs)
+        with mock.patch.object(r.os, 'open', side_effect=replace_before_open):
+            with self.assertRaises(OSError): self.q._history(self.batch['members'][0])
 
 
 if __name__ == '__main__':

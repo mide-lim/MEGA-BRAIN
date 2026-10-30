@@ -33,7 +33,24 @@ SCHEMA_SQL = (
     PRIMARY KEY(batch_id,ordinal))''',
     '''CREATE TABLE IF NOT EXISTS recurrence_slot(
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-    batch_id TEXT NOT NULL, member_id TEXT NOT NULL)''')
+    batch_id TEXT NOT NULL, member_id TEXT NOT NULL)''',
+    '''CREATE TABLE IF NOT EXISTS recurrence_campaigns(
+    campaign_id TEXT PRIMARY KEY, manifest_json TEXT NOT NULL,
+    manifest_sha256 TEXT NOT NULL, parent_approval_id TEXT NOT NULL UNIQUE,
+    receipt_path TEXT, receipt_sha256 TEXT)''',
+    '''CREATE TABLE IF NOT EXISTS recurrence_campaign_slots(
+    campaign_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    batch_id TEXT NOT NULL UNIQUE, effective_sha256 TEXT,
+    PRIMARY KEY(campaign_id,ordinal))''',
+    '''CREATE TABLE IF NOT EXISTS recurrence_campaign_planned(
+    campaign_id TEXT NOT NULL, batch_id TEXT NOT NULL, member_id TEXT NOT NULL UNIQUE,
+    source_sha256 TEXT NOT NULL UNIQUE, metadata_sha256 TEXT NOT NULL UNIQUE,
+    PRIMARY KEY(campaign_id,member_id))''',
+    '''CREATE TABLE IF NOT EXISTS recurrence_campaign_allocations(
+    campaign_id TEXT NOT NULL, batch_id TEXT NOT NULL, member_id TEXT NOT NULL UNIQUE,
+    source_sha256 TEXT NOT NULL UNIQUE, grant_id TEXT NOT NULL UNIQUE,
+    gross_USD TEXT NOT NULL, calls INTEGER NOT NULL CHECK(calls=1),
+    PRIMARY KEY(campaign_id,member_id))''')
 STATES = ('PENDING', 'AUTHORIZED', 'RUNNING', 'PERSISTED', 'NEEDS_REVIEW',
           'ACCEPTED', 'FAILED', 'BLOCKED')
 BATCH_KEYS = {'batch_id', 'members', 'currency', 'max_calls', 'max_gross_USD',
@@ -166,6 +183,151 @@ class Queue:
             require(db.execute("SELECT 1 FROM sqlite_master WHERE name='recurrence_batches'").fetchone(),
                     'Root must bootstrap additive schema first')
 
+    def register_campaign(self, manifest):
+        """Register exactly five ordered slots; no paid authority is created.
+
+        manifest: campaign_id,parent_approval_id,groups,currency,max_calls,
+        max_gross_USD,wip,retries,fallback. Each group has planned (legacy
+        three-member batch), effective (exact ordered subset batch, or None),
+        blocked (remaining planned IDs). Root campaign approval attests this
+        entire split. Empty groups additionally need a fresh protected skip.json.
+        Only effective media enters prepare/admission; planned inventory stays
+        immutable, including blocked IDs/digests. API accepts no control roots.
+        """
+        require(isinstance(manifest, dict) and set(manifest) ==
+                {'campaign_id', 'parent_approval_id', 'groups', 'currency', 'max_calls',
+                 'max_gross_USD', 'wip', 'retries', 'fallback'}, 'campaign shape')
+        identifier(manifest['campaign_id']); identifier(manifest['parent_approval_id'])
+        require(manifest['currency'] == 'USD' and manifest['fallback'] is False, 'campaign USD/no fallback')
+        count(manifest['wip'], 1, 1); count(manifest['retries'], 0, 0)
+        count(manifest['max_calls'], 1, 15); money(manifest['max_gross_USD'], 45)
+        require(type(manifest['groups']) is list and len(manifest['groups']) == 5, 'exactly five slots')
+        seen = [set(), set(), set()]; batches = set()
+        for group in manifest['groups']:
+            require(set(group) == {'planned', 'effective', 'blocked'}, 'group shape')
+            planned = validate_batch(group['planned'], self.policy)
+            require(len(planned['members']) == 3, 'three immutable planned IDs')
+            bid = planned['batch_id']; require(bid not in batches, 'duplicate batch'); batches.add(bid)
+            for member in planned['members']:
+                task = member['manifest']['task']; src = task['source']
+                for i, value in enumerate((task['reel_id'], src['source_video_sha256'], src['metadata_sha256'])):
+                    require(value not in seen[i], 'campaign identity collision'); seen[i].add(value)
+            blocked = group['blocked']
+            ids = [m['manifest']['task']['reel_id'] for m in planned['members']]
+            require(type(blocked) is list and len(set(blocked)) == len(blocked) and
+                    all(x in ids for x in blocked), 'blocked subset')
+            eligible = [m for m in planned['members'] if m['manifest']['task']['reel_id'] not in blocked]
+            effective = group['effective']
+            if eligible:
+                validate_batch(effective, self.policy)
+                require(effective['batch_id'] == bid and effective['members'] == eligible, 'exact effective subset')
+            else:
+                require(effective is None, 'empty group has no active inventory')
+        encoded = canonical(manifest).decode(); digest = sha(encoded.encode())
+        with self.ledger._transaction() as db:
+            old = db.execute('SELECT manifest_json FROM recurrence_campaigns WHERE campaign_id=?',
+                             (manifest['campaign_id'],)).fetchone()
+            if old:
+                require(old[0] == encoded, 'campaign immutable'); return digest
+            for group in manifest['groups']:
+                require(not db.execute('SELECT 1 FROM recurrence_batches WHERE batch_id=?',
+                                       (group['planned']['batch_id'],)).fetchone(), 'register before prepare')
+            db.execute('INSERT INTO recurrence_campaigns(campaign_id,manifest_json,manifest_sha256,parent_approval_id) VALUES(?,?,?,?)',
+                       (manifest['campaign_id'], encoded, digest, manifest['parent_approval_id']))
+            for ordinal, group in enumerate(manifest['groups']):
+                db.execute('INSERT INTO recurrence_campaign_slots VALUES(?,?,?,?)',
+                           (manifest['campaign_id'], ordinal, group['planned']['batch_id'],
+                            sha(canonical(group['effective'])) if group['effective'] else None))
+                for member in group['planned']['members']:
+                    task = member['manifest']['task']; source = task['source']
+                    require(not db.execute('SELECT 1 FROM recurrence_members WHERE member_id=? OR source_sha256=? OR metadata_sha256=?',
+                                           (task['reel_id'], source['source_video_sha256'], source['metadata_sha256'])).fetchone(),
+                            'planned identity already queued')
+                    db.execute('INSERT INTO recurrence_campaign_planned VALUES(?,?,?,?,?)',
+                               (manifest['campaign_id'], group['planned']['batch_id'], task['reel_id'],
+                                source['source_video_sha256'], source['metadata_sha256']))
+        return digest
+
+    def _campaign(self, db, campaign_id, *, authority=True):
+        row = db.execute('SELECT * FROM recurrence_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone()
+        require(row is not None, 'unknown campaign')
+        manifest = approval.load_json(row['manifest_json'])
+        require(sha(canonical(manifest)) == row['manifest_sha256'] and
+                manifest['parent_approval_id'] == row['parent_approval_id'], 'campaign integrity')
+        slots = list(db.execute('SELECT * FROM recurrence_campaign_slots WHERE campaign_id=? ORDER BY ordinal', (campaign_id,)))
+        require(len(slots) == 5, 'five persisted slots')
+        for i, (slot, group) in enumerate(zip(slots, manifest['groups'])):
+            require(slot['ordinal'] == i and slot['batch_id'] == group['planned']['batch_id'] and
+                    slot['effective_sha256'] == (sha(canonical(group['effective'])) if group['effective'] else None),
+                    'campaign slot integrity')
+        if not authority:
+            return manifest, None
+        require(row['receipt_path'] is not None, 'campaign authorization required')
+        value, digest = protected(row['receipt_path'])
+        require(digest == row['receipt_sha256'], 'campaign receipt changed')
+        require(set(value) == {'decision', 'campaign_id', 'manifest_sha256', 'approval_id', 'approved_by',
+                              'approved_at', 'expires_at', 'rights_and_global_privacy_accepted', 'max_calls', 'max_gross_USD'},
+                'campaign approval shape')
+        require(value['decision'] == 'APPROVE_REELS_CAMPAIGN' and value['campaign_id'] == campaign_id and
+                value['manifest_sha256'] == row['manifest_sha256'] and value['approval_id'] == row['parent_approval_id'] and
+                isinstance(value['approved_by'], str) and 0 < len(value['approved_by']) <= 200 and
+                value['rights_and_global_privacy_accepted'] is True, 'campaign human/privacy authority')
+        require(approval._instant(value['approved_at']) <= now() < approval._instant(value['expires_at']), 'campaign expiry')
+        count(value['max_calls'], 1, 15)
+        require(value['max_calls'] == manifest['max_calls'] and
+                money(value['max_gross_USD'], 45) == money(manifest['max_gross_USD'], 45), 'exact campaign ceiling')
+        return manifest, value
+
+    def authorize_campaign(self, campaign_id):
+        # Fixed Root-owned control location, never supplied by task/environment.
+        path = CONTROL / identifier(campaign_id) / 'campaign-approval.json'
+        _, digest = protected(path)
+        with self.ledger._transaction() as db:
+            row = db.execute('SELECT * FROM recurrence_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone()
+            require(row is not None, 'unknown campaign')
+            require(row['receipt_path'] is None or (row['receipt_path'] == str(path) and row['receipt_sha256'] == digest),
+                    'campaign approval immutable')
+            db.execute('UPDATE recurrence_campaigns SET receipt_path=?,receipt_sha256=? WHERE campaign_id=?',
+                       (str(path), digest, campaign_id))
+            self._campaign(db, campaign_id)
+
+    def campaign_status(self, campaign_id):
+        """Reserved exposure is NOT billed cost or actual provider POST count."""
+        with self.ledger._transaction() as db:
+            manifest, _ = self._campaign(db, campaign_id, authority=False)
+            rows = [dict(r) for r in db.execute('SELECT * FROM recurrence_campaign_allocations WHERE campaign_id=?', (campaign_id,))]
+            return {'manifest': manifest, 'reservations': rows, 'reserved_calls': len(rows),
+                    'reserved_gross_USD': str(sum((money(r['gross_USD'], 3) for r in rows), 0))}
+
+    def _campaign_order(self, db, slot, manifest):
+        for group in manifest['groups'][:slot['ordinal']]:
+            bid = group['planned']['batch_id']
+            if group['effective'] is None:
+                value, _ = protected(CONTROL / manifest['campaign_id'] / (bid + '.skip.json'))
+                require(value == {'decision': 'SKIP_TECHNICALLY_BLOCKED_REELS_GROUP', 'campaign_id': manifest['campaign_id'],
+                                  'manifest_sha256': sha(canonical(manifest)), 'batch_id': bid,
+                                  'blocked': group['blocked']}, 'Root technical skip receipt')
+            else:
+                self._batch(db, bid)
+                require(not db.execute('SELECT 1 FROM recurrence_members WHERE batch_id=? AND (persisted!=1 OR cleanup!=1)',
+                                       (bid,)).fetchone(), 'prior group persistence/cleanup barrier')
+
+    def _reserve_campaign(self, db, batch, member, envelope):
+        slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
+        if slot is None:
+            return
+        manifest, _ = self._campaign(db, slot['campaign_id'])
+        require(slot['effective_sha256'] == sha(canonical(batch)), 'campaign batch changed')
+        self._campaign_order(db, slot, manifest)
+        rows = list(db.execute('SELECT gross_USD FROM recurrence_campaign_allocations WHERE campaign_id=?', (slot['campaign_id'],)))
+        gross = money(member['max_gross_USD'], 3)
+        require(len(rows) + 1 <= manifest['max_calls'] and
+                sum((money(r[0], 3) for r in rows), gross) <= money(manifest['max_gross_USD'], 45), 'campaign capacity exhausted')
+        task = member['manifest']['task']
+        db.execute('INSERT INTO recurrence_campaign_allocations VALUES(?,?,?,?,?,?,1)',
+                   (slot['campaign_id'], batch['batch_id'], task['reel_id'], task['source']['source_video_sha256'],
+                    envelope['grant']['grant_id'], str(gross)))
+
     def _batch(self, db, batch_id):
         row = db.execute('SELECT * FROM recurrence_batches WHERE batch_id=?', (batch_id,)).fetchone()
         require(row is not None, 'unknown batch')
@@ -274,6 +436,16 @@ class Queue:
 
     def prepare(self, batch):
         batch = validate_batch(batch, self.policy)
+        with self.ledger._transaction() as db:
+            slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
+            if slot:
+                self._campaign(db, slot['campaign_id'], authority=False)
+                require(slot['effective_sha256'] == sha(canonical(batch)), 'registered effective inventory only')
+            for member in batch['members']:
+                task = member['manifest']['task']; source = task['source']
+                planned = db.execute('SELECT batch_id FROM recurrence_campaign_planned WHERE member_id=? OR source_sha256=? OR metadata_sha256=?',
+                                     (task['reel_id'], source['source_video_sha256'], source['metadata_sha256'])).fetchall()
+                require(all(row[0] == batch['batch_id'] for row in planned), 'planned campaign identity cannot escape slot')
         self._history_receipt(batch)
         encoded = canonical(batch).decode(); digest = sha(encoded.encode())
         with self.ledger._transaction() as db:
@@ -325,17 +497,39 @@ class Queue:
         count(value['max_calls'], 1, 3)
         require(value['max_calls'] == batch['max_calls'] and
                 money(value['max_gross_USD'], 9) == money(batch['max_gross_USD'], 9), 'exact approval quota')
+        with self.ledger._transaction() as db:
+            self._campaign_child(db, batch, value)
         return value
+
+    def _campaign_child(self, db, batch, receipt):
+        slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
+        parent = db.execute('SELECT campaign_id FROM recurrence_campaigns WHERE parent_approval_id=?', (receipt['approval_id'],)).fetchone()
+        if slot is None:
+            require(parent is None, 'campaign parent cannot authorize unregistered/sixth batch')
+            return
+        manifest, authority = self._campaign(db, slot['campaign_id'])
+        require(slot['effective_sha256'] == sha(canonical(batch)), 'exact registered batch')
+        require(all(receipt[k] == authority[k] for k in
+                    ('approval_id', 'approved_by', 'approved_at', 'expires_at', 'rights_and_global_privacy_accepted')),
+                'child must derive same human parent decision')
 
     def authorize(self, batch_id, receipt):
         _, digest = protected(receipt)
+        with self.ledger._transaction() as db:
+            checked_row, checked_batch = self._batch(db, batch_id)
+        checked_row.update(receipt_path=str(receipt), receipt_sha256=digest)
+        self._receipt(checked_row, checked_batch)
         with self.ledger._transaction() as db:
             row, batch = self._batch(db, batch_id)
             require(not db.execute("SELECT 1 FROM recurrence_members WHERE batch_id=? AND state NOT IN ('PENDING','AUTHORIZED')", (batch_id,)).fetchone(), 'cannot replace running authority')
             if row['receipt_path']:
                 require(row['receipt_path'] == str(receipt) and row['receipt_sha256'] == digest, 'approval immutable')
             row.update(receipt_path=str(receipt), receipt_sha256=digest)
-            self._receipt(row, batch)
+            # Full legacy receipt was checked above. Recheck protected bytes and
+            # campaign parent inside the state-changing transaction as well.
+            value, fresh_digest = protected(receipt)
+            require(fresh_digest == digest, 'receipt changed during authorization')
+            self._campaign_child(db, batch, value)
             db.execute('UPDATE recurrence_batches SET receipt_path=?,receipt_sha256=? WHERE batch_id=?', (str(receipt), digest, batch_id))
             db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND state='PENDING'", (batch_id,))
 
@@ -382,6 +576,10 @@ class Queue:
     def next(self, batch_id):
         with self.ledger._transaction() as db:
             self._batch(db, batch_id)
+            slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch_id,)).fetchone()
+            if slot:
+                manifest, _ = self._campaign(db, slot['campaign_id'])
+                self._campaign_order(db, slot, manifest)
             if db.execute('SELECT 1 FROM recurrence_slot').fetchone() or db.execute('SELECT 1 FROM pilot_slot').fetchone():
                 return None
             row = db.execute('SELECT member_id,state FROM recurrence_members WHERE batch_id=? AND cleanup=0 ORDER BY ordinal LIMIT 1', (batch_id,)).fetchone()
@@ -404,6 +602,7 @@ class Queue:
                 if db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
                     require(not db.execute("SELECT 1 FROM " + table + " WHERE state!='PERSISTED'").fetchone(), 'old uncertain attempt')
             self._prior(db, batch['members'][row['ordinal']])
+            self._reserve_campaign(db, batch, batch['members'][row['ordinal']], envelope)
             db.execute('INSERT INTO recurrence_slot VALUES(1,?,?)', (batch_id, row['member_id']))
             db.execute("UPDATE recurrence_members SET state='RUNNING',envelope_json=?,run_manifest_sha256=?,grant_id=? WHERE batch_id=? AND ordinal=?",
                        (canonical(envelope).decode(), sha(canonical(manifest)), envelope['grant']['grant_id'], batch_id, row['ordinal']))

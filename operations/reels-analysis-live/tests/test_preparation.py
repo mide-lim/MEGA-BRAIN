@@ -632,13 +632,19 @@ class StoredReaderFixtureTests(unittest.TestCase):
             return result
 
     def test_reader_validates_only_fake_files_with_probe_stub(self):
+        from test_media_admission import movie
+        self.data = movie()
+        self.metadata_path.with_name("video.mp4").write_bytes(self.data)
+        self.task["source"].update(declared_bytes=len(self.data), source_video_sha256=sha(self.data))
+        self.metadata["video"].update(size_bytes=len(self.data), sha256=sha(self.data))
+        self.write_metadata(self.metadata)
         before = self.metadata_path.read_bytes()
         data, duration, reference = self.read_stubbed()
         self.assertEqual(data, self.data)
         self.assertEqual(duration, 12)
         self.assertEqual(reference["sha256"], self.task["source"]["metadata_sha256"])
         self.assertEqual(self.metadata_path.read_bytes(), before)
-        self.assertTrue(data.startswith(b"SYNTHETIC TEST BYTES."))
+        self.assertIn(b"SYNTHETIC TEST BYTES.", data)
 
     def test_missing_or_wrong_metadata_sha_denied_before_probe(self):
         import subprocess
@@ -707,6 +713,10 @@ class StoredReaderFixtureTests(unittest.TestCase):
                     self.reader.read(self.task)
 
     def test_minimal_metadata_optional_fields_not_invented(self):
+        from test_media_admission import movie
+        self.data = movie()
+        self.metadata_path.with_name("video.mp4").write_bytes(self.data)
+        self.task["source"].update(declared_bytes=len(self.data), source_video_sha256=sha(self.data))
         self.write_metadata({"id":self.task["reel_id"],"video":{"file":"video.mp4"}})
         _, duration, reference = self.read_stubbed()
         self.assertEqual(duration, 12)

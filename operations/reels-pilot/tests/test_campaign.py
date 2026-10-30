@@ -1,0 +1,378 @@
+"""Synthetic campaign proof. No imported TestCase aliases or live authority."""
+import copy
+from contextlib import contextmanager
+import datetime as dt
+from pathlib import Path
+import sys
+import sqlite3
+import threading
+import unittest
+from unittest import mock
+
+import test_recurrence as fixtures
+from test_worker_provider import FakeProvider, canonical, sha
+import recurrence as r
+
+
+class CampaignTests(unittest.TestCase):
+    def setUp(self):
+        self.case = fixtures.RecurrenceTests('test_01_unsigned_batch_zero_provider')
+        self.case.setUp(); self.addCleanup(self.case.doCleanups)
+        self.q = self.case.q; self.f = self.case.f
+        self.groups = []
+        for g in range(5):
+            batch = copy.deepcopy(self.case.batch)
+            batch.update(batch_id='campaign-batch-%d' % g, members=[], max_calls=3, max_gross_USD='9')
+            for i in range(3):
+                member = copy.deepcopy(self.case.batch['members'][0])
+                task = member['manifest']['task']; rid = 'campaign-%d-%d' % (g, i)
+                task['reel_id'] = rid
+                data = self.f.data + rid.encode(); metadata = canonical({'id': rid, 'synthetic': True})
+                rel = 'media/reels/' + rid; directory = self.f.root/'media'/rel
+                directory.mkdir(parents=True)
+                (directory/'video.mp4').write_bytes(data); (directory/'metadata.json').write_bytes(metadata)
+                task['source'].update(relative_video_path=rel+'/video.mp4', relative_metadata_path=rel+'/metadata.json',
+                                      source_video_sha256=sha(data), metadata_sha256=sha(metadata), declared_bytes=len(data))
+                member['manifest']['request_sha256'] = sha(r.worker.provider.request_bytes(task, data))
+                batch['members'].append(member)
+            self.groups.append({'planned': batch, 'effective': copy.deepcopy(batch), 'blocked': []})
+        self.manifest = {'campaign_id': 'synthetic-campaign', 'parent_approval_id': self.f.grant['authority']['approval_id'],
+                         'groups': self.groups, 'currency': 'USD', 'max_calls': 15, 'max_gross_USD': '45',
+                         'wip': 1, 'retries': 0, 'fallback': False}
+
+    def register(self):
+        digest = self.q.register_campaign(self.manifest)
+        value = self.case.approval()
+        value.pop('batch_id'); value.update(decision='APPROVE_REELS_CAMPAIGN', campaign_id='synthetic-campaign',
+                                          manifest_sha256=digest, max_calls=self.manifest['max_calls'],
+                                          max_gross_USD=self.manifest['max_gross_USD'])
+        self.parent = value
+        self.parent_path = self.case.write_receipt(self.case.control/'synthetic-campaign/campaign-approval.json', value)
+        self.q.authorize_campaign('synthetic-campaign')
+        for group in self.groups:
+            batch = group['effective']
+            if batch is None:
+                continue
+            self.case.history_receipt(batch); digest = self.q.prepare(batch)
+            child = self.case.approval(); child.update(batch_id=batch['batch_id'], manifest_sha256=digest,
+                                                     max_calls=batch['max_calls'], max_gross_USD=batch['max_gross_USD'])
+            self.case.write_receipt(self.case.control/(batch['batch_id']+'.json'), child)
+            self.q.authorize(batch['batch_id'], self.case.control/(batch['batch_id']+'.json'))
+
+    def envelope(self, g=0, i=0):
+        member = self.groups[g]['effective']['members'][i]; manifest = member['manifest']; task = manifest['task']
+        grant = copy.deepcopy(self.f.grant)
+        grant.update(grant_id='pilot-'+task['reel_id'], manifest_sha256=sha(canonical(manifest)),
+                     request_sha256=manifest['request_sha256'], bindings=r.worker.observed_bindings(self.f.policy, task))
+        return self.f.sign(grant)
+
+    def execute(self, g=0, i=0, fake=None, hook=None):
+        return self.q.run_one(self.groups[g]['effective']['batch_id'], self.envelope(g, i), executor_id='synthetic',
+                              transport=fake or FakeProvider(), writer_hook=hook)
+
+    def close(self, g, i):
+        batch = self.groups[g]['effective']; member = batch['members'][i]; rid = member['manifest']['task']['reel_id']
+        with self.q.ledger._transaction() as db:
+            row = dict(db.execute('SELECT * FROM recurrence_members WHERE member_id=?', (rid,)).fetchone())
+        value = {'decision': 'CLOSE_REELS_MEMBER', 'batch_id': batch['batch_id'], 'member_id': rid,
+                 'grant_id': row['grant_id'], 'source_sha256': row['source_sha256'],
+                 'worker_result_sha256': sha(row['result_json'].encode()), 'cleaned_at': r.now().isoformat(),
+                 'token_copy_removed': True, 'temporary_bindings_removed': True, 'other_bindings_preserved': True}
+        path = self.case.write_receipt(self.case.control/(rid+'.cleanup.json'), value)
+        self.q.cleanup(batch['batch_id'], rid, path, executor_id='cleanup', transport=FakeProvider())
+
+    def status(self):
+        return self.q.campaign_status('synthetic-campaign')
+
+    def test_01_five_finite_immutable_registration(self):
+        self.register(); self.assertEqual(self.status()['reserved_calls'], 0)
+        self.assertEqual(self.q.register_campaign(self.manifest), sha(canonical(self.manifest)))
+        changed = copy.deepcopy(self.manifest); changed['groups'].reverse()
+        with self.assertRaises(Exception): self.q.register_campaign(changed)
+        changed = copy.deepcopy(self.manifest); changed['groups'].append(changed['groups'][0])
+        with self.assertRaises(Exception): self.q.register_campaign(changed)
+
+    def test_02_fifteen_signed_calls_and_no_sixteenth(self):
+        self.register()
+        for g in range(5):
+            for i in range(3):
+                fake = FakeProvider(); self.assertEqual(self.execute(g, i, fake)['state'], 'PERSISTED')
+                self.assertEqual(fake.calls, 1); self.close(g, i)
+        self.assertEqual(self.status()['reserved_calls'], 15)
+        self.assertEqual(r.money(self.status()['reserved_gross_USD'], 45), r.money('45', 45))
+        with self.assertRaises(Exception): self.execute(4, 2)
+        self.assertIsNone(self.q.next(self.groups[4]['effective']['batch_id']))
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_members WHERE persisted=1 AND cleanup=1').fetchone()[0], 15)
+            self.assertEqual(db.execute('SELECT COUNT(DISTINCT source_sha256) FROM attempts').fetchone()[0], 15)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 0)
+        # This is a distinct, already prepared synthetic candidate, not a replay.
+        candidate = self.case.batch['members'][0]['manifest']['task']['reel_id']
+        self.assertNotIn(candidate, {m['manifest']['task']['reel_id'] for g in self.groups for m in g['planned']['members']})
+        fake = FakeProvider()
+        with self.assertRaisesRegex(r.ContractError, 'unregistered/sixth'):
+            self.case.authorize()
+        with self.assertRaisesRegex(r.ContractError, 'no authorized next member'):
+            self.q.run_one(self.case.batch['batch_id'], self.f.envelope, executor_id='sixteenth', transport=fake)
+        self.assertEqual(fake.calls, 0)
+        self.q = r.Queue(self.f.policy, synthetic=True)
+        self.assert_parent_cannot_reset()
+        self.assertEqual(self.status()['reserved_calls'], 15)
+        self.assertEqual(self.status()['reserved_gross_USD'], '45')
+
+    def test_03_small_call_ceiling(self):
+        self.manifest['max_calls'] = 1; self.register(); self.execute(); self.close(0, 0)
+        fake = FakeProvider()
+        with self.assertRaisesRegex(Exception, 'capacity'): self.execute(0, 1, fake)
+        self.assertEqual(fake.calls, 0); self.assertEqual(self.status()['reserved_calls'], 1)
+
+    def test_04_small_money_ceiling(self):
+        self.manifest['max_gross_USD'] = '5'; self.register(); self.execute(); self.close(0, 0)
+        with self.assertRaisesRegex(Exception, 'capacity'): self.execute(0, 1)
+        self.assertEqual(self.status()['reserved_calls'], 1)
+
+    def test_05_order_and_cleanup_barrier(self):
+        self.register(); fake = FakeProvider()
+        with self.assertRaisesRegex(Exception, 'barrier'): self.execute(1, 0, fake)
+        self.assertEqual(fake.calls, 0)
+        self.execute()
+        with self.assertRaises(Exception): self.execute(0, 1)
+        self.assertEqual(self.status()['reserved_calls'], 1)
+
+    def test_06_interrupted_claim_restart_no_refund_no_send(self):
+        self.register(); fake = FakeProvider()
+        with mock.patch.object(r.worker.Pipeline, 'run', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt): self.execute(fake=fake)
+        self.q = r.Queue(self.f.policy, synthetic=True)
+        rid = self.groups[0]['effective']['members'][0]['manifest']['task']['reel_id']
+        self.assertEqual(self.q.recover('campaign-batch-0', rid, executor_id='restart', transport=fake)['state'], 'BLOCKED')
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        with self.assertRaises(Exception): self.execute(fake=fake)
+        self.assertEqual(fake.calls, 0)
+
+    def test_07_unknown_no_refund(self):
+        self.register(); self.assertEqual(self.execute(fake=FakeProvider(error=True))['state'], 'UNKNOWN')
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        with self.assertRaises(Exception): self.execute(1, 0)
+
+    def test_08_recovery_without_authority_no_extra_reservation(self):
+        self.register(); out = self.execute(); self.parent_path.unlink(); fake = FakeProvider()
+        rid = self.groups[0]['effective']['members'][0]['manifest']['task']['reel_id']
+        self.assertEqual(self.q.recover('campaign-batch-0', rid, executor_id='restart', transport=fake), out)
+        self.assertEqual(fake.calls, 0); self.assertEqual(self.status()['reserved_calls'], 1)
+
+    def test_09_same_parent_and_sixth_denied(self):
+        self.register()
+        path = self.case.control/'campaign-batch-0.json'
+        child = r.protected(path)[0]; child['approval_id'] = 'fictitious'
+        self.case.write_receipt(path, child)
+        with self.assertRaises(Exception): self.q.authorize('campaign-batch-0', path)
+        # Existing independent batch cannot borrow the now-known campaign parent.
+        with self.assertRaisesRegex(Exception, 'unregistered/sixth'): self.case.authorize()
+
+    def test_10_source_metadata_subset_mutation_denied(self):
+        for key in ('source_video_sha256', 'metadata_sha256'):
+            bad = copy.deepcopy(self.manifest)
+            bad['groups'][1]['planned']['members'][0]['manifest']['task']['source'][key] = bad['groups'][0]['planned']['members'][0]['manifest']['task']['source'][key]
+            with self.assertRaises(Exception): self.q.register_campaign(bad)
+        self.register()
+        changed = copy.deepcopy(self.groups[0]['effective']); changed['members'].reverse()
+        with self.assertRaises(Exception): self.q.prepare(changed)
+
+    def test_11_blocked_empty_group_requires_root_skip(self):
+        group = self.groups[0]; group['blocked'] = [m['manifest']['task']['reel_id'] for m in group['planned']['members']]
+        group['effective'] = None; self.register()
+        with self.assertRaises(Exception): self.execute(1, 0)
+        value = {'decision': 'SKIP_TECHNICALLY_BLOCKED_REELS_GROUP', 'campaign_id': 'synthetic-campaign',
+                 'manifest_sha256': sha(canonical(self.manifest)), 'batch_id': 'campaign-batch-0', 'blocked': group['blocked']}
+        self.case.write_receipt(self.case.control/'synthetic-campaign/campaign-batch-0.skip.json', value)
+        self.assertEqual(self.execute(1, 0)['state'], 'PERSISTED')
+        with self.assertRaises(Exception): self.q.prepare(group['planned'])
+        self.assertEqual(len(self.status()['manifest']['groups'][0]['planned']['members']), 3)
+
+    def test_12_partial_effective_inventory_cannot_expand(self):
+        group = self.groups[0]; group['blocked'] = [group['planned']['members'][2]['manifest']['task']['reel_id']]
+        group['effective']['members'].pop(); group['effective'].update(max_calls=2, max_gross_USD='6')
+        self.register(); self.assertEqual(len(self.q.status('campaign-batch-0')), 2)
+        with self.assertRaises(Exception): self.q.prepare(group['planned'])
+
+    def test_13_atomic_wip_competing_claim(self):
+        self.register(); envelope = self.envelope(); fake = FakeProvider()
+        def interrupt(pipeline, manifest, signed, **kwargs):
+            other = r.Queue(self.f.policy, synthetic=True)
+            with self.assertRaises(Exception):
+                other.run_one('campaign-batch-0', envelope, executor_id='competitor', transport=fake)
+            raise KeyboardInterrupt
+        with mock.patch.object(r.worker.Pipeline, 'run', interrupt):
+            with self.assertRaises(KeyboardInterrupt): self.execute(fake=fake)
+        self.assertEqual(self.status()['reserved_calls'], 1); self.assertEqual(fake.calls, 0)
+
+    def test_14_parent_privacy_expiry_and_mutation_fail_closed(self):
+        self.register(); value = copy.deepcopy(self.parent); value['rights_and_global_privacy_accepted'] = False
+        self.case.write_receipt(self.parent_path, value); fake = FakeProvider()
+        with self.assertRaises(Exception): self.execute(fake=fake)
+        self.assertEqual(fake.calls, 0); self.assertEqual(self.status()['reserved_calls'], 0)
+
+
+    def assert_parent_cannot_reset(self):
+        # All new slot/member/source/metadata identities: only the parent is reused.
+        changed = copy.deepcopy(self.manifest)
+        changed['campaign_id'] = 'new-campaign-same-parent'
+        for group in changed['groups']:
+            for batch in (group['planned'], group['effective']):
+                batch['batch_id'] = 'new-' + batch['batch_id']
+                for member in batch['members']:
+                    task = member['manifest']['task']
+                    task['reel_id'] = 'new-' + task['reel_id']
+                    task['source']['relative_video_path'] = 'media/reels/' + task['reel_id'] + '/video.mp4'
+                    task['source']['relative_metadata_path'] = 'media/reels/' + task['reel_id'] + '/metadata.json'
+                    for key in ('source_video_sha256', 'metadata_sha256'):
+                        task['source'][key] = sha(('new-' + task['source'][key]).encode())
+        with self.assertRaisesRegex(sqlite3.IntegrityError, 'recurrence_campaigns.parent_approval_id'):
+            self.q.register_campaign(changed)
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_campaigns').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_campaign_slots').fetchone()[0], 5)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_campaign_planned').fetchone()[0], 15)
+
+    def test_15_zero_reservation_status_positive_validation_unchanged(self):
+        self.register()
+        status = self.status()
+        self.assertEqual(status['reservations'], [])
+        self.assertEqual(status['reserved_calls'], 0)
+        self.assertEqual(status['reserved_gross_USD'], '0')
+        for invalid in ('0', '-1', 'NaN', 'Infinity'):
+            with self.subTest(invalid=invalid), self.assertRaises(r.approval.ApprovalDenied):
+                r.money(invalid, 45)
+
+    def test_16_simultaneous_connections_single_claim_allocation_post(self):
+        self.register(); envelope = self.envelope()
+        barrier = threading.Barrier(2, timeout=10)
+        loser_done = threading.Event()
+        verify_lock = threading.RLock()
+        local = threading.local()
+        results, denied = [], []
+        captured = []
+        class Claimed(BaseException):
+            pass
+        fakes = [FakeProvider(), FakeProvider()]
+        verify = r._GuardedPipeline._verify
+        run = r.worker.Pipeline.run
+        transaction = r.worker.Ledger._transaction
+        @contextmanager
+        def preflight_transaction(ledger):
+            # Only preflight is serialized; actual claim transactions race.
+            if not getattr(local, 'ready', False):
+                with verify_lock, transaction(ledger) as db:
+                    yield db
+            else:
+                with transaction(ledger) as db:
+                    yield db
+        def synchronized_verify(pipeline, *args, **kwargs):
+            if not getattr(local, 'ready', False):
+                # Avoid unrelated read-phase write-lock contention. Both real
+                # verifications finish before either actual claim transaction.
+                with verify_lock:
+                    value = verify(pipeline, *args, **kwargs)
+                local.ready = True
+                barrier.wait()
+                return value
+            return verify(pipeline, *args, **kwargs)
+        def held_run(pipeline, *args, **kwargs):
+            if not loser_done.wait(10):
+                raise AssertionError('competitor did not finish within bound')
+            captured.append((pipeline, args, kwargs))
+            # Existing auth deadline uses main-thread-only SIGALRM. Defer the
+            # real Pipeline POST to main, retaining the actual durable claim.
+            raise Claimed
+
+        # Construct each Queue before racing; each transaction opens its own
+        # actual SQLite connection (no connection or SQL mocks).
+        queues = [r.Queue(self.f.policy, synthetic=True) for _ in range(2)]
+        def contender(index):
+            try:
+                results.append(queues[index].run_one('campaign-batch-0', envelope,
+                               executor_id='thread-%d' % index, transport=fakes[index]))
+            except Claimed:
+                pass
+            except Exception as exc:
+                denied.append(exc)
+                loser_done.set()
+        threads = [threading.Thread(target=contender, args=(i,), daemon=True) for i in range(2)]
+        with mock.patch.object(r._GuardedPipeline, '_verify', synchronized_verify), \
+             mock.patch.object(r.worker.Ledger, '_transaction', preflight_transaction), \
+             mock.patch.object(r.worker.Pipeline, 'run', held_run):
+            for thread in threads: thread.start()
+            for thread in threads: thread.join(15)
+            self.assertTrue(all(not thread.is_alive() for thread in threads), 'bounded thread completion')
+        self.assertEqual(len(denied), 1, repr(denied))
+        self.assertIsInstance(denied[0], (r.ContractError, sqlite3.OperationalError))
+        self.assertRegex(str(denied[0]), 'concurrent claim|database is locked')
+        self.assertEqual(len(captured), 1)
+        pipeline, args, kwargs = captured[0]
+        result = run(pipeline, *args, **kwargs)
+        results.append(self.q._save('campaign-batch-0', args[0]['task']['reel_id'], result))
+        self.assertEqual([result['state'] for result in results], ['PERSISTED'])
+        self.assertEqual(sorted(fake.calls for fake in fakes), [0, 1])
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        self.assertEqual(self.status()['reserved_gross_USD'], '3')
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_members WHERE grant_id IS NOT NULL').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 1)
+
+    def test_17_unchanged_protected_parent_expires_at_admission(self):
+        self.register(); envelope = self.envelope(); fake = FakeProvider()
+        value, digest = r.protected(self.parent_path)
+        self.assertEqual(value, self.parent)
+        expired_at = r.approval._instant(value['expires_at'])
+        # Advance only the clock: protected bytes and pinned digest are intact.
+        with mock.patch.object(r, 'now', return_value=expired_at):
+            with self.assertRaisesRegex(r.ContractError, '^campaign expiry$'):
+                self.q.next('campaign-batch-0')
+        self.assertEqual(r.protected(self.parent_path), (value, digest))
+        self.assertEqual(fake.calls, 0)
+        self.assertEqual(self.status()['reserved_calls'], 0)
+        self.assertEqual(self.q.status('campaign-batch-0')[0]['state'], 'AUTHORIZED')
+
+    def test_18_parent_unique_new_disjoint_campaign_no_budget_reset(self):
+        self.register()
+        self.assert_parent_cannot_reset()
+        self.assertEqual(self.status()['reserved_calls'], 0)
+
+
+class CampaignSchemaTests(unittest.TestCase):
+    """These structural checks also run where signed-fixture crypto is absent."""
+    def test_additive_schema_idempotent_and_unique_reservations(self):
+        import sqlite3
+        with sqlite3.connect(':memory:') as db:
+            for _ in range(2):
+                for sql in r.SCHEMA_SQL:
+                    db.execute(sql)
+            db.execute('INSERT INTO recurrence_campaign_allocations VALUES(?,?,?,?,?,?,1)',
+                       ('campaign', 'batch', 'member', 'source', 'grant', '3'))
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute('INSERT INTO recurrence_campaign_allocations VALUES(?,?,?,?,?,?,1)',
+                           ('other', 'batch2', 'other-member', 'source', 'other-grant', '3'))
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_campaign_allocations').fetchone()[0], 1)
+
+    def test_legacy_batch_limit_still_three(self):
+        bad = {'batch_id': 'four', 'members': [{}, {}, {}, {}], 'currency': 'USD',
+               'max_calls': 4, 'max_gross_USD': '12', 'wip': 1, 'retries': 0, 'fallback': False}
+        with self.assertRaisesRegex(r.ContractError, 'finite members'):
+            r.validate_batch(bad, {'currency': 'USD'})
+
+
+if __name__ == '__main__':
+    if '--time-check' in sys.argv:
+        stamp = dt.datetime.now(dt.timezone.utc)
+        print('LIVE_UTC=' + stamp.isoformat())
+        print('CONTRACT_EXPIRES_UTC=2026-10-30T18:22:36.245680+00:00')
+        print('BEFORE_EXPIRY=' + str(stamp < dt.datetime.fromisoformat('2026-10-30T18:22:36.245680+00:00')))
+        # Conservative coordinator-session timestamp from read-only run-context
+        # identifier; this is not an invented task-start monotonic timestamp.
+        elapsed = (stamp - dt.datetime.fromisoformat('2026-10-30T15:22:56+00:00')).total_seconds()
+        print('SECONDS_SINCE_COORDINATOR_SESSION_ID_TIMESTAMP=' + str(elapsed))
+        print('WITHIN_600_SECONDS_OF_THAT_TIMESTAMP=' + str(0 <= elapsed < 600))
+    else:
+        unittest.main()

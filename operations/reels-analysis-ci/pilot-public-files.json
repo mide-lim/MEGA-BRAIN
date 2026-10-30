@@ -15,7 +15,8 @@
     "operations/reels-pilot/tests/test_second_attempt.py",
     "operations/reels-pilot/tests/test_vertex_request.py",
     "operations/reels-pilot/tests/test_worker_provider.py",
-    "operations/reels-pilot/worker.py"
+    "operations/reels-pilot/worker.py",
+    "operations/reels-pilot/tests/test_campaign.py"
   ],
-  "expected_tests": 158
+  "expected_tests": 178
 }

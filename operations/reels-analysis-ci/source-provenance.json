@@ -153,12 +153,13 @@
       "source_relative_path": "worker.py",
       "repository_path": "operations/reels-analysis-live/worker.py",
       "source_sha256": "bf9374c27c1dd8aed089180bf8bf63cfdda11b73620bb5479af4eb58d5f2dfdc",
-      "repository_sha256": "1cf810e308ccb0ed99ed469fbb98703c34616292f1e393df5c3106daf0f96e8d",
+      "repository_sha256": "75e3753926f3fa823646e30db34ee6aaca62bc9d7f7444c090b88dbe9dfd1172",
       "adaptations": [
         "generic_implementation_identity",
         "strict_bounded_impersonated_adc_profile_from_trusted_external_grant",
         "trusted_auth_target_configuration_checked_before_any_media_access"
-      ]
+      ],
+      "reviewed_repository_change": "Reviewed bounded byte-based MP4 admission and synthetic fixture alignment."
     },
     {
       "source_module": "reels-analysis-live",
@@ -248,10 +249,19 @@
       "source_relative_path": "tests/test_preparation.py",
       "repository_path": "operations/reels-analysis-live/tests/test_preparation.py",
       "source_sha256": "943a1c9a4f1b86298f55c8029c50fa25bb67ec350a1fbc0f05737996f85ed8d1",
-      "repository_sha256": "866f01b2248e2b3bc2c81486332bfbe67cd8c8cfeddafb64b52cf5a41f1d26e3",
+      "repository_sha256": "169507847cd9817d2a2574d2d8ed026e557156447ca4f3f06f670e86e5160876",
       "adaptations": [
         "generic_example_executor"
-      ]
+      ],
+      "reviewed_repository_change": "Reviewed bounded byte-based MP4 admission and synthetic fixture alignment."
+    },
+    {
+      "source_module": "reels-analysis-live",
+      "source_relative_path": "tests/test_media_admission.py",
+      "repository_path": "operations/reels-analysis-live/tests/test_media_admission.py",
+      "source_sha256": "6c679d4d8c4d54c7308e88900b5fb6f4d48095db5c3d128089f4766cf3821f5f",
+      "repository_sha256": "6c679d4d8c4d54c7308e88900b5fb6f4d48095db5c3d128089f4766cf3821f5f",
+      "adaptations": []
     }
   ],
   "excluded_classes": [

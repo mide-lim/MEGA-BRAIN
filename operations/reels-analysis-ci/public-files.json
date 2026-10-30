@@ -44,7 +44,8 @@
     "operations/reels-analysis/tests/test_offline.py",
     "operations/reels-analysis/worker.py",
     "operations/reels-analysis-ci/run_pilot_ci.py",
-    "operations/reels-analysis-ci/pilot-public-files.json"
+    "operations/reels-analysis-ci/pilot-public-files.json",
+    "operations/reels-analysis-live/tests/test_media_admission.py"
   ],
   "optional_files": []
 }

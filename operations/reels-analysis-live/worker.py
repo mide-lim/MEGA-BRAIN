@@ -400,11 +400,108 @@ def run_mock(task, *, executor_id, fixture_ref="fake-media.txt", transport=None,
     return (worker or Worker()).transaction(task, data, task["source"]["declared_duration_seconds"],
                                            transport or FixtureTransport(), executor_id, synthetic=True)
 
+def validate_mp4_bytes(data):
+    """Bounded structural admission, not a decoder or vendor codec-support proof."""
+    if not 0 < len(data) <= MAX_MEDIA_BYTES:
+        raise ContractError("MP4 bytes outside local guard")
+    compatible = {b"isom", b"iso2", b"iso3", b"iso4", b"iso5", b"iso6",
+                  b"mp41", b"mp42", b"avc1"}
+    containers = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"dinf"}
+    count = 0
+
+    def boxes(start, end, depth=0):
+        nonlocal count
+        if depth > 16:
+            raise ContractError("MP4 box nesting exceeds local guard")
+        result = []
+        while start < end:
+            count += 1
+            if count > 4096 or end - start < 8:
+                raise ContractError("MP4 box count/header invalid")
+            size = int.from_bytes(data[start:start + 4], "big")
+            kind = data[start + 4:start + 8]
+            header = 8
+            if size == 1:
+                if end - start < 16:
+                    raise ContractError("truncated MP4 extended box header")
+                size = int.from_bytes(data[start + 8:start + 16], "big")
+                header = 16
+            elif size == 0:
+                # ISO BMFF permits a final box extending to EOF, not a child
+                # escaping its parent. Limit this form to the final media data.
+                if depth or kind != b"mdat":
+                    raise ContractError("unsupported MP4 zero-sized box")
+                size = end - start
+            if size < header or size > end - start:
+                raise ContractError("MP4 box bounds/truncation")
+            payload, stop = start + header, start + size
+            if kind == b"uuid" and size < header + 16:
+                raise ContractError("truncated MP4 UUID box")
+            if kind in containers:
+                if payload == stop:
+                    raise ContractError("empty MP4 container box")
+                children = boxes(payload, stop, depth + 1)
+                if kind == b"moov":
+                    child_types = [child[0] for child in children]
+                    if child_types.count(b"mvhd") != 1 or b"trak" not in child_types:
+                        raise ContractError("MP4 moov requires movie header and track boxes")
+            result.append((kind, payload, stop))
+            start = stop
+        return result
+
+    top = boxes(0, len(data))
+    types = [kind for kind, _, _ in top]
+    if types.count(b"ftyp") != 1 or types.count(b"moov") != 1 or b"mdat" not in types:
+        raise ContractError("MP4 requires one ftyp, one moov and media data")
+    if types.index(b"ftyp") > types.index(b"moov") or types.index(b"ftyp") > types.index(b"mdat"):
+        raise ContractError("MP4 ftyp must precede movie/media boxes")
+    # This narrow pilot does not admit fragmented movies or unrelated formats.
+    if any(kind not in {b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"uuid"}
+           for kind in types):
+        raise ContractError("unsupported MP4 top-level box")
+    for kind, start, end in top:
+        if kind == b"mdat" and start == end:
+            raise ContractError("empty MP4 media data")
+        if kind == b"ftyp":
+            length = end - start
+            if length < 8 or length > 1024 or (length - 8) % 4:
+                raise ContractError("malformed MP4 ftyp brands")
+            brands = {data[start:start + 4]}
+            brands.update(data[pos:pos + 4] for pos in range(start + 8, end, 4))
+            if b"qt  " in brands or not brands.intersection(compatible):
+                raise ContractError("MP4-compatible brand required; QuickTime/unknown denied")
+
+
 class StoredMediaReader:
     """Prepared reader; exercised only on fake fixtures with subprocess stub."""
     def __init__(self, root, expected_identity):
         self.root = Path(root)
         self.guard = FileStore(root, expected_identity=expected_identity)
+
+    @staticmethod
+    def _version(observed):
+        # Reads may update atime; only content/identity-relevant changes block.
+        return (observed.st_dev, observed.st_ino, observed.st_mode, observed.st_size,
+                observed.st_mtime_ns, observed.st_ctime_ns)
+
+    @staticmethod
+    def _snapshot(stream, limit):
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= limit:
+            raise ContractError("stored file outside local byte/regular-file guard")
+        stream.seek(0)
+        data = stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+        if (StoredMediaReader._version(before) != StoredMediaReader._version(after)
+                or len(data) != before.st_size or len(data) > limit):
+            raise ContractError("stored file changed during bounded read")
+        return data, StoredMediaReader._version(after)
+
+    @classmethod
+    def _bounded_read(cls, path, limit):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            return cls._snapshot(stream, limit)[0]
 
     def read(self, task):
         import subprocess
@@ -419,7 +516,7 @@ class StoredMediaReader:
             raise ContractError("stored video outside local 50MB guard")
         if metadata_path.stat().st_size > 2_000_000:
             raise ContractError("metadata exceeds local 2MB parse guard")
-        metadata_bytes = read_bytes(metadata_path)
+        metadata_bytes = self._bounded_read(metadata_path, 2_000_000)
         metadata_digest = sha(metadata_bytes)
         if expected_metadata != metadata_digest:
             raise ContractError("stored metadata hash mismatch")
@@ -431,11 +528,22 @@ class StoredMediaReader:
             raise ContractError("metadata video.file mismatch")
         self.guard.assert_identity()
         # No shell or retry. Real execution can reach here only after external grant.
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
-             "format=duration,format_name:stream=codec_type,codec_name,width,height",
-             "-of", "json", str(video)],
-            check=True, capture_output=True, timeout=15)
+        fd = os.open(video, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            data, before = self._snapshot(stream, MAX_MEDIA_BYTES)
+            validate_mp4_bytes(data)
+            # Pin ffprobe to the same open file, not a replaceable pathname.
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "format=duration,format_name:stream=codec_type,codec_name,width,height",
+                 "-of", "json", f"/proc/self/fd/{fd}"],
+                pass_fds=(fd,), check=True, capture_output=True, timeout=15)
+            after_data, after = self._snapshot(stream, MAX_MEDIA_BYTES)
+            self.guard.assert_identity()
+            if before != after or data != after_data or self._version(video.stat()) != after:
+                raise ContractError("stored video substituted during probe")
+        if self._bounded_read(metadata_path, 2_000_000) != metadata_bytes:
+            raise ContractError("stored metadata substituted during probe")
         info = parse_json(probe.stdout)
         try:
             duration = float(info["format"]["duration"])
@@ -452,13 +560,18 @@ class StoredMediaReader:
         audios = [item for item in streams if item.get("codec_type") == "audio"]
         if not videos or not audios:
             raise ContractError("stored video must contain both video and audio streams")
+        for item in videos:
+            if item.get("codec_name") == "vp9":
+                raise ContractError("VP9 blocked pending Gemini 3.8 Flash model-specific support evidence")
+            if item.get("codec_name") != "h264":
+                raise ContractError("video codec outside evidenced local H264/AAC gate")
+        if any(item.get("codec_name") != "aac" for item in audios):
+            raise ContractError("audio codec outside evidenced local H264/AAC gate")
         primary_video, primary_audio = videos[0], audios[0]
         for dimension in ("width", "height"):
             observed = primary_video.get(dimension)
             if isinstance(observed, bool) or not isinstance(observed, int) or observed <= 0:
                 raise ContractError("probe video dimensions unavailable/invalid")
-        self.guard.assert_identity()
-        data = read_bytes(video)
         self.guard.assert_identity()
         digest = check_media(task, data, duration, False)
         # These are consistency checks, not declarations of Google codec support.
@@ -478,8 +591,11 @@ class StoredMediaReader:
                 raise ContractError("metadata numeric divergence: " + key)
         if "sha256" in declared and declared["sha256"] != digest:
             raise ContractError("metadata video SHA divergence")
-        if "container" in declared and declared["container"] != "mp4":
+        if "container" in declared and declared["container"] not in ("mp4", "mov"):
             raise ContractError("metadata container divergence")
+        for key in ("mime_type", "mime", "mimeType"):
+            if key in declared and declared[key] != "video/mp4":
+                raise ContractError("metadata MIME divergence: " + key)
         if "has_audio" in declared and declared["has_audio"] is not True:
             raise ContractError("metadata has_audio divergence")
         for key, stream in (("video_codec", primary_video), ("audio_codec", primary_audio)):

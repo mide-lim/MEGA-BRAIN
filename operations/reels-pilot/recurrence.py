@@ -453,17 +453,21 @@ class Queue:
             if old:
                 require(old[0] == encoded, 'batch ID immutable; no expansion')
                 return digest
-        # Observe existing media, never download. Synthetic uses worker byte guard.
-        if self.synthetic:
-            from test_worker_provider import FakeProvider
-            scanner = worker.Pipeline(self.policy, synthetic=True, transport=FakeProvider())
-        else:
-            scanner = worker.Pipeline(self.policy)
+        # A validated persisted campaign slot registers PENDING inventory only;
+        # source/request admission remains mandatory in each member's run path.
+        # Legacy batches still eagerly observe media, never download.
+        if slot is None:
+            if self.synthetic:
+                from test_worker_provider import FakeProvider
+                scanner = worker.Pipeline(self.policy, synthetic=True, transport=FakeProvider())
+            else:
+                scanner = worker.Pipeline(self.policy)
         for member in batch['members']:
             self._history(member)
-            data, _, _ = scanner._source(member['manifest']['task'])
-            require(sha(worker.provider.request_bytes(member['manifest']['task'], data)) == member['manifest']['request_sha256'],
-                    'inventory request differs')
+            if slot is None:
+                data, _, _ = scanner._source(member['manifest']['task'])
+                require(sha(worker.provider.request_bytes(member['manifest']['task'], data)) == member['manifest']['request_sha256'],
+                        'inventory request differs')
         with self.ledger._transaction() as db:
             old = db.execute('SELECT manifest_json FROM recurrence_batches WHERE batch_id=?', (batch['batch_id'],)).fetchone()
             if old:

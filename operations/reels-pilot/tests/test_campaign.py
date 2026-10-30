@@ -340,6 +340,87 @@ class CampaignTests(unittest.TestCase):
         self.assert_parent_cannot_reset()
         self.assertEqual(self.status()['reserved_calls'], 0)
 
+    def test_19_campaign_prepare_defers_source_but_retains_history_and_prior(self):
+        self.q.register_campaign(self.manifest)
+        batch = self.groups[0]['effective']
+        with mock.patch.object(r.worker.Pipeline, '_source', side_effect=AssertionError('eager media read')) as source, \
+             mock.patch.object(r.worker.provider, 'request_bytes', side_effect=AssertionError('eager request body')) as request:
+            self.case.history_receipt(batch, complete=False)
+            with self.assertRaisesRegex(r.ContractError, 'complete history attestation'):
+                self.q.prepare(batch)
+            self.case.history_receipt(batch)
+            history = self.f.root/'results/history-campaign.json'
+            history.write_bytes(canonical({'prior': batch['members'][2]['manifest']['task']['source']['metadata_sha256']}))
+            with self.assertRaisesRegex(r.ContractError, 'history collision'):
+                self.q.prepare(batch)
+            history.unlink()
+            with mock.patch.object(self.q, '_prior', side_effect=r.ContractError('prior sentinel')) as prior:
+                with self.assertRaisesRegex(r.ContractError, '^prior sentinel$'):
+                    self.q.prepare(batch)
+                prior.assert_called_once()
+            with mock.patch.object(self.q, '_history', wraps=self.q._history) as scan, \
+                 mock.patch.object(self.q, '_prior', wraps=self.q._prior) as prior:
+                self.assertEqual(self.q.prepare(batch), sha(canonical(batch)))
+                self.assertEqual(scan.call_args_list, [mock.call(m) for m in batch['members']])
+                self.assertEqual(prior.call_count, 3)
+            source.assert_not_called(); request.assert_not_called()
+        self.assertEqual([m['state'] for m in self.q.status(batch['batch_id'])], ['PENDING'] * 3)
+        self.assertEqual(self.status()['reserved_calls'], 0)
+        with self.q.ledger._transaction() as db:
+            self.assertIsNone(db.execute('SELECT receipt_path FROM recurrence_batches WHERE batch_id=?',
+                                         (batch['batch_id'],)).fetchone()[0])
+
+    def test_20_unregistered_batch_keeps_eager_source_and_request_guards(self):
+        batch = self.groups[0]['effective']  # Campaign-shaped JSON alone cannot defer admission.
+        self.case.history_receipt(batch)
+        with mock.patch.object(r.worker.Pipeline, '_source', side_effect=r.ContractError('source sentinel')) as source:
+            with self.assertRaisesRegex(r.ContractError, '^source sentinel$'):
+                self.q.prepare(batch)
+            source.assert_called_once_with(batch['members'][0]['manifest']['task'])
+        bad = copy.deepcopy(batch)
+        bad['members'][0]['manifest']['request_sha256'] = '0' * 64
+        self.case.history_receipt(bad)
+        with self.assertRaisesRegex(r.ContractError, '^inventory request differs$'):
+            self.q.prepare(bad)
+        self.case.history_receipt(batch)
+        with mock.patch.object(r.worker.Pipeline, '_source', autospec=True,
+                               side_effect=r.worker.Pipeline._source) as source:
+            self.assertEqual(self.q.prepare(batch), sha(canonical(batch)))
+            self.assertEqual(source.call_count, 3)
+        self.assertEqual([m['state'] for m in self.q.status(batch['batch_id'])], ['PENDING'] * 3)
+
+    def test_21_campaign_source_failure_zero_post_holds_claim_without_retry(self):
+        self.register(); fake = FakeProvider()
+        batch = self.groups[0]['effective']; task = batch['members'][0]['manifest']['task']
+        video = self.f.root/'media'/task['source']['relative_video_path']
+        original = video.read_bytes()
+        video.write_bytes(b'NOT SYNTHETIC MEDIA')
+        with self.assertRaisesRegex(r.ContractError, 'only explicit synthetic fixture'):
+            self.execute(fake=fake)
+        self.assertEqual(fake.calls, 0)
+        self.assertEqual([m['state'] for m in self.q.status(batch['batch_id'])],
+                         ['RUNNING', 'AUTHORIZED', 'AUTHORIZED'])
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        self.assertEqual(self.status()['reserved_gross_USD'], '3')
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 1)
+            row = db.execute('SELECT persisted,cleanup,result_json FROM recurrence_members WHERE member_id=?',
+                             (task['reel_id'],)).fetchone()
+            self.assertEqual(tuple(row), (0, 0, None))
+        video.write_bytes(original)
+        self.q = r.Queue(self.f.policy, synthetic=True)
+        with self.assertRaisesRegex(r.ContractError, 'never replay running'):
+            self.execute(fake=fake)
+        self.assertEqual(self.q.recover(batch['batch_id'], task['reel_id'], executor_id='restart', transport=fake),
+                         {'state': 'BLOCKED', 'retry_allowed': False})
+        with self.assertRaisesRegex(r.ContractError, 'no authorized next member'):
+            self.execute(fake=fake)
+        self.assertIsNone(self.q.next(batch['batch_id']))
+        self.assertEqual(self.q.status(batch['batch_id'])[0]['state'], 'BLOCKED')
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        self.assertEqual(fake.calls, 0)
+
 
 class CampaignSchemaTests(unittest.TestCase):
     """These structural checks also run where signed-fixture crypto is absent."""

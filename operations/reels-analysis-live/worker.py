@@ -472,6 +472,136 @@ def validate_mp4_bytes(data):
                 raise ContractError("MP4-compatible brand required; QuickTime/unknown denied")
 
 
+MEDIA_DIAGNOSTIC_PATH = "/etc/megabrain/reels-pilot/media-diagnostic.v1.json"
+DIAGNOSTIC_MAX_SECONDS = 86400  # Local maximum remaining lifetime: 24 hours.
+
+
+def load_media_diagnostic():
+    """Root-installed exact-file diagnostic, never dispatch or spending authority.
+
+    Strict v1 keys: version (integer 1), mode (single_diagnostic), campaign_id,
+    owner_request_sha256, expires_at (UTC Z), task_id, reel_id,
+    source_video_sha256, metadata_sha256, cloud (exact task object), and
+    expected_probe (list of video/audio projections; see diagnostic_projection).
+    Campaign/owner references are audit bindings, not substitutes for the signed
+    grant and campaign queue. Install only after source inspection and preflight.
+    No task/environment/metadata-supplied pathname is accepted.
+    """
+    descriptors = []
+    try:
+        directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(directory)
+        for name in (None, "etc", "megabrain", "reels-pilot"):
+            if name is not None:
+                directory = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=directory)
+                descriptors.append(directory)
+            observed = os.fstat(directory)
+            if (not stat.S_ISDIR(observed.st_mode) or observed.st_uid != 0
+                    or observed.st_mode & 0o022):
+                raise ContractError("untrusted diagnostic parent")
+        name = Path(MEDIA_DIAGNOSTIC_PATH).name
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(fd, "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0
+                    or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o640
+                    or not 0 < before.st_size <= 16384):
+                raise ContractError("untrusted diagnostic file")
+            data, version = StoredMediaReader._snapshot(stream, 16384)
+            after = os.fstat(stream.fileno())
+            linked = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            def identity(value):
+                return (StoredMediaReader._version(value), value.st_uid, value.st_gid, value.st_nlink)
+            if (identity(before) != identity(after) or identity(after) != identity(linked)
+                    or version != StoredMediaReader._version(before)):
+                raise ContractError("diagnostic changed during load")
+        return parse_json(data)
+    except (OSError, ValueError) as exc:
+        raise ContractError("missing/invalid/untrusted VP9 diagnostic record") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def diagnostic_projection(streams):
+    """Narrow local VP9/AAC projection; not a claim of API codec support."""
+    if not isinstance(streams, list) or len(streams) != 2:
+        raise ContractError("diagnostic requires exactly one VP9 video and one AAC audio")
+    fields = {
+        "video": {"codec_type", "codec_name", "profile", "codec_tag_string", "pix_fmt",
+                  "width", "height", "avg_frame_rate"},
+        "audio": {"codec_type", "codec_name", "profile", "codec_tag_string", "sample_rate", "channels"},
+    }
+    projection = []
+    for kind in ("video", "audio"):
+        matches = [s for s in streams if isinstance(s, dict) and s.get("codec_type") == kind]
+        if len(matches) != 1 or not fields[kind].issubset(matches[0]):
+            raise ContractError("invalid diagnostic stream projection")
+        item = {key: matches[0][key] for key in fields[kind]}
+        if kind == "video":
+            if (item["codec_name"], item["profile"], item["codec_tag_string"], item["pix_fmt"]) != (
+                    "vp9", "Profile 0", "vp09", "yuv420p"):
+                raise ContractError("unsupported diagnostic VP9 profile/tag/pixel format")
+            for key in ("width", "height"):
+                if type(item[key]) is not int or not 1 <= item[key] <= 4096:
+                    raise ContractError("diagnostic dimensions outside local bound")
+            from fractions import Fraction
+            import re
+            rate = item["avg_frame_rate"]
+            if not isinstance(rate, str) or not re.fullmatch(r"[0-9]{1,9}/[0-9]{1,9}", rate):
+                raise ContractError("invalid diagnostic frame rate")
+            numerator, denominator = map(int, rate.split("/"))
+            if not denominator or not 0 < Fraction(numerator, denominator) <= 120:
+                raise ContractError("diagnostic frame rate outside local bound")
+        else:
+            if (item["codec_name"], item["codec_tag_string"]) != ("aac", "mp4a") or item["profile"] not in ("LC", "HE-AAC"):
+                raise ContractError("unsupported diagnostic AAC profile/tag")
+            if item["sample_rate"] not in ("8000", "11025", "12000", "16000", "22050", "24000", "32000", "44100", "48000"):
+                raise ContractError("unsupported diagnostic sample rate")
+            if type(item["channels"]) is not int or not 1 <= item["channels"] <= 2:
+                raise ContractError("unsupported diagnostic channels")
+        projection.append(item)
+    return projection
+
+
+def check_media_diagnostic(task, streams):
+    import re
+    try:
+        record = load_media_diagnostic()
+        keys = {"version", "mode", "campaign_id", "owner_request_sha256", "expires_at",
+                "task_id", "reel_id", "source_video_sha256", "metadata_sha256", "cloud", "expected_probe"}
+        if not isinstance(record, dict) or set(record) != keys:
+            raise ContractError("invalid diagnostic keys")
+        if type(record["version"]) is not int or record["version"] != 1 or record["mode"] != "single_diagnostic":
+            raise ContractError("invalid diagnostic version/mode")
+        for key in ("campaign_id", "task_id", "reel_id"):
+            if not isinstance(record[key], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", record[key]):
+                raise ContractError("invalid diagnostic identifier")
+        for key in ("owner_request_sha256", "source_video_sha256", "metadata_sha256"):
+            if not isinstance(record[key], str) or not re.fullmatch(r"[0-9a-f]{64}", record[key]):
+                raise ContractError("invalid diagnostic digest")
+        expiry = record["expires_at"]
+        if not isinstance(expiry, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", expiry):
+            raise ContractError("diagnostic expiry must be UTC Z")
+        remaining = (dt.datetime.strptime(expiry, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+                     - dt.datetime.now(dt.timezone.utc)).total_seconds()
+        if not 0 < remaining <= DIAGNOSTIC_MAX_SECONDS:
+            raise ContractError("expired/unbounded diagnostic")
+        for key in ("task_id", "reel_id", "cloud"):
+            if record[key] != task[key]:
+                raise ContractError("diagnostic task/cloud mismatch")
+        for key in ("source_video_sha256", "metadata_sha256"):
+            if record[key] != task["source"][key]:
+                raise ContractError("diagnostic source/metadata mismatch")
+        expected = record["expected_probe"]
+        projection = diagnostic_projection(streams)
+        if expected != diagnostic_projection(expected) or canonical(expected) != canonical(projection):
+            raise ContractError("diagnostic exact probe mismatch")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise ContractError("VP9 compatibility unspecified; exact protected single diagnostic required (not API rejection)") from exc
+
+
 class StoredMediaReader:
     """Prepared reader; exercised only on fake fixtures with subprocess stub."""
     def __init__(self, root, expected_identity):
@@ -536,6 +666,7 @@ class StoredMediaReader:
             probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries",
                  "format=duration,format_name:stream=codec_type,codec_name,width,height",
+                 "-show_entries", "stream=profile,codec_tag_string,pix_fmt,avg_frame_rate,sample_rate,channels",
                  "-of", "json", f"/proc/self/fd/{fd}"],
                 pass_fds=(fd,), check=True, capture_output=True, timeout=15)
             after_data, after = self._snapshot(stream, MAX_MEDIA_BYTES)
@@ -560,10 +691,9 @@ class StoredMediaReader:
         audios = [item for item in streams if item.get("codec_type") == "audio"]
         if not videos or not audios:
             raise ContractError("stored video must contain both video and audio streams")
+        diagnostic = any(item.get("codec_name") == "vp9" for item in videos)
         for item in videos:
-            if item.get("codec_name") == "vp9":
-                raise ContractError("VP9 blocked pending Gemini 3.8 Flash model-specific support evidence")
-            if item.get("codec_name") != "h264":
+            if item.get("codec_name") not in ("h264", "vp9"):
                 raise ContractError("video codec outside evidenced local H264/AAC gate")
         if any(item.get("codec_name") != "aac" for item in audios):
             raise ContractError("audio codec outside evidenced local H264/AAC gate")
@@ -604,6 +734,10 @@ class StoredMediaReader:
                 codec = stream.get("codec_name")
                 if not isinstance(value, str) or not isinstance(codec, str) or value.lower() != codec.lower():
                     raise ContractError("metadata/probe codec divergence: " + key)
+        if diagnostic:
+            # All physical hash/size/duration, metadata and pinned-FD gates above
+            # precede this MEDIA READ exception. No new dispatch path exists.
+            check_media_diagnostic(task, streams)
         return data, duration, {"relative_path": task["source"]["relative_metadata_path"],
                                 "sha256": metadata_digest}
 

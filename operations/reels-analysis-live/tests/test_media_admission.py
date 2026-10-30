@@ -1,5 +1,9 @@
 """Synthetic BMFF structures and probe stubs only; never real media or ffprobe."""
 import copy
+import datetime as dt
+import io
+import os
+import stat
 from pathlib import Path
 import subprocess
 import sys
@@ -27,8 +31,21 @@ def movie(brand=b"isom", compatible=b"mp42", extended=False):
             + box(b"mdat", b"SYNTHETIC TEST BYTES. not encoded media", extended))
 
 
+class FixedUTC(dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2030, 1, 1, tzinfo=dt.timezone.utc)
+
+
 class MediaAdmissionTests(unittest.TestCase):
     def setUp(self):
+        clock = patch.object(w.dt, "datetime", FixedUTC)
+        clock.start()
+        self.addCleanup(clock.stop)
+        # Never inspect a real protected policy in any synthetic reader test.
+        self.policy_loader = patch.object(w, "load_media_diagnostic", side_effect=ContractError("absent"))
+        self.loader = self.policy_loader.start()
+        self.addCleanup(self.policy_loader.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="media-admission-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -135,12 +152,150 @@ class MediaAdmissionTests(unittest.TestCase):
             with self.subTest(length=len(data)), self.assertRaises(ContractError):
                 w.validate_mp4_bytes(data)
 
-    def test_vp9_is_blocked_pending_model_specific_evidence(self):
+    def vp9_record(self):
         self.probe["streams"][0]["codec_name"] = "vp9"
+        self.probe["streams"][0].update(profile="Profile 0", codec_tag_string="vp09",
+                                        pix_fmt="yuv420p", avg_frame_rate="30/1")
+        self.probe["streams"][1].update(profile="LC", codec_tag_string="mp4a",
+                                        sample_rate="48000", channels=2)
         self.metadata["video"]["video_codec"] = "vp9"
         self.write_metadata()
-        with self.assertRaisesRegex(ContractError, "VP9 blocked pending Gemini 3.8 Flash"):
+        return {"version": 1, "mode": "single_diagnostic", "campaign_id": "synthetic-campaign",
+                "owner_request_sha256": "a" * 64,
+                "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "task_id": self.task["task_id"], "reel_id": self.task["reel_id"],
+                "source_video_sha256": self.task["source"]["source_video_sha256"],
+                "metadata_sha256": self.task["source"]["metadata_sha256"],
+                "cloud": copy.deepcopy(self.task["cloud"]),
+                "expected_probe": copy.deepcopy(self.probe["streams"])}
+
+    def permit(self, record):
+        self.loader.side_effect = None
+        self.loader.return_value = record
+
+    def test_vp9_without_policy_is_unspecified_not_api_rejection(self):
+        self.vp9_record()
+        with self.assertRaisesRegex(ContractError, "VP9 compatibility unspecified.*not API rejection"):
             self.read()
+
+    def test_exact_diagnostic_media_read_only_preserves_bytes(self):
+        self.permit(self.vp9_record())
+        original = self.metadata_path.read_bytes()
+        data, duration, reference = self.read()
+        self.assertEqual((data, duration, reference["sha256"]), (self.data, 12, sha(original)))
+        self.assertEqual(self.video.read_bytes(), self.data)
+        self.assertEqual(self.metadata_path.read_bytes(), original)
+        self.loader.assert_called_once_with()  # One media read, not a POST or consumption claim.
+
+    def test_exact_he_aac_diagnostic_media_read_preserves_bytes(self):
+        record = self.vp9_record()
+        self.probe["streams"][1]["profile"] = "HE-AAC"
+        record["expected_probe"][1]["profile"] = "HE-AAC"
+        self.permit(record)
+        original = self.metadata_path.read_bytes()
+        data, duration, reference = self.read()
+        self.assertEqual((data, duration, reference["sha256"]), (self.data, 12, sha(original)))
+        self.assertEqual(self.video.read_bytes(), self.data)
+        self.assertEqual(self.metadata_path.read_bytes(), original)
+        self.loader.assert_called_once_with()  # Media admission only, never a POST claim.
+
+    def test_diagnostic_aac_profile_must_match_exact_record(self):
+        record = self.vp9_record()
+        for actual, expected in (("HE-AAC", "LC"), ("LC", "HE-AAC")):
+            self.probe["streams"][1]["profile"] = actual
+            record["expected_probe"][1]["profile"] = expected
+            self.permit(record)
+            with self.subTest(actual=actual, expected=expected):
+                with self.assertRaisesRegex(ContractError, "VP9 compatibility unspecified") as denied:
+                    self.read()
+                self.assertIn("exact probe mismatch", str(denied.exception.__cause__))
+
+    def test_diagnostic_unknown_aac_profiles_denied_even_with_exact_record(self):
+        record = self.vp9_record()
+        for profile in ("HE-AACv2", "unknown", "", None):
+            self.probe["streams"][1]["profile"] = profile
+            record["expected_probe"][1]["profile"] = profile
+            self.permit(record)
+            with self.subTest(profile=profile):
+                with self.assertRaisesRegex(ContractError, "VP9 compatibility unspecified") as denied:
+                    self.read()
+                self.assertIn("unsupported diagnostic AAC profile/tag", str(denied.exception.__cause__))
+
+    def test_h264_never_loads_policy(self):
+        self.read()
+        self.loader.assert_not_called()
+
+    def test_diagnostic_exact_task_hash_metadata_cloud_bindings(self):
+        original = self.vp9_record()
+        for key, value in (("task_id", "other-task"), ("reel_id", "other-reel"),
+                           ("source_video_sha256", "b" * 64), ("metadata_sha256", "c" * 64),
+                           ("cloud", dict(original["cloud"], project_id="other-project"))):
+            with self.subTest(key=key):
+                record = copy.deepcopy(original)
+                record[key] = value
+                self.permit(record)
+                with self.assertRaises(ContractError):
+                    self.read()
+
+    def test_diagnostic_strict_schema_expiry_and_mode(self):
+        original = self.vp9_record()
+        for key, value in (("expires_at", "2000-01-01T00:00:00Z"),
+                           ("expires_at", "2999-01-01T00:00:00Z"),
+                           ("expires_at", "2026-10-30T12:00:00+00:00"),
+                           ("expires_at", 123), ("mode", "equivalent"), ("version", True),
+                           ("campaign_id", ""), ("owner_request_sha256", "bad"),
+                           ("allow_vp9", True), ("expected_probe", None)):
+            record = copy.deepcopy(original)
+            record[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ContractError):
+                self.permit(record)
+                self.read()
+        for record in (None, [], {}, {k: v for k, v in original.items() if k != "task_id"}):
+            self.permit(record)
+            with self.assertRaises(ContractError):
+                self.read()
+
+    def test_diagnostic_profiles_projection_and_individual_bounds(self):
+        record = self.vp9_record()
+        baseline = copy.deepcopy(self.probe)
+        for index, key, value in ((0, "profile", "Profile 2"), (0, "pix_fmt", "yuv420p10le"),
+                                  (0, "codec_tag_string", "avc1"), (0, "width", 4097),
+                                  (0, "height", True), (0, "avg_frame_rate", "0/0"),
+                                  (0, "avg_frame_rate", "nan"), (0, "avg_frame_rate", "121/1"),
+                                  (0, "avg_frame_rate", "24/1"), (1, "profile", "HE-AAC"),
+                                  (1, "codec_name", "opus"), (1, "codec_tag_string", "xxxx"),
+                                  (1, "sample_rate", "96000"), (1, "sample_rate", 48000),
+                                  (1, "channels", True), (1, "channels", 3)):
+            self.probe = copy.deepcopy(baseline)
+            self.probe["streams"][index][key] = value
+            self.permit(record)
+            with self.subTest(key=key, value=value), self.assertRaises(ContractError):
+                self.read()
+        for streams in (baseline["streams"] * 2, baseline["streams"] + [{"codec_type": "subtitle"}]):
+            self.probe = copy.deepcopy(baseline)
+            self.probe["streams"] = streams
+            with self.assertRaises(ContractError):
+                self.read()
+        self.probe = baseline
+        for edit in (lambda r: r["expected_probe"][0].update(width=641),
+                     lambda r: r["expected_probe"][0].update(extra=True),
+                     lambda r: r["expected_probe"][1].pop("profile")):
+            bad = copy.deepcopy(record)
+            edit(bad)
+            self.permit(bad)
+            with self.assertRaises(ContractError):
+                self.read()
+
+    def test_diagnostic_does_not_bypass_physical_or_toctou_gates(self):
+        self.permit(self.vp9_record())
+        self.video.write_bytes(self.data[:-1] + b"!")
+        with self.assertRaisesRegex(ContractError, "hash"):
+            self.read()
+        self.loader.assert_not_called()
+        self.install(self.data)
+        with self.assertRaisesRegex(ContractError, "changed|substituted"):
+            self.read(lambda: self.video.write_bytes(self.data[:-1] + b"!"))
+        self.loader.assert_not_called()
 
     def test_other_codecs_no_audio_and_probe_container_fail_closed(self):
         original = copy.deepcopy(self.probe)
@@ -230,5 +385,71 @@ class MediaAdmissionTests(unittest.TestCase):
             self.read(lambda: self.metadata_path.write_bytes(b"{}"))
 
 
+class DiagnosticLoaderTests(unittest.TestCase):
+    """All OS policy operations stubbed: no policy, credential, or chmod access."""
+    def load(self, file_changes=None, parent_changes=None, changed=False, raw=b'{"version":1}', open_error=False):
+        parent = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        parent.__dict__.update(parent_changes or {})
+        observed = SimpleNamespace(st_mode=stat.S_IFREG | 0o640, st_uid=0, st_gid=0,
+                                   st_nlink=1, st_size=len(raw), st_dev=1, st_ino=2,
+                                   st_mtime_ns=3, st_ctime_ns=4)
+        observed.__dict__.update(file_changes or {})
+        after = copy.copy(observed)
+        if changed:
+            after.st_ctime_ns += 1
+        class Stream(io.BytesIO):
+            def fileno(self):
+                return 20
+        def opening(path, flags, **kwargs):
+            self.assertTrue(flags & os.O_NOFOLLOW)
+            self.assertNotEqual(path, "task-supplied-path")
+            if path == "media-diagnostic.v1.json":
+                self.assertEqual(kwargs, {"dir_fd": 10})
+                if open_error:
+                    raise OSError("synthetic missing or symlink")
+                return 20
+            self.assertIn(path, ("/", "etc", "megabrain", "reels-pilot"))
+            self.assertTrue(flags & os.O_DIRECTORY)
+            return 10
+        calls = 0
+        def fstat(fd):
+            nonlocal calls
+            if fd == 10:
+                return parent
+            calls += 1
+            return after if calls >= 3 else observed
+        with patch.object(w.os, "open", side_effect=opening), patch.object(w.os, "close"), \
+                patch.object(w.os, "fdopen", return_value=Stream(raw)), \
+                patch.object(w.os, "fstat", side_effect=fstat), \
+                patch.object(w.os, "stat", return_value=after):
+            return w.load_media_diagnostic()
+
+    def test_trusted_fixed_path_bounded_snapshot(self):
+        self.assertEqual(self.load(), {"version": 1})
+
+    def test_unsafe_file_ownership_mode_symlink_links_size(self):
+        for changes in ({"st_uid": 1000}, {"st_mode": stat.S_IFREG | 0o644},
+                        {"st_mode": stat.S_IFLNK | 0o640}, {"st_mode": stat.S_IFIFO | 0o640},
+                        {"st_nlink": 2}, {"st_size": 16385}, {"st_size": 0}):
+            with self.subTest(changes=changes), self.assertRaises(ContractError):
+                self.load(file_changes=changes)
+        with self.assertRaises(ContractError):
+            self.load(open_error=True)
+
+    def test_unsafe_parents_changing_snapshot_and_malformed_json(self):
+        for changes in ({"st_uid": 1000}, {"st_mode": stat.S_IFDIR | 0o775},
+                        {"st_mode": stat.S_IFDIR | 0o757}, {"st_mode": stat.S_IFREG | 0o755}):
+            with self.subTest(changes=changes), self.assertRaises(ContractError):
+                self.load(parent_changes=changes)
+        with self.assertRaises(ContractError):
+            self.load(changed=True)
+        for raw in (b'{', b'{"version":1,"version":1}', b'{"bad":NaN}'):
+            with self.assertRaises(ContractError):
+                self.load(raw=raw)
+
+
 if __name__ == "__main__":
+    # Direct offline invocation supplies reproducible provenance evidence.
+    for path in (ROOT / "worker.py", Path(__file__)):
+        print(path.name + " repository_sha256=" + sha(path.read_bytes()), flush=True)
     unittest.main(verbosity=2)

@@ -153,13 +153,13 @@
       "source_relative_path": "worker.py",
       "repository_path": "operations/reels-analysis-live/worker.py",
       "source_sha256": "bf9374c27c1dd8aed089180bf8bf63cfdda11b73620bb5479af4eb58d5f2dfdc",
-      "repository_sha256": "75e3753926f3fa823646e30db34ee6aaca62bc9d7f7444c090b88dbe9dfd1172",
+      "repository_sha256": "5a681b2288056913003947c78f753bef6d543f1ded19531ce3ab47aa8a324769",
       "adaptations": [
         "generic_implementation_identity",
         "strict_bounded_impersonated_adc_profile_from_trusted_external_grant",
         "trusted_auth_target_configuration_checked_before_any_media_access"
       ],
-      "reviewed_repository_change": "Reviewed bounded byte-based MP4 admission and synthetic fixture alignment."
+      "reviewed_repository_change": "Reviewed bounded byte-based MP4 admission and synthetic fixture alignment. Delta 047: protected exact-file, time-bounded single VP9 diagnostic media admission; no dispatch authority. Delta 048: explicit AAC LC or HE-AAC only, with exact protected probe matching and all existing bounds retained; no universal codec support claim."
     },
     {
       "source_module": "reels-analysis-live",
@@ -260,8 +260,9 @@
       "source_relative_path": "tests/test_media_admission.py",
       "repository_path": "operations/reels-analysis-live/tests/test_media_admission.py",
       "source_sha256": "6c679d4d8c4d54c7308e88900b5fb6f4d48095db5c3d128089f4766cf3821f5f",
-      "repository_sha256": "6c679d4d8c4d54c7308e88900b5fb6f4d48095db5c3d128089f4766cf3821f5f",
-      "adaptations": []
+      "repository_sha256": "4f2b4b081bc63e47d33e507160b36156bf44ce448e66c2e28f2b370130a3c2e3",
+      "adaptations": [],
+      "reviewed_repository_change": "Delta 047: synthetic exact-file VP9 diagnostic, protected-loader and unchanged physical admission safeguards regression coverage. Delta 048: synthetic exact-record HE-AAC admission, bidirectional LC/HE-AAC mismatch denial and unknown/HE-AACv2 denial; existing LC and security regressions retained."
     }
   ],
   "excluded_classes": [

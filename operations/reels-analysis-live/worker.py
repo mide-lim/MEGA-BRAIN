@@ -487,13 +487,15 @@ def load_media_diagnostic():
     grant and campaign queue. Install only after source inspection and preflight.
     No task/environment/metadata-supplied pathname is accepted.
     """
+    if not hasattr(os, "O_PATH"):
+        raise ContractError("secure diagnostic directory traversal unavailable")
     descriptors = []
     try:
-        directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = os.open("/", os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         descriptors.append(directory)
         for name in (None, "etc", "megabrain", "reels-pilot"):
             if name is not None:
-                directory = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                directory = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW,
                                     dir_fd=directory)
                 descriptors.append(directory)
             observed = os.fstat(directory)

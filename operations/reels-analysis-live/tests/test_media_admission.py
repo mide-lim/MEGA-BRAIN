@@ -1,6 +1,7 @@
 """Synthetic BMFF structures and probe stubs only; never real media or ffprobe."""
 import copy
 import datetime as dt
+import errno
 import io
 import os
 import stat
@@ -404,12 +405,14 @@ class DiagnosticLoaderTests(unittest.TestCase):
             self.assertTrue(flags & os.O_NOFOLLOW)
             self.assertNotEqual(path, "task-supplied-path")
             if path == "media-diagnostic.v1.json":
+                self.assertEqual(flags, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
                 self.assertEqual(kwargs, {"dir_fd": 10})
                 if open_error:
                     raise OSError("synthetic missing or symlink")
                 return 20
             self.assertIn(path, ("/", "etc", "megabrain", "reels-pilot"))
             self.assertTrue(flags & os.O_DIRECTORY)
+            self.assertEqual(flags, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
             return 10
         calls = 0
         def fstat(fd):
@@ -426,6 +429,13 @@ class DiagnosticLoaderTests(unittest.TestCase):
 
     def test_trusted_fixed_path_bounded_snapshot(self):
         self.assertEqual(self.load(), {"version": 1})
+
+    def test_missing_o_path_fails_closed_before_open(self):
+        with patch.object(w.os, "open") as opened, patch.object(w.os, "O_PATH", create=True):
+            del w.os.O_PATH
+            with self.assertRaisesRegex(ContractError, "traversal unavailable"):
+                w.load_media_diagnostic()
+            opened.assert_not_called()
 
     def test_unsafe_file_ownership_mode_symlink_links_size(self):
         for changes in ({"st_uid": 1000}, {"st_mode": stat.S_IFREG | 0o644},
@@ -446,6 +456,91 @@ class DiagnosticLoaderTests(unittest.TestCase):
         for raw in (b'{', b'{"version":1,"version":1}', b'{"bad":NaN}'):
             with self.assertRaises(ContractError):
                 self.load(raw=raw)
+
+
+class DiagnosticDirectorySearchOnlyTests(unittest.TestCase):
+    def test_actual_unprivileged_search_only_ancestry_read_and_write_denial(self):
+        """Only initial / is mapped; all descendant DAC, fstat and reads are real."""
+        if os.geteuid() != 0:
+            self.skipTest("real UID switch requires root")
+        self.assertTrue(hasattr(os, "fork"), "root DAC regression requires fork")
+        with tempfile.TemporaryDirectory(prefix="diagnostic-search-only-") as value:
+            root = Path(value)
+            directories = [root, root / "etc", root / "etc/megabrain",
+                           root / "etc/megabrain/reels-pilot"]
+            for directory in directories:
+                directory.mkdir(exist_ok=True)
+                os.chown(directory, 0, 987)
+                os.chmod(directory, 0o710)
+            leaf = directories[-1] / "media-diagnostic.v1.json"
+            raw = b'{"version":1,"synthetic":"directory-DAC-only"}'
+            leaf.write_bytes(raw)
+            os.chown(leaf, 0, 987)
+            os.chmod(leaf, 0o640)
+            anchor = os.open(root, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
+            original_open = os.open
+            def anchored_open(name, flags, *args, **kwargs):
+                if name == "/":
+                    self.assertEqual(flags, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    self.assertEqual((args, kwargs), ((), {}))
+                    return os.dup(anchor)
+                return original_open(name, flags, *args, **kwargs)
+            read_end, write_end = os.pipe()
+            pid = os.fork()
+            if pid == 0:
+                os.close(read_end)
+                try:
+                    # Pin a private test cwd before dropping UID: no traversal of
+                    # private TMPDIR/runtime ancestry, and no post-drop imports.
+                    os.fchdir(anchor)
+                    os.setgroups([])
+                    os.setgid(987)
+                    os.setuid(65534)
+                    self.assertEqual((os.getuid(), os.geteuid(), os.getgid(), os.getegid()),
+                                     (65534, 65534, 987, 987))
+                    self.assertEqual(os.getgroups(), [])
+                    for name in (".", "etc", "etc/megabrain", "etc/megabrain/reels-pilot"):
+                        fd = original_open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                           dir_fd=anchor)
+                        try:
+                            info = os.fstat(fd)
+                            self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)),
+                                             (0, 987, 0o710))
+                        finally:
+                            os.close(fd)
+                        with self.assertRaises(PermissionError) as denied:
+                            fd = original_open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                               dir_fd=anchor)
+                            os.close(fd)
+                        self.assertEqual(denied.exception.errno, errno.EACCES)
+                    relative_leaf = "etc/megabrain/reels-pilot/media-diagnostic.v1.json"
+                    info = os.stat(relative_leaf, dir_fd=anchor, follow_symlinks=False)
+                    self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode), info.st_nlink),
+                                     (0, 987, 0o640, 1))
+                    with patch.object(w.os, "open", side_effect=anchored_open):
+                        self.assertEqual(w.load_media_diagnostic(), parse_json(raw))
+                    for attempt in range(2):
+                        with self.assertRaises(PermissionError) as denied:
+                            fd = original_open(relative_leaf, os.O_WRONLY | os.O_NOFOLLOW,
+                                               dir_fd=anchor)
+                            os.close(fd)
+                        self.assertEqual(denied.exception.errno, errno.EACCES)
+                    os.write(write_end, b"DIRECTORY_DIAGNOSTIC_REAL_UID_PASS uid=65534 euid=65534 gid=987 egid=987 groups=[] ancestry=0:987/0710 leaf=0:987/0640 nlink=1 old_flags=EACCES read=OK write1=EACCES write2=EACCES root_open=pinned_fixture_seam")
+                    os._exit(0)
+                except BaseException as exc:
+                    os.write(write_end, (type(exc).__name__ + ": " + str(exc)).encode()[:4096])
+                    os._exit(1)
+            os.close(write_end)
+            try:
+                result = os.read(read_end, 8192).decode()
+            finally:
+                os.close(read_end)
+                _, status = os.waitpid(pid, 0)
+                os.close(anchor)
+            self.assertEqual(status, 0, result)
+            self.assertTrue(result.startswith("DIRECTORY_DIAGNOSTIC_REAL_UID_PASS"), result)
+            self.assertEqual(leaf.read_bytes(), raw)
+            print(result, flush=True)
 
 
 if __name__ == "__main__":

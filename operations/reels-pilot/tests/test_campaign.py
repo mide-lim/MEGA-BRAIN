@@ -390,6 +390,7 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual([m['state'] for m in self.q.status(batch['batch_id'])], ['PENDING'] * 3)
 
     def test_21_campaign_source_failure_zero_post_holds_claim_without_retry(self):
+        import json
         self.register(); fake = FakeProvider()
         batch = self.groups[0]['effective']; task = batch['members'][0]['manifest']['task']
         video = self.f.root/'media'/task['source']['relative_video_path']
@@ -399,15 +400,24 @@ class CampaignTests(unittest.TestCase):
             self.execute(fake=fake)
         self.assertEqual(fake.calls, 0)
         self.assertEqual([m['state'] for m in self.q.status(batch['batch_id'])],
-                         ['RUNNING', 'AUTHORIZED', 'AUTHORIZED'])
+                         ['BLOCKED', 'AUTHORIZED', 'AUTHORIZED'])
         self.assertEqual(self.status()['reserved_calls'], 1)
         self.assertEqual(self.status()['reserved_gross_USD'], '3')
         with self.q.ledger._transaction() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 0)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 1)
+            self.assertEqual(tuple(db.execute('SELECT batch_id,member_id FROM recurrence_slot').fetchone()),
+                             (batch['batch_id'], task['reel_id']))
             row = db.execute('SELECT persisted,cleanup,result_json FROM recurrence_members WHERE member_id=?',
                              (task['reel_id'],)).fetchone()
-            self.assertEqual(tuple(row), (0, 0, None))
+            self.assertEqual((row['persisted'], row['cleanup']), (0, 0))
+            self.assertIsNotNone(row['result_json'])
+            self.assertLess(len(row['result_json']), 512)
+            self.assertEqual(json.loads(row['result_json']),
+                             {'state': 'BLOCKED', 'kind': 'exception_control',
+                              'phase': 'pipeline_run', 'exception_type': 'ContractError',
+                              'provider_io': 'NOT_STARTED', 'provider_calls': 0,
+                              'retry_allowed': False})
         video.write_bytes(original)
         self.q = r.Queue(self.f.policy, synthetic=True)
         with self.assertRaisesRegex(r.ContractError, 'never replay running'):

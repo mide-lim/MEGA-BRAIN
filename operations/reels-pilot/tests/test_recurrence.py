@@ -269,8 +269,10 @@ class RecurrenceTests(unittest.TestCase):
         with mock.patch.object(r.worker.Pipeline, '_source', source_then_revoke):
             with self.assertRaises(Exception): self.execute(fake)
         self.assertEqual(fake.calls, 0)
-        self.assertEqual(self.q.status('synthetic-batch')[0]['state'], 'RUNNING')
+        self.assertEqual(self.q.status('synthetic-batch')[0]['state'], 'BLOCKED')
         self.assertIsNone(self.q.next('synthetic-batch'))
+        control = self.exception_control(pilot_slots=0)
+        self.assertEqual((control['provider_io'], control['provider_calls']), ('NOT_STARTED', 0))
 
     def test_19_database_identity_tamper_not_authority(self):
         self.authorize()
@@ -455,12 +457,22 @@ class RecurrenceTests(unittest.TestCase):
             file = next(entries)
         # Repeat real cached DirEntries, without creating 20,001 fixture files.
         # One directory + 10,000 media files + 9,999 result files is allowed.
+        def directory_identity(stat):
+            return stat.st_dev, stat.st_ino
+
         for result_count in (9999, 10000):
             with self.subTest(result_count=result_count):
-                scans = [nullcontext(iter([directory])),
-                         nullcontext(repeat(file, 10000)),
-                         nullcontext(repeat(file, result_count))]
-                with mock.patch.object(r.os, 'scandir', side_effect=scans) as scan:
+                scans = {
+                    directory_identity(media.stat()): nullcontext(iter([directory])),
+                    directory_identity(nested.stat()): nullcontext(repeat(file, 10000)),
+                    directory_identity((self.f.root/'results').stat()):
+                        nullcontext(repeat(file, result_count)),
+                }
+
+                def scan_directory(fd):
+                    return scans[directory_identity(r.os.fstat(fd))]
+
+                with mock.patch.object(r.os, 'scandir', side_effect=scan_directory) as scan:
                     if result_count == 9999:
                         self.q._history(self.batch['members'][0])
                     else:
@@ -620,6 +632,138 @@ class RecurrenceTests(unittest.TestCase):
             pipeline._verify(self.f.manifest, self.f.envelope, r.now())
             pipeline._verify(self.f.manifest, self.f.envelope, r.now())
             self.assertEqual(scan.call_count, 3)
+
+
+    def exception_control(self, *, pilot_slots):
+        with self.q.ledger._transaction() as db:
+            row = dict(db.execute('SELECT * FROM recurrence_members').fetchone())
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM pilot_slot').fetchone()[0], pilot_slots)
+        self.assertEqual((row['state'], row['cleanup'], row['persisted']), ('BLOCKED', 0, 0))
+        control = json.loads(row['result_json'])
+        self.assertEqual((control['state'], control['kind'], control['phase'], control['retry_allowed']),
+                         ('BLOCKED', 'exception_control', 'pipeline_run', False))
+        self.assertLess(len(row['result_json']), 512)
+        self.assertNotIn('analysis_state', control)
+        self.assertNotIn('response', control)
+        self.assertIsNone(self.q.next('synthetic-batch'))
+        return control
+
+    def expire_during_history(self, boundary):
+        original = self.q._history
+        clock = [r.now()]
+        calls = []
+        def history(member):
+            original(member)
+            calls.append(None)
+            if len(calls) == boundary:
+                clock[0] = r.approval._instant(self.f.grant['expires_at'])
+        return clock, history
+
+    def test_42_initial_history_refresh_prevents_claim_and_reservation(self):
+        self.authorize(); fake = FakeProvider()
+        clock, history = self.expire_during_history(1)
+        with mock.patch.object(r, 'now', side_effect=lambda: clock[0]), \
+             mock.patch.object(self.q, '_history', side_effect=history), \
+             mock.patch.object(worker.Pipeline, '_source', side_effect=AssertionError('source')) as source:
+            with self.assertRaises(r.approval.ApprovalDenied): self.execute(fake)
+        source.assert_not_called()
+        self.assertEqual(fake.calls, 0)
+        self.assertEqual(self.q.status('synthetic-batch')[0]['state'], 'AUTHORIZED')
+        with self.q.ledger._transaction() as db:
+            for table in ('attempts', 'pilot_slot', 'recurrence_slot'):
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0], 0)
+
+    def test_43_post_source_history_refresh_blocks_without_reservation(self):
+        self.authorize(); fake = FakeProvider()
+        clock, history = self.expire_during_history(2)
+        with mock.patch.object(r, 'now', side_effect=lambda: clock[0]), \
+             mock.patch.object(self.q, '_history', side_effect=history):
+            with self.assertRaises(r.approval.ApprovalDenied): self.execute(fake)
+        control = self.exception_control(pilot_slots=0)
+        self.assertEqual((control['exception_type'], control['provider_calls']), ('ApprovalDenied', 0))
+        self.assertEqual(fake.calls, 0)
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 0)
+
+    def test_44_expiry_after_reserve_keeps_reserved_zero_and_slots(self):
+        self.authorize(); fake = FakeProvider()
+        original = worker.Ledger.begin_dispatch
+        def expired(ledger, digest, *, now):
+            return original(ledger, digest, now=r.approval._instant(self.f.grant['expires_at']))
+        with mock.patch.object(worker.Ledger, 'begin_dispatch', expired):
+            with self.assertRaisesRegex(r.LedgerDenied, 'expired before dispatch'): self.execute(fake)
+        control = self.exception_control(pilot_slots=1)
+        self.assertEqual(control['provider_calls'], 0)
+        self.assertEqual(fake.calls, 0)
+        record = self.q.ledger.get(sha(self.f.data))
+        self.assertEqual((record['state'], record['calls'], record['started_at'], record['gross_reserved']),
+                         ('RESERVED', 0, None, '3.00000000'))
+
+    def test_45_error_after_reserve_preserves_original_and_secret_safe_control(self):
+        self.authorize(); fake = FakeProvider(); error = OSError('secret-token-do-not-record')
+        with mock.patch.object(worker.Ledger, 'begin_dispatch', side_effect=error):
+            with self.assertRaises(OSError) as caught: self.execute(fake)
+        self.assertIs(caught.exception, error)
+        control = self.exception_control(pilot_slots=1)
+        self.assertEqual((control['exception_type'], control['provider_calls']), ('OSError', 0))
+        self.assertNotIn('secret-token', canonical(control).decode())
+        record = self.q.ledger.get(sha(self.f.data))
+        self.assertEqual((record['state'], record['calls'], record['gross_reserved']), ('RESERVED', 0, '3.00000000'))
+        self.assertEqual(fake.calls, 0)
+
+    def test_46_unknown_intent_exception_never_claims_zero(self):
+        self.authorize(); fake = FakeProvider(); error = OSError('secret-receive-error')
+        with mock.patch.object(worker.Ledger, 'receive', side_effect=error):
+            with self.assertRaises(OSError) as caught: self.execute(fake)
+        self.assertIs(caught.exception, error)
+        control = self.exception_control(pilot_slots=1)
+        self.assertEqual(control['provider_io'], 'MAY_HAVE_STARTED')
+        self.assertNotIn('provider_calls', control)
+        record = self.q.ledger.get(sha(self.f.data))
+        self.assertEqual((record['state'], record['calls'], record['gross_reserved']), ('UNKNOWN', 1, '3.00000000'))
+        self.assertIsNotNone(record['started_at'])
+        self.assertEqual(fake.calls, 1)
+
+    def test_47_persistence_exception_recovery_after_expiry_uses_historical_clock(self):
+        self.authorize(); fake = FakeProvider()
+        def fault(event, path, data):
+            if event == 'before_write' and path.name == 'provenance.json':
+                raise OSError('secret-persistence-error')
+        with self.assertRaises(OSError): self.execute(fake, fault)
+        control = self.exception_control(pilot_slots=1)
+        self.assertEqual(control['provider_io'], 'MAY_HAVE_STARTED')
+        self.assertNotIn('provider_calls', control)
+        self.assertNotIn('secret-persistence', canonical(control).decode())
+        before = self.q.ledger.get(sha(self.f.data))
+        self.assertEqual(before['calls'], 1)
+        self.assertIsNotNone(before['response_sha256'])
+        expired = r.approval._instant(self.f.grant['expires_at']) + dt.timedelta(days=1)
+        recovery_fake = FakeProvider()
+        with mock.patch.object(r, 'now', return_value=expired), \
+             mock.patch.object(self.q, '_authority', side_effect=AssertionError('authority')) as authority, \
+             mock.patch.object(worker.Pipeline, '_source', side_effect=AssertionError('source')) as source:
+            result = self.q.recover('synthetic-batch', self.f.task['reel_id'], executor_id='restart', transport=recovery_fake)
+        self.assertEqual(result['state'], 'PERSISTED')
+        self.assertEqual((fake.calls, recovery_fake.calls), (1, 0))
+        authority.assert_not_called(); source.assert_not_called()
+        after = self.q.ledger.get(sha(self.f.data))
+        self.assertEqual((after['calls'], after['gross_reserved']), (1, before['gross_reserved']))
+        self.assertEqual(self.q.status('synthetic-batch')[0]['cleanup'], 0)
+        self.assertIsNone(self.q.next('synthetic-batch'))
+
+    def test_48_source_exception_before_reserve_records_control_without_fabrication(self):
+        self.authorize(); fake = FakeProvider()
+        video = self.f.root/'media'/self.f.task['source']['relative_video_path']
+        video.write_bytes(b'NOT SYNTHETIC MEDIA secret-source-path')
+        with self.assertRaisesRegex(r.ContractError, 'only explicit synthetic fixture'):
+            self.execute(fake)
+        control = self.exception_control(pilot_slots=0)
+        self.assertEqual((control['provider_io'], control['provider_calls']), ('NOT_STARTED', 0))
+        self.assertNotIn('secret-source-path', canonical(control).decode())
+        self.assertEqual(fake.calls, 0)
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 0)
 
 
 if __name__ == '__main__':

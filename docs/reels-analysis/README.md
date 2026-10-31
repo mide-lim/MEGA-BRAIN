@@ -134,3 +134,11 @@ A future SQLite FTS5 index is derived and rebuildable from accepted JSON and ref
 This integration neither changes legacy product workflows nor invokes a launcher, creates a task authorization, deploys infrastructure or resumes a queue. CI success is evidence for offline code behavior only.
 
 Public format references: [video understanding](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/video-understanding), [structured output](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/control-generated-output), [official auth transport](https://github.com/googleapis/google-auth-library-python/blob/main/google/auth/transport/requests.py).
+
+## Executor preparation metrics proposal
+
+The pilot executor measures the normal CLI entry-to-send boundary, including policy/input loading, construction, authority, history/prior checks, claim/reserve/begin_dispatch, token setup and final verification. The executor frame is emitted on stderr; stdout remains the result JSON. Nonempty stderr is not itself failure: evaluate exit code and outcome. Control, recovery, blocked and incomplete frames are not successful preparation samples.
+
+The reviewed optimization covers 16 I/O operations without removing authorization or A+B validation, UNKNOWN handling or global-slot protection. Cached immutable work does not replace fresh final identity/hash/root verification before dispatch. External API setup and token acquisition inside the CLI count toward executor preparation; coordination and shared setup outside it must be measured separately, not hidden.
+
+The proposed public pilot inventory expects 231 tests. It excludes an operator-only diagnostic and its 17 tests; the full private 248-test proof is reused, not rerun here. Fresh execution of the exact public projection remains pending operator preparation and is required before merge; no new green CI or performance certification is claimed. AC-013 remains pending separate real-call authority and resolution of outstanding blockers. Synthetic, blocked-fast and truncated intervals cannot establish the real executor target of less than 60000 ms.

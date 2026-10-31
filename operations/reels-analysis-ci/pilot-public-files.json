@@ -23,5 +23,5 @@
     "operations/reels-pilot/worker.py",
     "operations/reels-pilot/tests/test_campaign.py"
   ],
-  "expected_tests": 261
+  "expected_tests": 268
 }

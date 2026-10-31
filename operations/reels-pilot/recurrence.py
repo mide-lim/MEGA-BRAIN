@@ -55,7 +55,10 @@ SCHEMA_SQL = (
     campaign_id TEXT NOT NULL, batch_id TEXT NOT NULL, member_id TEXT NOT NULL UNIQUE,
     source_sha256 TEXT NOT NULL UNIQUE, grant_id TEXT NOT NULL UNIQUE,
     gross_USD TEXT NOT NULL, calls INTEGER NOT NULL CHECK(calls=1),
-    PRIMARY KEY(campaign_id,member_id))''')
+    PRIMARY KEY(campaign_id,member_id))''',
+    '''CREATE TABLE IF NOT EXISTS recurrence_selection(
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    campaign_id TEXT NOT NULL, receipt_sha256 TEXT NOT NULL)''')
 STATES = ('PENDING', 'AUTHORIZED', 'RUNNING', 'PERSISTED', 'NEEDS_REVIEW',
           'ACCEPTED', 'FAILED', 'BLOCKED')
 BATCH_KEYS = {'batch_id', 'members', 'currency', 'max_calls', 'max_gross_USD',
@@ -332,15 +335,18 @@ class Queue:
         manifest, _ = self._campaign(db, slot['campaign_id'], authority=not bool(selected))
         require(slot['effective_sha256'] == sha(canonical(batch)), 'campaign batch changed')
         if selected:
-            row, _ = self._batch(db, batch['batch_id'])
-            self._sample_receipt(db, row, batch, selected)
+            if selected['decision'] == 'APPROVE_REELS_SELECTION':
+                self._selection_target(db, selected, batch['batch_id'], member['manifest']['task']['reel_id'])
+            else:
+                row, _ = self._batch(db, batch['batch_id'])
+                self._sample_receipt(db, row, batch, selected)
             require(not db.execute('SELECT 1 FROM recurrence_campaign_allocations WHERE member_id=? OR source_sha256=? OR grant_id=?',
-                    (selected['member_id'], selected['source_sha256'], envelope['grant']['grant_id'])).fetchone(),
+                    (member['manifest']['task']['reel_id'], member['manifest']['task']['source']['source_video_sha256'], envelope['grant']['grant_id'])).fetchone(),
                     'sample reservation consumed')
         else:
             self._campaign_order(db, slot, manifest)
         rows = list(db.execute('SELECT gross_USD FROM recurrence_campaign_allocations WHERE campaign_id=?', (slot['campaign_id'],)))
-        gross = money(selected['max_gross_USD'] if selected else member['max_gross_USD'], 3)
+        gross = money(selected['max_gross_USD'] if selected and selected['decision'] == 'APPROVE_REELS_EXCLUSIVE_SAMPLE' else member['max_gross_USD'], 3)
         require(len(rows) + 1 <= manifest['max_calls'] and
                 sum((money(r[0], 3) for r in rows), gross) <= money(manifest['max_gross_USD'], 45), 'campaign capacity exhausted')
         task = member['manifest']['task']
@@ -764,12 +770,125 @@ class Queue:
             db.execute('UPDATE recurrence_batches SET receipt_path=?,receipt_sha256=? WHERE batch_id=?', (str(receipt), digest, batch_id))
             db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND state='PENDING'", (batch_id,))
 
+    def _selection(self, db):
+        # Older installed ledgers have no selection table until approved bootstrap.
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='recurrence_selection'").fetchone():
+            return None
+        pin = db.execute('SELECT * FROM recurrence_selection').fetchone()
+        if pin is None:
+            return None
+        value, digest = protected(CONTROL / identifier(pin['campaign_id']) / 'selection-approval.json')
+        require(digest == pin['receipt_sha256'], 'selection receipt changed')
+        self._selection_receipt(db, value)
+        return value
+
+    def _selection_receipt(self, db, value, *, admitting=False):
+        require(set(value) == {'decision', 'campaign_id', 'campaign_manifest_sha256',
+                'sample_receipt_sha256', 'request_sha256', 'approval_id', 'approved_by',
+                'approved_at', 'expires_at', 'rights_and_global_privacy_accepted',
+                'max_calls', 'max_gross_USD', 'currency', 'wip', 'retries', 'fallback', 'members'},
+                'selection shape')
+        require(value['decision'] == 'APPROVE_REELS_SELECTION' and
+                value['request_sha256'] == '893618df575900e5c63837e9890abfc36df7987c136e6ca0835d6f19c0c6c77d' and
+                value['rights_and_global_privacy_accepted'] is True and
+                value['currency'] == 'USD' and value['fallback'] is False, 'selection owner/privacy')
+        count(value['max_calls'], 5, 5); count(value['wip'], 1, 1); count(value['retries'], 0, 0)
+        require(money(value['max_gross_USD'], 15) == money('15', 15), 'selection ceiling')
+        require(approval._instant(value['approved_at']) <= now() < approval._instant(value['expires_at']),
+                'selection expiry')
+        for key in ('approval_id', 'approved_by'):
+            require(isinstance(value[key], str) and 0 < len(value[key]) <= 200, 'selection human authority')
+        campaign, _ = self._campaign(db, value['campaign_id'], authority=False)
+        require(value['campaign_manifest_sha256'] == sha(canonical(campaign)) and
+                value['approval_id'] != campaign['parent_approval_id'], 'selection original campaign')
+        samples = list(db.execute("SELECT * FROM recurrence_batches WHERE receipt_path LIKE '%/sample-approval.json'"))
+        require(len(samples) == 1, 'selection needs exclusive sample history')
+        sample_row = samples[0]; sample, digest = protected(sample_row['receipt_path'])
+        require(digest == sample_row['receipt_sha256'] == value['sample_receipt_sha256'] and
+                sample['decision'] == 'APPROVE_REELS_EXCLUSIVE_SAMPLE' and
+                sample['campaign_id'] == value['campaign_id'] and sample['approval_id'] != value['approval_id'],
+                'selection immutable sample history')
+        closed = db.execute('SELECT * FROM recurrence_members WHERE member_id=? AND batch_id=?',
+                            (sample['member_id'], sample['batch_id'])).fetchone()
+        require(closed is not None and closed['persisted'] == closed['cleanup'] == 1 and
+                db.execute("SELECT 1 FROM attempts WHERE source_sha256=? AND grant_id=? AND state='PERSISTED'",
+                           (closed['source_sha256'], closed['grant_id'])).fetchone(), 'sample must be persisted and cleaned')
+        # Policy fixes positions, never private operating identities. The verified
+        # immutable inventory and fresh protected receipt supply those identities.
+        expected = []
+        for group_index, ordinal in [(2, 1), (2, 2), (3, 1), (3, 2), (4, 0)]:
+            planned = campaign['groups'][group_index]['planned']
+            expected.append((planned['batch_id'], ordinal,
+                             planned['members'][ordinal]['manifest']['task']['reel_id']))
+        require(type(value['members']) is list and len(value['members']) == 5, 'five selection members')
+        remaining = []
+        for binding, (bid, ordinal, mid) in zip(value['members'], expected):
+            row, batch = self._batch(db, bid)
+            member = batch['members'][ordinal]; run = member['manifest']; src = run['task']['source']
+            require(binding == {'batch_id': bid, 'ordinal': ordinal, 'member_id': mid,
+                    'manifest_sha256': row['manifest_sha256'], 'run_manifest_sha256': sha(canonical(run)),
+                    'source_sha256': src['source_video_sha256'], 'metadata_sha256': src['metadata_sha256'],
+                    'request_sha256': run['request_sha256'], 'max_calls': 1, 'max_gross_USD': '3'} and
+                    type(binding['ordinal']) is int and type(binding['max_calls']) is int and
+                    run['task']['reel_id'] == mid, 'exact selection fingerprints/order')
+            group = next((g for g in campaign['groups'] if g['planned']['batch_id'] == bid), None)
+            require(group is not None and group['effective'] == batch and
+                    member == group['planned']['members'][ordinal] and mid not in group['blocked'],
+                    'selection original registered member')
+            queued = db.execute('SELECT * FROM recurrence_members WHERE member_id=?', (mid,)).fetchone()
+            if admitting:
+                require(queued['state'] in ('PENDING', 'AUTHORIZED') and
+                        all(queued[k] is None for k in ('grant_id', 'envelope_json', 'run_manifest_sha256', 'result_json')) and
+                        queued['persisted'] == queued['cleanup'] == 0 and
+                        not db.execute('SELECT 1 FROM recurrence_campaign_allocations WHERE member_id=? OR source_sha256=?',
+                                       (mid, src['source_video_sha256'])).fetchone(), 'selection already consumed')
+                self._prior(db, member)
+            if queued['cleanup']:
+                result = approval.load_json(queued['result_json'])
+                require(queued['persisted'] == 1 and result['state'] == 'PERSISTED' and
+                        result['analysis_state'] == 'needs_review', 'selection stopped after failed dispatch')
+            else:
+                remaining.append(dict(queued))
+        if admitting:
+            allocations = list(db.execute('SELECT gross_USD FROM recurrence_campaign_allocations WHERE campaign_id=?',
+                                          (value['campaign_id'],)))
+            require(len(allocations) + 5 <= campaign['max_calls'] and
+                    sum((money(x[0], 3) for x in allocations), money('15', 15)) <= money(campaign['max_gross_USD'], 45),
+                    'campaign capacity exhausted')
+        return remaining[0] if remaining else None
+
+    def authorize_selection(self, campaign_id):
+        path = CONTROL / identifier(campaign_id) / 'selection-approval.json'
+        value, digest = protected(path)
+        with self.ledger._transaction() as db:
+            require(value['campaign_id'] == campaign_id, 'explicit selection campaign')
+            require(not db.execute('SELECT 1 FROM recurrence_selection').fetchone(), 'selection immutable/consumed')
+            require(not db.execute('SELECT 1 FROM recurrence_slot').fetchone() and
+                    not db.execute('SELECT 1 FROM pilot_slot').fetchone(), 'global WIP1')
+            self._selection_receipt(db, value, admitting=True)
+            require(protected(path) == (value, digest), 'selection changed during admission')
+            db.execute('INSERT INTO recurrence_selection VALUES(1,?,?)', (campaign_id, digest))
+            for member in value['members']:
+                db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND member_id=?",
+                           (member['batch_id'], member['member_id']))
+
+    def _selection_target(self, db, value, batch_id, member_id=None):
+        target = self._selection_receipt(db, value)
+        require(target is not None and target['batch_id'] == batch_id and
+                (member_id is None or target['member_id'] == member_id), 'only next selected member may dispatch')
+        return target
+
     def _exclusive(self, db, batch_id=None, member_id=None):
         """A pinned sample closes every other new-dispatch route, even after expiry.
 
         Use the existing immutable batch receipt pointer as the durable stop marker;
         missing/changed protected bytes fail closed, never restore broad authority.
         """
+        selection = self._selection(db)
+        if selection:
+            if batch_id is not None:
+                self._selection_target(db, selection, batch_id, member_id)
+            return selection
         rows = list(db.execute("SELECT * FROM recurrence_batches WHERE receipt_path LIKE '%/sample-approval.json'"))
         require(len(rows) <= 1, 'only one exclusive sample')
         if not rows:
@@ -818,6 +937,7 @@ class Queue:
         path = CONTROL / batch_id / 'sample-approval.json'
         value, digest = protected(path)
         with self.ledger._transaction() as db:
+            require(self._selection(db) is None, 'selection forbids sample reauthorization')
             self._exclusive(db, batch_id, member_id)
             row, batch = self._batch(db, batch_id)
             require(row['receipt_path'] is None or
@@ -838,7 +958,8 @@ class Queue:
     def _authority(self, batch_id, manifest, envelope, *, history_required=True):
         with self.ledger._transaction() as db:
             row, batch = self._batch(db, batch_id)
-        receipt = self._receipt(row, batch)
+            selection = self._selection(db)
+        receipt = selection or self._receipt(row, batch)
         member = next((m for m in batch['members'] if m['manifest'] == manifest), None)
         require(member is not None, 'exact member manifest')
         with self.ledger._transaction() as db:
@@ -882,6 +1003,16 @@ class Queue:
     def next(self, batch_id):
         with self.ledger._transaction() as db:
             batch_row, batch = self._batch(db, batch_id)
+            selection = self._selection(db)
+            if selection:
+                target = self._selection_receipt(db, selection)
+                if target is None:
+                    return None
+                require(target['batch_id'] == batch_id, 'only next selected batch may dispatch')
+                if (target['state'] != 'AUTHORIZED' or db.execute('SELECT 1 FROM recurrence_slot').fetchone()
+                        or db.execute('SELECT 1 FROM pilot_slot').fetchone()):
+                    return None
+                return {'member_id': target['member_id'], 'state': target['state']}
             selected = self._exclusive(db, batch_id)
             slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch_id,)).fetchone()
             if slot:
@@ -902,7 +1033,9 @@ class Queue:
     def run_one(self, batch_id, envelope, *, executor_id, transport=None, writer_hook=None):
         with self.ledger._transaction() as db:
             _, batch = self._batch(db, batch_id)
-            row = db.execute('SELECT * FROM recurrence_members WHERE batch_id=? AND cleanup=0 ORDER BY ordinal LIMIT 1', (batch_id,)).fetchone()
+            selection = self._selection(db)
+            row = (self._selection_target(db, selection, batch_id) if selection else
+                   db.execute('SELECT * FROM recurrence_members WHERE batch_id=? AND cleanup=0 ORDER BY ordinal LIMIT 1', (batch_id,)).fetchone())
             require(row is not None and row['state'] == 'AUTHORIZED', 'no authorized next member; never replay running')
             row = dict(row); manifest = batch['members'][row['ordinal']]['manifest']
         pipeline = self._pipeline(batch_id, transport=transport, writer_hook=writer_hook)
@@ -1019,7 +1152,7 @@ class Queue:
 @metrics.operational('recurrence.main', 'control')
 def main():
     parser = argparse.ArgumentParser(description='Finite on-demand queue; fixed Root policy and control files. No automatic next call.')
-    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'authorize-sample', 'run-one', 'recover', 'cleanup', 'close', 'reconcile-no-dispatch'))
+    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'authorize-sample', 'authorize-selection', 'run-one', 'recover', 'cleanup', 'close', 'reconcile-no-dispatch'))
     parser.add_argument('batch_id', nargs='?')
     parser.add_argument('--member-id')
     parser.add_argument('--executor-id')
@@ -1047,6 +1180,10 @@ def main():
         elif args.command == 'authorize-sample':
             require(args.executor_id is None, 'control takes no executor')
             queue.authorize_sample(args.batch_id, args.member_id); result = {'state': 'AUTHORIZED', 'member_id': args.member_id}
+        elif args.command == 'authorize-selection':
+            require(args.executor_id is None and args.member_id is None, 'selection control takes campaign only')
+            queue.authorize_selection(args.batch_id)
+            result = {'state': 'AUTHORIZED', 'campaign_id': args.batch_id, 'selected_calls': 5}
         elif args.command == 'reconcile-no-dispatch':
             require(args.executor_id is None, 'control takes no executor')
             result = queue.reconcile_no_dispatch(args.batch_id, args.member_id,

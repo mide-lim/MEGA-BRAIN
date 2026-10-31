@@ -64,6 +64,9 @@ MEMBER_KEYS = {'manifest', 'target', 'max_calls', 'max_gross_USD', 'currency'}
 APPROVAL_KEYS = {'decision', 'batch_id', 'manifest_sha256', 'approval_id',
                  'approved_by', 'approved_at', 'expires_at',
                  'rights_and_global_privacy_accepted', 'max_calls', 'max_gross_USD'}
+SAMPLE_KEYS = APPROVAL_KEYS | {'campaign_id', 'campaign_manifest_sha256', 'member_id',
+                               'run_manifest_sha256', 'source_sha256', 'metadata_sha256',
+                               'request_sha256'}
 CLEANUP_KEYS = {'decision', 'batch_id', 'member_id', 'grant_id', 'source_sha256',
                 'worker_result_sha256', 'cleaned_at', 'token_copy_removed',
                 'temporary_bindings_removed', 'other_bindings_preserved'}
@@ -291,6 +294,7 @@ class Queue:
         path = CONTROL / identifier(campaign_id) / 'campaign-approval.json'
         _, digest = protected(path)
         with self.ledger._transaction() as db:
+            require(not self._exclusive(db), 'exclusive sample cannot renew campaign authority')
             row = db.execute('SELECT * FROM recurrence_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone()
             require(row is not None, 'unknown campaign')
             require(row['receipt_path'] is None or (row['receipt_path'] == str(path) and row['receipt_sha256'] == digest),
@@ -321,14 +325,22 @@ class Queue:
                                        (bid,)).fetchone(), 'prior group persistence/cleanup barrier')
 
     def _reserve_campaign(self, db, batch, member, envelope):
+        selected = self._exclusive(db, batch['batch_id'], member['manifest']['task']['reel_id'])
         slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
         if slot is None:
             return
-        manifest, _ = self._campaign(db, slot['campaign_id'])
+        manifest, _ = self._campaign(db, slot['campaign_id'], authority=not bool(selected))
         require(slot['effective_sha256'] == sha(canonical(batch)), 'campaign batch changed')
-        self._campaign_order(db, slot, manifest)
+        if selected:
+            row, _ = self._batch(db, batch['batch_id'])
+            self._sample_receipt(db, row, batch, selected)
+            require(not db.execute('SELECT 1 FROM recurrence_campaign_allocations WHERE member_id=? OR source_sha256=? OR grant_id=?',
+                    (selected['member_id'], selected['source_sha256'], envelope['grant']['grant_id'])).fetchone(),
+                    'sample reservation consumed')
+        else:
+            self._campaign_order(db, slot, manifest)
         rows = list(db.execute('SELECT gross_USD FROM recurrence_campaign_allocations WHERE campaign_id=?', (slot['campaign_id'],)))
-        gross = money(member['max_gross_USD'], 3)
+        gross = money(selected['max_gross_USD'] if selected else member['max_gross_USD'], 3)
         require(len(rows) + 1 <= manifest['max_calls'] and
                 sum((money(r[0], 3) for r in rows), gross) <= money(manifest['max_gross_USD'], 45), 'campaign capacity exhausted')
         task = member['manifest']['task']
@@ -699,6 +711,10 @@ class Queue:
         require(row['receipt_path'] is not None, 'explicit batch authorization required')
         value, digest = protected(row['receipt_path'])
         require(digest == row['receipt_sha256'], 'receipt bytes changed')
+        if value.get('decision') == 'APPROVE_REELS_EXCLUSIVE_SAMPLE':
+            with self.ledger._transaction() as db:
+                self._sample_receipt(db, row, batch, value)
+            return value
         require(set(value) == APPROVAL_KEYS, 'approval keys')
         require(value['decision'] == 'APPROVE_REELS_BATCH' and value['batch_id'] == batch['batch_id'] and
                 value['manifest_sha256'] == row['manifest_sha256'], 'approval identity')
@@ -715,6 +731,7 @@ class Queue:
         return value
 
     def _campaign_child(self, db, batch, receipt):
+        require(not self._exclusive(db), 'exclusive sample forbids broad batch authority')
         slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
         parent = db.execute('SELECT campaign_id FROM recurrence_campaigns WHERE parent_approval_id=?', (receipt['approval_id'],)).fetchone()
         if slot is None:
@@ -727,7 +744,8 @@ class Queue:
                 'child must derive same human parent decision')
 
     def authorize(self, batch_id, receipt):
-        _, digest = protected(receipt)
+        value, digest = protected(receipt)
+        require(value.get('decision') == 'APPROVE_REELS_BATCH', 'use explicit authorize-sample control')
         with self.ledger._transaction() as db:
             checked_row, checked_batch = self._batch(db, batch_id)
         checked_row.update(receipt_path=str(receipt), receipt_sha256=digest)
@@ -746,12 +764,85 @@ class Queue:
             db.execute('UPDATE recurrence_batches SET receipt_path=?,receipt_sha256=? WHERE batch_id=?', (str(receipt), digest, batch_id))
             db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND state='PENDING'", (batch_id,))
 
+    def _exclusive(self, db, batch_id=None, member_id=None):
+        """A pinned sample closes every other new-dispatch route, even after expiry.
+
+        Use the existing immutable batch receipt pointer as the durable stop marker;
+        missing/changed protected bytes fail closed, never restore broad authority.
+        """
+        rows = list(db.execute("SELECT * FROM recurrence_batches WHERE receipt_path LIKE '%/sample-approval.json'"))
+        require(len(rows) <= 1, 'only one exclusive sample')
+        if not rows:
+            return None
+        row = rows[0]
+        value, digest = protected(row['receipt_path'])
+        require(digest == row['receipt_sha256'] and value.get('decision') == 'APPROVE_REELS_EXCLUSIVE_SAMPLE',
+                'exclusive receipt changed')
+        if batch_id is not None:
+            require(row['batch_id'] == batch_id and (member_id is None or value['member_id'] == member_id),
+                    'only exclusive sample may dispatch')
+        return value
+
+    def _sample_receipt(self, db, row, batch, value):
+        require(set(value) == SAMPLE_KEYS and value['decision'] == 'APPROVE_REELS_EXCLUSIVE_SAMPLE', 'sample receipt shape')
+        require(row['receipt_path'] == str(CONTROL / batch['batch_id'] / 'sample-approval.json') and
+                protected(row['receipt_path']) == (value, row['receipt_sha256']), 'fixed immutable sample receipt')
+        manifest, _ = self._campaign(db, value['campaign_id'], authority=False)
+        slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch['batch_id'],)).fetchone()
+        require(slot is not None and slot['ordinal'] == 3 and slot['campaign_id'] == value['campaign_id'] and
+                slot['effective_sha256'] == sha(canonical(batch)) and
+                value['campaign_manifest_sha256'] == sha(canonical(manifest)) and
+                value['batch_id'] == batch['batch_id'] and value['manifest_sha256'] == row['manifest_sha256'],
+                'sample original campaign/batch binding')
+        # The preparation helper requires the original first member authorized.
+        member = batch['members'][0]; run = member['manifest']; task = run['task']; src = task['source']
+        require(member == manifest['groups'][3]['planned']['members'][0] and
+                value['member_id'] == task['reel_id'] and
+                value['run_manifest_sha256'] == sha(canonical(run)) and
+                value['source_sha256'] == src['source_video_sha256'] and
+                value['metadata_sha256'] == src['metadata_sha256'] and value['request_sha256'] == run['request_sha256'],
+                'sample exact first member fingerprints')
+        require(value['rights_and_global_privacy_accepted'] is True and
+                isinstance(value['approval_id'], str) and 0 < len(value['approval_id']) <= 200 and
+                isinstance(value['approved_by'], str) and 0 < len(value['approved_by']) <= 200 and
+                not db.execute('SELECT 1 FROM recurrence_campaigns WHERE parent_approval_id=?', (value['approval_id'],)).fetchone(),
+                'fresh sample human/privacy authority')
+        require(approval._instant(value['approved_at']) <= now() < approval._instant(value['expires_at']), 'sample receipt outside validity')
+        count(value['max_calls'], 1, 1)
+        require(money(value['max_gross_USD'], 3) <= money(member['max_gross_USD'], 3), 'sample budget')
+        return member
+
+    def authorize_sample(self, batch_id, member_id):
+        """Explicit Root receipt control; no parent authority, inventory edits or IO."""
+        identifier(batch_id); identifier(member_id)
+        path = CONTROL / batch_id / 'sample-approval.json'
+        value, digest = protected(path)
+        with self.ledger._transaction() as db:
+            self._exclusive(db, batch_id, member_id)
+            row, batch = self._batch(db, batch_id)
+            require(row['receipt_path'] is None or
+                    (row['receipt_path'] == str(path) and row['receipt_sha256'] == digest), 'sample approval immutable')
+            row.update(receipt_path=str(path), receipt_sha256=digest)
+            member = self._sample_receipt(db, row, batch, value)
+            require(value['member_id'] == member_id, 'explicit sample selector')
+            require(not db.execute('SELECT 1 FROM recurrence_slot').fetchone() and
+                    not db.execute('SELECT 1 FROM pilot_slot').fetchone(), 'global WIP1')
+            target = db.execute('SELECT * FROM recurrence_members WHERE batch_id=? AND member_id=?', (batch_id, member_id)).fetchone()
+            require(target['state'] in ('PENDING', 'AUTHORIZED') and target['grant_id'] is None and
+                    not db.execute('SELECT 1 FROM recurrence_campaign_allocations WHERE member_id=? OR source_sha256=?',
+                                   (member_id, value['source_sha256'])).fetchone(), 'sample already consumed')
+            self._prior(db, member)
+            db.execute('UPDATE recurrence_batches SET receipt_path=?,receipt_sha256=? WHERE batch_id=?', (str(path), digest, batch_id))
+            db.execute("UPDATE recurrence_members SET state='AUTHORIZED' WHERE batch_id=? AND member_id=?", (batch_id, member_id))
+
     def _authority(self, batch_id, manifest, envelope, *, history_required=True):
         with self.ledger._transaction() as db:
             row, batch = self._batch(db, batch_id)
         receipt = self._receipt(row, batch)
         member = next((m for m in batch['members'] if m['manifest'] == manifest), None)
         require(member is not None, 'exact member manifest')
+        with self.ledger._transaction() as db:
+            self._exclusive(db, batch_id, manifest['task']['reel_id'])
         grant = envelope['grant']
         self._history_receipt(batch)
         if history_required:
@@ -770,6 +861,8 @@ class Queue:
                 approval._instant(grant['expires_at']) <= approval._instant(receipt['expires_at']), 'grant batch authority/expiry')
         require(grant['limits']['currency'] == 'USD' and
                 money(grant['limits']['gross_budget'], 3) <= money(member['max_gross_USD'], 3), 'member grant budget')
+        if receipt['decision'] == 'APPROVE_REELS_EXCLUSIVE_SAMPLE':
+            require(money(grant['limits']['gross_budget'], 3) <= money(receipt['max_gross_USD'], 3), 'sample grant budget')
 
     def _pipeline(self, batch_id, *, transport=None, writer_hook=None):
         if self.synthetic:
@@ -788,14 +881,20 @@ class Queue:
 
     def next(self, batch_id):
         with self.ledger._transaction() as db:
-            self._batch(db, batch_id)
+            batch_row, batch = self._batch(db, batch_id)
+            selected = self._exclusive(db, batch_id)
             slot = db.execute('SELECT * FROM recurrence_campaign_slots WHERE batch_id=?', (batch_id,)).fetchone()
             if slot:
-                manifest, _ = self._campaign(db, slot['campaign_id'])
-                self._campaign_order(db, slot, manifest)
+                if selected:
+                    self._sample_receipt(db, batch_row, batch, selected)
+                else:
+                    manifest, _ = self._campaign(db, slot['campaign_id'])
+                    self._campaign_order(db, slot, manifest)
             if db.execute('SELECT 1 FROM recurrence_slot').fetchone() or db.execute('SELECT 1 FROM pilot_slot').fetchone():
                 return None
             row = db.execute('SELECT member_id,state FROM recurrence_members WHERE batch_id=? AND cleanup=0 ORDER BY ordinal LIMIT 1', (batch_id,)).fetchone()
+            if selected and (row is None or row['member_id'] != selected['member_id'] or row['state'] != 'AUTHORIZED'):
+                return None
             return dict(row) if row else None
 
     @metrics.operational('Queue.run_one')
@@ -920,7 +1019,7 @@ class Queue:
 @metrics.operational('recurrence.main', 'control')
 def main():
     parser = argparse.ArgumentParser(description='Finite on-demand queue; fixed Root policy and control files. No automatic next call.')
-    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'run-one', 'recover', 'cleanup', 'close', 'reconcile-no-dispatch'))
+    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'authorize-sample', 'run-one', 'recover', 'cleanup', 'close', 'reconcile-no-dispatch'))
     parser.add_argument('batch_id', nargs='?')
     parser.add_argument('--member-id')
     parser.add_argument('--executor-id')
@@ -945,6 +1044,9 @@ def main():
             result = {'manifest_sha256': queue.prepare(batch), 'state': 'PENDING'}
         elif args.command == 'authorize':
             queue.authorize(args.batch_id, base / 'approval.json'); result = {'state': 'AUTHORIZED'}
+        elif args.command == 'authorize-sample':
+            require(args.executor_id is None, 'control takes no executor')
+            queue.authorize_sample(args.batch_id, args.member_id); result = {'state': 'AUTHORIZED', 'member_id': args.member_id}
         elif args.command == 'reconcile-no-dispatch':
             require(args.executor_id is None, 'control takes no executor')
             result = queue.reconcile_no_dispatch(args.batch_id, args.member_id,

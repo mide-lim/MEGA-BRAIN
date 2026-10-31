@@ -1,5 +1,6 @@
 """Synthetic campaign proof. No imported TestCase aliases or live authority."""
 import copy
+import io
 from contextlib import contextmanager
 import datetime as dt
 from pathlib import Path
@@ -23,9 +24,11 @@ class CampaignTests(unittest.TestCase):
         for g in range(5):
             batch = copy.deepcopy(self.case.batch)
             batch.update(batch_id='campaign-batch-%d' % g, members=[], max_calls=3, max_gross_USD='9')
+            if g == 3:
+                batch['batch_id'] = 'sample-batch-3'
             for i in range(3):
                 member = copy.deepcopy(self.case.batch['members'][0])
-                task = member['manifest']['task']; rid = 'campaign-%d-%d' % (g, i)
+                task = member['manifest']['task']; rid = 'sample-3-0' if (g, i) == (3, 0) else 'campaign-%d-%d' % (g, i)
                 task['reel_id'] = rid
                 data = self.f.data + rid.encode(); metadata = canonical({'id': rid, 'synthetic': True})
                 rel = 'media/reels/' + rid; directory = self.f.root/'media'/rel
@@ -40,7 +43,7 @@ class CampaignTests(unittest.TestCase):
                          'groups': self.groups, 'currency': 'USD', 'max_calls': 15, 'max_gross_USD': '45',
                          'wip': 1, 'retries': 0, 'fallback': False}
 
-    def register(self):
+    def register(self, prepared_groups=5):
         digest = self.q.register_campaign(self.manifest)
         value = self.case.approval()
         value.pop('batch_id'); value.update(decision='APPROVE_REELS_CAMPAIGN', campaign_id='synthetic-campaign',
@@ -49,7 +52,7 @@ class CampaignTests(unittest.TestCase):
         self.parent = value
         self.parent_path = self.case.write_receipt(self.case.control/'synthetic-campaign/campaign-approval.json', value)
         self.q.authorize_campaign('synthetic-campaign')
-        for group in self.groups:
+        for group in self.groups[:prepared_groups]:
             batch = group['effective']
             if batch is None:
                 continue
@@ -59,11 +62,13 @@ class CampaignTests(unittest.TestCase):
             self.case.write_receipt(self.case.control/(batch['batch_id']+'.json'), child)
             self.q.authorize(batch['batch_id'], self.case.control/(batch['batch_id']+'.json'))
 
-    def envelope(self, g=0, i=0):
+    def envelope(self, g=0, i=0, sample=False):
         member = self.groups[g]['effective']['members'][i]; manifest = member['manifest']; task = manifest['task']
         grant = copy.deepcopy(self.f.grant)
-        grant.update(grant_id='pilot-'+task['reel_id'], manifest_sha256=sha(canonical(manifest)),
+        grant.update(grant_id='pilot-sample' if task['reel_id'] == 'sample-3-0' else 'pilot-'+task['reel_id'], manifest_sha256=sha(canonical(manifest)),
                      request_sha256=manifest['request_sha256'], bindings=r.worker.observed_bindings(self.f.policy, task))
+        if sample:
+            grant['authority']['approval_id'] = 'synthetic-exclusive-sample'
         return self.f.sign(grant)
 
     def execute(self, g=0, i=0, fake=None, hook=None):
@@ -430,6 +435,157 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(self.q.status(batch['batch_id'])[0]['state'], 'BLOCKED')
         self.assertEqual(self.status()['reserved_calls'], 1)
         self.assertEqual(fake.calls, 0)
+
+
+    def sample_setup(self, history=True):
+        # Group04 really is unprepared, and group03 retains two AUTHORIZED rows.
+        self.register(prepared_groups=3)
+        if history:
+            for g in range(2):
+                for i in range(3):
+                    self.execute(g, i); self.close(g, i)
+            self.execute(2, 0); self.close(2, 0)
+        self.parent_path.unlink()  # Archived/unavailable, never renewed.
+        self.sample_batch = self.groups[3]['effective']
+        self.bid = self.sample_batch['batch_id']; self.mid = 'sample-3-0'
+        self.case.history_receipt(self.sample_batch)
+        self.q.prepare(self.sample_batch)
+        run = self.sample_batch['members'][0]['manifest']; src = run['task']['source']
+        self.sample = dict(self.case.approval(), decision='APPROVE_REELS_EXCLUSIVE_SAMPLE',
+            batch_id=self.bid, manifest_sha256=sha(canonical(self.sample_batch)),
+            approval_id='synthetic-exclusive-sample', campaign_id=self.manifest['campaign_id'],
+            campaign_manifest_sha256=sha(canonical(self.manifest)), member_id=self.mid,
+            run_manifest_sha256=sha(canonical(run)), source_sha256=src['source_video_sha256'],
+            metadata_sha256=src['metadata_sha256'], request_sha256=run['request_sha256'])
+        self.sample_path = self.case.control/self.bid/'sample-approval.json'
+        self.case.write_receipt(self.sample_path, self.sample)
+
+    def admit_sample(self):
+        self.q.authorize_sample(self.bid, self.mid)
+
+    def sample_run(self, fake=None, envelope=None):
+        return self.q.run_one(self.bid, envelope or self.envelope(3, 0, sample=True),
+                             executor_id='synthetic-sample', transport=fake or FakeProvider())
+
+    def test_22_exclusive_original_group04_once_preserves_stopped_group03(self):
+        self.sample_setup()
+        original = copy.deepcopy(self.status())
+        with self.q.ledger._transaction() as db:
+            earlier = [dict(x) for x in db.execute('SELECT * FROM recurrence_members WHERE batch_id=?', ('campaign-batch-2',))]
+        self.assertEqual([x['state'] for x in earlier[1:]], ['AUTHORIZED', 'AUTHORIZED'])
+        self.admit_sample()
+        self.assertEqual([x['state'] for x in self.q.status(self.bid)], ['AUTHORIZED', 'PENDING', 'PENDING'])
+        self.assertEqual(self.q.next(self.bid), {'member_id': self.mid, 'state': 'AUTHORIZED'})
+        fake = FakeProvider(); self.assertEqual(self.sample_run(fake)['state'], 'PERSISTED')
+        self.assertEqual(fake.calls, 1)
+        self.assertIsNone(self.q.next(self.bid))
+        self.close(3, 0)
+        self.assertIsNone(self.q.next(self.bid))
+        self.assertEqual(self.status()['manifest'], original['manifest'])
+        self.assertEqual([x for x in self.status()['reservations'] if x['member_id'] != self.mid], original['reservations'])
+        self.assertEqual(self.status()['reserved_calls'], original['reserved_calls'] + 1)
+        self.assertEqual(self.status()['reserved_gross_USD'], '24')
+        with self.q.ledger._transaction() as db:
+            self.assertEqual(earlier, [dict(x) for x in db.execute('SELECT * FROM recurrence_members WHERE batch_id=?', ('campaign-batch-2',))])
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 0)
+        with self.assertRaises(Exception): self.sample_run(fake)
+        with self.assertRaises(Exception): self.admit_sample()
+        self.assertEqual(fake.calls, 1)
+        # Expired approval does not re-enable siblings or the old campaign.
+        with mock.patch.object(r, 'now', return_value=r.approval._instant(self.sample['expires_at'])):
+            with self.assertRaises(Exception): self.q.next(self.bid)
+            with self.assertRaises(Exception): self.q.next('campaign-batch-2')
+
+    def test_23_sample_refuses_siblings_earlier_broad_authority_and_new_campaign(self):
+        self.sample_setup(history=False); self.admit_sample(); fake = FakeProvider()
+        for g, i in ((3, 1), (2, 0), (0, 0)):
+            with self.subTest(g=g, i=i), self.assertRaises(Exception):
+                self.q._authority(self.groups[g]['effective']['batch_id'],
+                                  self.groups[g]['effective']['members'][i]['manifest'], self.envelope(g, i, sample=True))
+        with self.assertRaises(Exception): self.execute(2, 0, fake)
+        with self.assertRaises(Exception): self.q.next('campaign-batch-2')
+        with self.assertRaises(Exception): self.q.authorize(self.bid, self.sample_path)
+        with self.assertRaises(Exception): self.q.authorize('campaign-batch-2', self.case.control/'campaign-batch-2.json')
+        self.case.write_receipt(self.parent_path, self.parent)
+        with self.assertRaises(Exception): self.q.authorize_campaign('synthetic-campaign')
+        self.assert_parent_cannot_reset()
+        self.assertEqual(fake.calls, 0)
+
+    def test_24_sample_receipt_exact_shape_fingerprints_expiry_and_selector(self):
+        self.sample_setup(history=False)
+        for key, value in [('campaign_id', 'fake-campaign'), ('batch_id', 'other-batch'),
+                ('campaign_manifest_sha256', 'f'*64), ('manifest_sha256', 'f'*64),
+                ('member_id', 'campaign-3-1'), ('source_sha256', 'f'*64), ('metadata_sha256', 'f'*64),
+                ('run_manifest_sha256', 'f'*64), ('request_sha256', 'f'*64),
+                ('expires_at', '2000-01-01T00:00:00Z'), ('rights_and_global_privacy_accepted', False),
+                ('max_calls', 2), ('max_gross_USD', '3.01'), ('approval_id', self.manifest['parent_approval_id'])]:
+            self.case.write_receipt(self.sample_path, dict(self.sample, **{key: value}))
+            with self.subTest(key=key), self.assertRaises(Exception): self.admit_sample()
+        self.case.write_receipt(self.sample_path, self.sample)
+        with self.assertRaises(Exception): self.q.authorize_sample(self.bid, 'campaign-3-1')
+        self.admit_sample()
+        self.case.write_receipt(self.sample_path, dict(self.sample, approved_by='changed'))
+        fake = FakeProvider()
+        with self.assertRaises(Exception): self.q.next(self.bid)
+        with self.assertRaises(Exception): self.sample_run(fake)
+        with self.assertRaises(Exception): self.q.next('campaign-batch-0')
+        self.assertEqual(fake.calls, 0)
+
+    def test_25_sample_concurrent_slot_capacity_uncertainty_and_no_retry(self):
+        self.sample_setup(history=False)
+        with self.q.ledger._transaction() as db:
+            db.execute('INSERT INTO recurrence_slot VALUES(1,?,?)', ('campaign-batch-2', 'campaign-2-0'))
+        with self.assertRaisesRegex(Exception, 'WIP1'): self.admit_sample()
+        with self.q.ledger._transaction() as db: db.execute('DELETE FROM recurrence_slot')
+        self.admit_sample(); fake = FakeProvider(error=True)
+        self.assertEqual(self.sample_run(fake)['state'], 'UNKNOWN')
+        self.assertEqual(fake.calls, 1)
+        with self.assertRaises(Exception): self.sample_run(fake)
+        with self.assertRaises(Exception): self.admit_sample()
+        self.assertEqual(self.status()['reserved_calls'], 1)
+        self.assertEqual(fake.calls, 1)
+
+    def test_26_sample_original_total_ceiling_and_signed_grant_checks(self):
+        self.manifest['max_calls'] = 1
+        self.register(prepared_groups=3); self.execute(); self.close(0, 0)
+        # Prepare a fresh original slot, without a usable parent.
+        self.parent_path.unlink()
+        batch = self.groups[3]['effective']; self.case.history_receipt(batch); self.q.prepare(batch)
+        run = batch['members'][0]['manifest']; src = run['task']['source']
+        value = dict(self.case.approval(), decision='APPROVE_REELS_EXCLUSIVE_SAMPLE',
+            approval_id='synthetic-exclusive-sample', batch_id=batch['batch_id'], manifest_sha256=sha(canonical(batch)),
+            campaign_id=self.manifest['campaign_id'], campaign_manifest_sha256=sha(canonical(self.manifest)),
+            member_id='sample-3-0', run_manifest_sha256=sha(canonical(run)), source_sha256=src['source_video_sha256'],
+            metadata_sha256=src['metadata_sha256'], request_sha256=run['request_sha256'])
+        self.case.write_receipt(self.case.control/batch['batch_id']/'sample-approval.json', value)
+        self.q.authorize_sample(batch['batch_id'], 'sample-3-0'); fake = FakeProvider()
+        with self.assertRaises(Exception):
+            self.q.run_one(batch['batch_id'], self.envelope(3, 0), executor_id='wrong-authority', transport=fake)
+        with self.assertRaisesRegex(Exception, 'capacity'):
+            self.q.run_one(batch['batch_id'], self.envelope(3, 0, sample=True), executor_id='ceiling', transport=fake)
+        self.assertEqual(fake.calls, 0); self.assertEqual(self.status()['reserved_calls'], 1)
+
+    def test_27_sample_normal_main_run_one_and_no_implicit_next(self):
+        self.sample_setup(history=False)
+        fake = FakeProvider(); real_queue = self.q
+        self.case.write_receipt(self.case.control/self.bid/(self.mid+'.grant.json'), self.envelope(3, 0, sample=True))
+        pipeline = self.q._pipeline
+        def synthetic_pipeline(batch_id, **kwargs):
+            return pipeline(batch_id, transport=fake)
+        with mock.patch.object(r.worker, 'load_policy', return_value=self.f.policy), \
+             mock.patch.object(r, 'Queue', return_value=real_queue), \
+             mock.patch.object(self.q, '_pipeline', side_effect=synthetic_pipeline), \
+             mock.patch.object(sys, 'argv', ['recurrence.py', 'authorize-sample', self.bid, '--member-id', self.mid]), \
+             mock.patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(r.main(), 0)
+        with mock.patch.object(r.worker, 'load_policy', return_value=self.f.policy), \
+             mock.patch.object(r, 'Queue', return_value=real_queue), \
+             mock.patch.object(self.q, '_pipeline', side_effect=synthetic_pipeline), \
+             mock.patch.object(sys, 'argv', ['recurrence.py', 'run-one', self.bid, '--executor-id', 'cli-synthetic']), \
+             mock.patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(r.main(), 0)
+            self.assertEqual(r.main(), 1)
+        self.assertEqual(fake.calls, 1)
 
 
 class CampaignSchemaTests(unittest.TestCase):

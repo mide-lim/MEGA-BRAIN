@@ -51,13 +51,13 @@ def fixture_grant(root, now=None):
         "request_sha256": "c" * 64, "manifest_sha256": "d" * 64}
 
 
-def _contender(path, checked, start, output):
+def _contender(ledger, checked, start, output):
     start.wait()
     try:
-        digest = Ledger(path).reserve(checked)
+        digest = ledger.reserve(checked)
         output.put(("reserved", digest))
-    except (LedgerDenied, sqlite3.OperationalError, sqlite3.IntegrityError):
-        output.put(("denied", ""))
+    except (LedgerDenied, sqlite3.OperationalError, sqlite3.IntegrityError) as exc:
+        output.put(("denied", type(exc).__name__ + ": " + str(exc)))
 
 
 def _crash_boundary(path, checked, signal):
@@ -405,14 +405,23 @@ class ApprovalLedgerTests(unittest.TestCase):
         ctx = multiprocessing.get_context("fork")
         start, output = ctx.Barrier(2), ctx.Queue()
         checked = self.verified()
-        processes = [ctx.Process(target=_contender, args=(self.path, checked, start, output)) for _ in range(2)]
+        # Constructors also take timeout=0 write transactions. Racing those with
+        # reserve can deny BOTH children before a reservation commits. Validate
+        # each handle first (Ledger retains no connection), then race only the
+        # actual durable reservations on independent child connections.
+        ledgers = [Ledger(self.path) for _ in range(2)]
+        processes = [ctx.Process(target=_contender, args=(ledger, checked, start, output)) for ledger in ledgers]
         for process in processes:
             process.start()
         for process in processes:
             process.join(10)
             self.assertEqual(process.exitcode, 0)
-        outcomes = sorted(output.get(timeout=2)[0] for _ in processes)
-        self.assertEqual(outcomes, ["denied", "reserved"])
+        outcomes = [output.get(timeout=2) for _ in processes]
+        self.assertEqual(sorted(row[0] for row in outcomes), ["denied", "reserved"], outcomes)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM pilot_slot").fetchone()[0], 1)
+        output.close(); output.join_thread()
 
     def test_process_kill_after_dispatch_recovers_unknown_without_retry(self):
         ctx = multiprocessing.get_context("fork")

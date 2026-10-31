@@ -46,12 +46,12 @@ class CampaignTests(unittest.TestCase):
     def register(self, prepared_groups=5):
         digest = self.q.register_campaign(self.manifest)
         value = self.case.approval()
-        value.pop('batch_id'); value.update(decision='APPROVE_REELS_CAMPAIGN', campaign_id='synthetic-campaign',
+        value.pop('batch_id'); value.update(decision='APPROVE_REELS_CAMPAIGN', campaign_id=self.manifest['campaign_id'],
                                           manifest_sha256=digest, max_calls=self.manifest['max_calls'],
                                           max_gross_USD=self.manifest['max_gross_USD'])
         self.parent = value
-        self.parent_path = self.case.write_receipt(self.case.control/'synthetic-campaign/campaign-approval.json', value)
-        self.q.authorize_campaign('synthetic-campaign')
+        self.parent_path = self.case.write_receipt(self.case.control/self.manifest['campaign_id']/'campaign-approval.json', value)
+        self.q.authorize_campaign(self.manifest['campaign_id'])
         for group in self.groups[:prepared_groups]:
             batch = group['effective']
             if batch is None:
@@ -65,7 +65,7 @@ class CampaignTests(unittest.TestCase):
     def envelope(self, g=0, i=0, sample=False):
         member = self.groups[g]['effective']['members'][i]; manifest = member['manifest']; task = manifest['task']
         grant = copy.deepcopy(self.f.grant)
-        grant.update(grant_id='pilot-sample' if task['reel_id'] == 'sample-3-0' else 'pilot-'+task['reel_id'], manifest_sha256=sha(canonical(manifest)),
+        grant.update(grant_id='pilot-sample' if task['reel_id'] == 'sample-3-0' else 'pilot-'+task['reel_id'].lower().replace('_', '-'), manifest_sha256=sha(canonical(manifest)),
                      request_sha256=manifest['request_sha256'], bindings=r.worker.observed_bindings(self.f.policy, task))
         if sample:
             grant['authority']['approval_id'] = 'synthetic-exclusive-sample'
@@ -87,7 +87,7 @@ class CampaignTests(unittest.TestCase):
         self.q.cleanup(batch['batch_id'], rid, path, executor_id='cleanup', transport=FakeProvider())
 
     def status(self):
-        return self.q.campaign_status('synthetic-campaign')
+        return self.q.campaign_status(self.manifest['campaign_id'])
 
     def test_01_five_finite_immutable_registration(self):
         self.register(); self.assertEqual(self.status()['reserved_calls'], 0)
@@ -586,6 +586,280 @@ class CampaignTests(unittest.TestCase):
             self.assertEqual(r.main(), 0)
             self.assertEqual(r.main(), 1)
         self.assertEqual(fake.calls, 1)
+
+
+    def selection_setup(self, unrelated=False):
+        selected = {(2, 1): 'sample-2-1', (2, 2): 'sample-2-2',
+                    (3, 1): 'sample-3-1', (3, 2): 'sample-3-2', (4, 0): 'sample-4-0',
+                    (2, 0): 'sample-2-0'}
+        if unrelated:
+            self.manifest['campaign_id'] = 'orchard-inventory'
+            selected = {position: 'orchard-%d-%d' % position for position in selected}
+        for g in (2, 3, 4):
+            for kind in ('planned', 'effective'):
+                batch = self.groups[g][kind]
+                batch['batch_id'] = ('orchard-crate-%d' % g if unrelated else 'synthetic-campaign-%02d' % (g + 1))
+                for i, member in enumerate(batch['members']):
+                    task = member['manifest']['task']
+                    data = (self.f.root/'media'/task['source']['relative_video_path']).read_bytes()
+                    metadata = (self.f.root/'media'/task['source']['relative_metadata_path']).read_bytes()
+                    task['reel_id'] = selected.get((g, i), task['reel_id'])
+                    rel = 'media/reels/' + task['reel_id']
+                    directory = self.f.root/'media'/rel; directory.mkdir(parents=True, exist_ok=True)
+                    (directory/'video.mp4').write_bytes(data); (directory/'metadata.json').write_bytes(metadata)
+                    task['source'].update(relative_video_path=rel+'/video.mp4', relative_metadata_path=rel+'/metadata.json')
+                    member['manifest']['request_sha256'] = sha(r.worker.provider.request_bytes(task, data))
+        historical_approval = self.case.approval
+        def historical_receipt():
+            return dict(historical_approval(), expires_at=self.f.grant['expires_at'])
+        with mock.patch.object(self.case, 'approval', side_effect=historical_receipt):
+            self.register(prepared_groups=3)
+        for g in range(2):
+            for i in range(3): self.execute(g, i); self.close(g, i)
+        # A real expired-before-reserve attempt plus the existing protected reconciliation.
+        batch = self.groups[2]['effective']; bid = batch['batch_id']; mid = selected[(2, 0)]
+        run = batch['members'][0]['manifest']; source = run['task']['source']['source_video_sha256']
+        stamp = r.now(); old = copy.deepcopy(self.envelope(2, 0)['grant'])
+        for key in ('issued_at', 'not_before', 'expires_at'):
+            old[key] = (r.approval._instant(old[key])-dt.timedelta(minutes=10)).isoformat()
+        old['authority']['approved_at'] = (stamp-dt.timedelta(minutes=11)).isoformat()
+        envelope = self.f.sign(old)
+        pipeline = r.worker.Pipeline(self.f.policy, synthetic=True, transport=FakeProvider())
+        checked = pipeline._verify(run, envelope, stamp-dt.timedelta(minutes=9))
+        reserved = stamp-dt.timedelta(minutes=1)
+        with mock.patch('ledger._now', return_value=reserved.isoformat()):
+            self.q.ledger.reserve(checked, run_id='00000000-0000-4000-8000-000000000071')
+        with self.q.ledger._transaction() as db:
+            db.execute('INSERT INTO recurrence_slot VALUES(1,?,?)', (bid, mid))
+            db.execute("UPDATE recurrence_members SET state='RUNNING',envelope_json=?,run_manifest_sha256=?,grant_id=? WHERE member_id=?",
+                       (canonical(envelope).decode(), sha(canonical(run)), old['grant_id'], mid))
+            db.execute('INSERT INTO recurrence_campaign_allocations VALUES(?,?,?,?,?,?,1)',
+                       (self.manifest['campaign_id'], bid, mid, source, old['grant_id'], '3'))
+            attempt = dict(db.execute('SELECT * FROM attempts WHERE source_sha256=?', (source,)).fetchone())
+            member = dict(db.execute('SELECT * FROM recurrence_members WHERE member_id=?', (mid,)).fetchone())
+            events = [dict(x) for x in db.execute('SELECT sequence,event,at,details FROM events WHERE source_sha256=?', (source,))]
+            allocations = [dict(x) for x in db.execute('SELECT * FROM recurrence_campaign_allocations WHERE member_id=?', (mid,))]
+        finished = (reserved+dt.timedelta(seconds=1)).isoformat()
+        stopped = {'state': 'STOPPED', 'error_type': 'LedgerDenied', 'retry_allowed': False}
+        evidence = {'worker-result.json': {'result': stopped, 'exit': 1, 'automatic_retry': False, 'timed_out': False,
+                    'finished_at': finished, 'worker_pid': 2147483647}, 'worker.stdout': stopped,
+            'run-started.json': {'grant_id': old['grant_id'], 'retry': False, 'started_at': old['not_before']},
+            'signed-control.json': {'grant_id': old['grant_id'], 'expires_at': old['expires_at'], 'grant_signature_verified': True,
+                'token_bytes_read': False, 'new_generateContent_POSTs': 0, 'token_expires_at': old['expires_at'], 'policy_sha256': 'a'*64},
+            'token-cleanup.json': {'encrypted_envelope_removed': True, 'private_key_removed': True, 'token_copy_removed': True},
+            'IAM-cleanup.json': {'SDK_cleanup_verified': True, 'creator_removed': True, 'inference_binding_removed': True,
+                'other_bindings_preserved': True, 'member_id': mid, 'operation_id': 'synthetic-operation', 'checked_at': finished}}
+        hashes = {}
+        for name, value in evidence.items():
+            path = self.case.write_receipt(self.case.control/bid/(mid+'.reconcile-evidence')/name, value)
+            hashes[name] = sha(path.read_bytes())
+        proof = {'decision': 'RECONCILE_EXPIRED_BEFORE_DISPATCH', 'batch_id': bid, 'member_id': mid, 'source_sha256': source,
+            'grant_id': old['grant_id'], 'run_id': attempt['run_id'], 'expected_member_state': 'RUNNING', 'expected_attempt_state': 'RESERVED',
+            'ledger_identity': self.f.policy['ledger_identity'], 'batch_manifest_sha256': sha(canonical(batch)),
+            'run_manifest_sha256': sha(canonical(run)), 'request_sha256': run['request_sha256'], 'attempt_sha256': sha(canonical(attempt)),
+            'member_before': member, 'events': events, 'allocations': allocations, 'approved_at': stamp.isoformat(),
+            'expires_at': (stamp+dt.timedelta(minutes=5)).isoformat(), 'approved_by': 'synthetic-root-auditor',
+            'process_audit': {'complete': True, 'no_active_consumers': True, 'exclusive_operator_maintenance': True,
+                              'worker_pid': 2147483647, 'checked_at': finished}, 'evidence': hashes}
+        self.case.write_receipt(self.case.control/bid/(mid+'.reconcile.json'), proof)
+        self.q.reconcile_no_dispatch(bid, mid, **{k:proof[k] for k in
+            ('source_sha256', 'grant_id', 'run_id', 'expected_member_state', 'expected_attempt_state')})
+        # Keep protected historical approval bytes intact for the expiry transition.
+        self.sample_batch = self.groups[3]['effective']; self.bid = self.sample_batch['batch_id']; self.mid = 'sample-3-0'
+        self.case.history_receipt(self.sample_batch); self.q.prepare(self.sample_batch)
+        run = self.sample_batch['members'][0]['manifest']; src = run['task']['source']
+        self.sample = dict(self.case.approval(), decision='APPROVE_REELS_EXCLUSIVE_SAMPLE',
+            batch_id=self.bid, manifest_sha256=sha(canonical(self.sample_batch)), approval_id='synthetic-exclusive-sample',
+            campaign_id=self.manifest['campaign_id'], campaign_manifest_sha256=sha(canonical(self.manifest)), member_id=self.mid,
+            run_manifest_sha256=sha(canonical(run)), source_sha256=src['source_video_sha256'],
+            metadata_sha256=src['metadata_sha256'], request_sha256=run['request_sha256'])
+        self.sample_path = self.case.write_receipt(self.case.control/self.bid/'sample-approval.json', self.sample)
+        self.admit_sample(); self.sample_run(); self.close(3, 0)
+        batch = self.groups[4]['effective']; self.case.history_receipt(batch); self.q.prepare(batch)
+        self.selection = {'decision': 'APPROVE_REELS_SELECTION', 'campaign_id': self.manifest['campaign_id'],
+            'campaign_manifest_sha256': sha(canonical(self.manifest)), 'sample_receipt_sha256': sha(self.sample_path.read_bytes()),
+            'request_sha256': '893618df575900e5c63837e9890abfc36df7987c136e6ca0835d6f19c0c6c77d',
+            'approval_id': 'synthetic-fresh-five', 'approved_by': self.sample['approved_by'],
+            'approved_at': self.sample['approved_at'], 'expires_at': self.sample['expires_at'],
+            'rights_and_global_privacy_accepted': True, 'max_calls': 5, 'max_gross_USD': '15', 'currency': 'USD',
+            'wip': 1, 'retries': 0, 'fallback': False, 'members': []}
+        self.selection_order = [(2, 1), (2, 2), (3, 1), (3, 2), (4, 0)]
+        for g, i in self.selection_order:
+            batch = self.groups[g]['effective']; run = batch['members'][i]['manifest']; src = run['task']['source']
+            self.selection['members'].append({'batch_id': batch['batch_id'], 'ordinal': i, 'member_id': run['task']['reel_id'],
+                'manifest_sha256': sha(canonical(batch)), 'run_manifest_sha256': sha(canonical(run)),
+                'source_sha256': src['source_video_sha256'], 'metadata_sha256': src['metadata_sha256'],
+                'request_sha256': run['request_sha256'], 'max_calls': 1, 'max_gross_USD': '3'})
+        self.selection_path = self.case.write_receipt(self.case.control/self.manifest['campaign_id']/'selection-approval.json', self.selection)
+
+    def selection_admit(self):
+        self.q.authorize_selection(self.manifest['campaign_id'])
+
+    def selection_envelope(self, g, i):
+        grant = copy.deepcopy(self.envelope(g, i)['grant'])
+        grant['authority']['approval_id'] = self.selection['approval_id']
+        grant['expires_at'] = self.selection['expires_at']
+        return self.f.sign(grant)
+
+    def test_28_selection_five_normal_cli_lifecycle_preserves_history(self):
+        self.selection_setup()
+        with self.q.ledger._transaction() as db:
+            before = {t: [dict(x) for x in db.execute('SELECT * FROM '+t)] for t in
+                      ('attempts', 'events', 'recurrence_campaign_allocations', 'recurrence_batches', 'recurrence_campaigns')}
+            old_members = [dict(x) for x in db.execute("SELECT * FROM recurrence_members WHERE member_id IN ('sample-2-0','sample-3-0')")]
+        self.assertEqual(self.status()['reserved_calls'], 8)
+        self.assertEqual(self.status()['reserved_gross_USD'], '24')
+        pipeline = self.q._pipeline; transports = []
+        validate_policy = r.worker.validate_policy
+        def invoke(argv):
+            with mock.patch.object(r.worker, 'load_policy', return_value=self.f.policy), \
+                 mock.patch.object(r.worker, 'validate_policy', side_effect=lambda policy, **kw: validate_policy(policy, real=False)), \
+                 mock.patch.object(r.Queue, '_pipeline', side_effect=lambda bid, **kw: pipeline(bid, transport=fake)), \
+                 mock.patch.object(sys, 'argv', ['recurrence.py']+argv), \
+                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+                code = r.main()
+            self.assertEqual(code, 0, output.getvalue())
+            return r.approval.load_json(output.getvalue())
+        # Advance the actual authority clock beyond unchanged broad receipts,
+        # but keep the sample and fresh selection valid. No expiry method mocks.
+        transition = r.approval._instant(self.parent['expires_at'])
+        self.assertLess(transition, r.approval._instant(self.sample['expires_at']))
+        parent_bytes = self.parent_path.read_bytes()
+        with mock.patch.object(r, 'now', return_value=transition):
+            with self.q.ledger._transaction() as db:
+                with self.assertRaisesRegex(r.ContractError, 'campaign expiry'):
+                    self.q._campaign(db, self.manifest['campaign_id'])
+                row, batch = self.q._batch(db, self.groups[2]['effective']['batch_id'])
+            with self.assertRaisesRegex(r.ContractError, 'outside validity'):
+                self.q._receipt(row, batch)
+            self.assertEqual(invoke(['authorize-selection', self.manifest['campaign_id']])['state'], 'AUTHORIZED')
+            for g, i in self.selection_order:
+                # FakeProvider enforces one send per signed one-call grant.
+                # Reusing it across members would manufacture an UNKNOWN on send two.
+                fake = FakeProvider(); transports.append(fake)
+                batch = self.groups[g]['effective']; rid = batch['members'][i]['manifest']['task']['reel_id']
+                self.case.write_receipt(self.case.control/batch['batch_id']/(rid+'.grant.json'), self.selection_envelope(g, i))
+                result = invoke(['run-one', batch['batch_id'], '--executor-id', 'selection-cli'])
+                self.assertEqual(result['state'], 'PERSISTED', result)
+                self.assertEqual(fake.calls, 1)
+                self.assertIsNone(self.q.next(batch['batch_id']))
+                self.close(g, i)
+                self.q = r.Queue(self.f.policy, synthetic=True)  # durable selection, no in-memory cursor
+                pipeline = self.q._pipeline
+        self.assertEqual(self.parent_path.read_bytes(), parent_bytes)
+        self.assertEqual([transport.calls for transport in transports], [1] * 5)
+        self.assertEqual(self.status()['reserved_calls'], 13); self.assertEqual(self.status()['reserved_gross_USD'], '39')
+        with self.q.ledger._transaction() as db:
+            for table in ('attempts', 'events', 'recurrence_campaign_allocations'):
+                after = [dict(x) for x in db.execute('SELECT * FROM '+table)]
+                self.assertTrue(all(row in after for row in before[table]))
+            for table in ('recurrence_batches', 'recurrence_campaigns'):
+                self.assertEqual(before[table], [dict(x) for x in db.execute('SELECT * FROM '+table)])
+            self.assertEqual(old_members, [dict(x) for x in db.execute("SELECT * FROM recurrence_members WHERE member_id IN ('sample-2-0','sample-3-0')")])
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_members WHERE persisted=1 AND cleanup=1').fetchone()[0], 12)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM recurrence_slot').fetchone()[0], 0)
+        self.assertEqual([x['state'] for x in self.q.status(self.groups[4]['effective']['batch_id'])][1:], ['PENDING', 'PENDING'])
+        self.assertIsNone(self.q.next(self.groups[4]['effective']['batch_id']))
+        with self.assertRaises(Exception): self.selection_admit()
+        for g, i in [(4, 1), (2, 1), (3, 0)]:
+            with self.assertRaises(Exception):
+                self.q.run_one(self.groups[g]['effective']['batch_id'], self.selection_envelope(g, i), executor_id='denied', transport=fake)
+        self.assertEqual([transport.calls for transport in transports], [1] * 5)
+
+    def test_29_selection_mutations_and_unprotected_admission(self):
+        self.selection_setup(); original = copy.deepcopy(self.selection)
+        for key, value in [('request_sha256', 'f'*64), ('sample_receipt_sha256', 'f'*64),
+                ('campaign_manifest_sha256', 'f'*64), ('rights_and_global_privacy_accepted', False),
+                ('max_calls', 6), ('max_gross_USD', '16'), ('expires_at', '2000-01-01T00:00:00Z'),
+                ('approval_id', self.sample['approval_id']), ('fallback', True)]:
+            self.case.write_receipt(self.selection_path, dict(original, **{key:value}))
+            with self.subTest(key=key), self.assertRaises(Exception): self.selection_admit()
+        for key in original['members'][0]:
+            changed = copy.deepcopy(original); changed['members'][0][key] = 'counterfeit'
+            self.case.write_receipt(self.selection_path, changed)
+            with self.subTest(binding=key), self.assertRaises(Exception): self.selection_admit()
+        self.case.write_receipt(self.selection_path, original)
+        self.selection_path.chmod(0o666)
+        with self.assertRaises(Exception): self.selection_admit()
+        self.selection_path.chmod(0o640)
+        self.selection_admit()
+
+    def test_30_selection_pinned_missing_changed_expired_never_broad(self):
+        self.selection_setup(); self.selection_admit(); fake = FakeProvider()
+        for mode in ('changed', 'expired', 'missing'):
+            self.case.write_receipt(self.selection_path, self.selection)
+            ctx = mock.patch.object(r, 'now', return_value=r.approval._instant(self.selection['expires_at'])) if mode == 'expired' else contextmanager(lambda: (yield))()
+            if mode == 'changed': self.case.write_receipt(self.selection_path, dict(self.selection, approved_by='changed'))
+            if mode == 'missing': self.selection_path.unlink()
+            with ctx:
+                for bid in (self.bid, self.groups[2]['effective']['batch_id']):
+                    with self.assertRaises(Exception): self.q.next(bid)
+                with self.assertRaises(Exception):
+                    self.q.run_one(self.groups[2]['effective']['batch_id'], self.selection_envelope(2, 1), executor_id='bad', transport=fake)
+        self.assertEqual(fake.calls, 0); self.assertEqual(self.status()['reserved_calls'], 8)
+
+    def test_31_selection_wrong_order_grant_and_broad_authority(self):
+        self.selection_setup(); self.selection_admit(); fake = FakeProvider()
+        for g, i in [(3, 1), (4, 0), (3, 0), (2, 0), (4, 1)]:
+            with self.assertRaises(Exception):
+                self.q._authority(self.groups[g]['effective']['batch_id'], self.groups[g]['effective']['members'][i]['manifest'], self.selection_envelope(g, i))
+        with self.assertRaises(Exception): self.execute(2, 1, fake)
+        self.case.write_receipt(self.parent_path, self.parent)
+        with self.assertRaises(Exception): self.q.authorize_campaign(self.manifest['campaign_id'])
+        with self.assertRaises(Exception): self.q.authorize(self.groups[2]['effective']['batch_id'], self.case.control/'sample-batch-2.json')
+        with self.assertRaises(Exception): self.admit_sample()
+        self.assertEqual(fake.calls, 0)
+
+    def test_32_selection_slot_and_campaign_capacity_admission(self):
+        self.selection_setup()
+        with self.q.ledger._transaction() as db: db.execute('INSERT INTO recurrence_slot VALUES(1,?,?)', (self.bid, self.mid))
+        with self.assertRaisesRegex(Exception, 'WIP1'): self.selection_admit()
+        with self.q.ledger._transaction() as db:
+            db.execute('DELETE FROM recurrence_slot')
+            # Historical reservation is not refunded to make room for five.
+            db.execute('INSERT INTO recurrence_campaign_allocations VALUES(?,?,?,?,?,?,1)',
+                       (self.manifest['campaign_id'], 'historical', 'other', 'f'*64, 'pilot-other', '3'))
+        self.selection_admit()  # 9 + 5 remains within the original ceiling
+
+    def test_34_selection_unrelated_inventory_names_and_forged_pins(self):
+        self.selection_setup(unrelated=True)
+        original = copy.deepcopy(self.selection)
+        self.assertEqual(original['campaign_id'], 'orchard-inventory')
+        self.assertEqual([m['member_id'] for m in original['members']],
+                         ['orchard-2-1', 'orchard-2-2', 'orchard-3-1', 'orchard-3-2', 'orchard-4-0'])
+        for key, value in [('member_id', 'forged-member'), ('batch_id', 'forged-batch'),
+                           ('run_manifest_sha256', 'f'*64), ('manifest_sha256', 'f'*64)]:
+            changed = copy.deepcopy(original); changed['members'][0][key] = value
+            self.case.write_receipt(self.selection_path, changed)
+            with self.subTest(key=key), self.assertRaises(r.ContractError): self.selection_admit()
+        changed = copy.deepcopy(original); changed['members'].reverse()
+        self.case.write_receipt(self.selection_path, changed)
+        with self.assertRaises(r.ContractError): self.selection_admit()
+        self.case.write_receipt(self.selection_path, original); self.selection_admit()
+        self.case.write_receipt(self.selection_path, dict(original, approved_by='forged-pin'))
+        with self.assertRaisesRegex(r.ContractError, 'selection receipt changed'):
+            self.q.next(self.groups[2]['effective']['batch_id'])
+        self.case.write_receipt(self.selection_path, original)
+        transports = []
+        for g, i in self.selection_order:
+            fake = FakeProvider(); transports.append(fake)
+            bid = self.groups[g]['effective']['batch_id']
+            self.assertEqual(self.q.run_one(bid, self.selection_envelope(g, i),
+                             executor_id='orchard', transport=fake)['state'], 'PERSISTED')
+            self.close(g, i)
+        self.assertEqual([f.calls for f in transports], [1]*5)
+        self.assertEqual(self.status()['reserved_calls'], 13)
+        self.assertIsNone(self.q.next(self.groups[4]['effective']['batch_id']))
+
+    def test_33_selection_unknown_stops_no_rearm(self):
+        self.selection_setup(); self.selection_admit(); fake = FakeProvider(error=True)
+        bid = self.groups[2]['effective']['batch_id']
+        self.assertEqual(self.q.run_one(bid, self.selection_envelope(2, 1), executor_id='unknown', transport=fake)['state'], 'UNKNOWN')
+        self.assertIsNone(self.q.next(bid))
+        with self.assertRaises(Exception): self.q.run_one(bid, self.selection_envelope(2, 2), executor_id='retry', transport=fake)
+        with self.assertRaises(Exception): self.close(2, 1)
+        with self.assertRaises(Exception): self.selection_admit()
+        self.assertEqual(fake.calls, 1); self.assertEqual(self.status()['reserved_calls'], 9)
 
 
 class CampaignSchemaTests(unittest.TestCase):

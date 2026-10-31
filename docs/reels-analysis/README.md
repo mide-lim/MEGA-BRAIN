@@ -142,3 +142,49 @@ The pilot executor measures the normal CLI entry-to-send boundary, including pol
 The reviewed optimization covers 16 I/O operations without removing authorization or A+B validation, UNKNOWN handling or global-slot protection. Cached immutable work does not replace fresh final identity/hash/root verification before dispatch. External API setup and token acquisition inside the CLI count toward executor preparation; coordination and shared setup outside it must be measured separately, not hidden.
 
 The public pilot inventory in `operations/reels-analysis-ci/pilot-public-files.json` records the required test count for the current source. The operator-only diagnostic and its 17 tests remain private. An explicit protected exclusive-sample receipt can admit the original first member of the fourth registered group while all other dispatches remain stopped; it preserves campaign allocations, one-attempt limits, signed grants and the normal instrumented `run-one` route. Tests use synthetic identities and a fake provider. Offline validation does not establish AC-013: that still requires an authorized real call with complete executor preparation below 60000 ms, valid persisted output and completed cleanup.
+
+
+## Finite selection after an exclusive sample
+
+After the sample is PERSISTED/cleaned and both slots are empty, prepare the
+original group05 inventory normally. Root supplies the protected fixed file
+`/etc/megabrain/reels-pilot/recurrence/<campaign-id>/selection-approval.json`,
+then runs `recurrence.py authorize-selection <campaign-id>`. Approved additive
+schema bootstrap is required for the single immutable selection pin table.
+Do not renew or replace historical campaign, batch or sample approvals.
+Selection policy fixes ordered inventory positions `(2,1),(2,2),(3,1),(3,2),(4,0)`
+(zero-based group/member indices). Names come from the verified immutable original
+campaign manifest and fresh pinned receipt, never runtime source constants; all
+original registered batch/member fingerprints must still match exactly.
+
+The receipt has decision `APPROVE_REELS_SELECTION`, `campaign_id`,
+`campaign_manifest_sha256`, `sample_receipt_sha256`, current human
+`request_sha256` (`<current-owner-request-sha256>`),
+a fresh `approval_id`, `approved_by`, `approved_at`, `expires_at`, and
+`rights_and_global_privacy_accepted: true`. Limits are `max_calls: 5`,
+`max_gross_USD: "15"`, `currency: "USD"`, `wip: 1`, `retries: 0`, `fallback: false`.
+Its ordered `members` bind `batch_id`, `ordinal`, `member_id`, batch
+`manifest_sha256`, `run_manifest_sha256`, `source_sha256`, `metadata_sha256`,
+`request_sha256`, `max_calls: 1`, and `max_gross_USD: "3"`. Exact order is
+03/1 sample-2-1, 03/2 sample-2-2, 04/1 sample-3-1,
+04/2 sample-3-2, 05/0 sample-4-0, using original `synthetic-campaign-XX` batches.
+
+**Existing preparation helper `accept` still selects the OLD batch receipt; it
+must not be treated as selecting this fresh authority.** Root must read/verify
+the current pinned selection receipt and compose the approved relay/sign APIs
+with its fresh approval ID/approver, approval time not earlier than the receipt,
+and grant expiry no later than the selection expiry. Preserve all normal signed
+one-call grant bindings, source/history validation and per-member USD3 limits.
+Place each fresh grant at `<CONTROL>/<original-batch>/<member-id>.grant.json`;
+use normal campaign-control -> `recurrence.py run-one <original-batch>
+--executor-id <executor>` and existing explicit cleanup before the next member.
+No helper changes, scheduler or automatic next call are provided here.
+
+The selection alone supersedes the consumed sample stop for these five, without
+requiring valid broad receipts. Historical reservations remain counted: every
+prior reservation plus the five new per-member reservations, not billed cost.
+Blocked sample-2-0 and consumed sample-3-0 remain untouched. Other members,
+replay and a sixth call are denied; uncertainty/failure stops progression.
+Missing, changed or expired selection bytes fail closed, never restore older
+authority. Measure real batch elapsed separately around Root's full operations;
+synthetic lifecycle timing is not real analysis performance or AC013 evidence.

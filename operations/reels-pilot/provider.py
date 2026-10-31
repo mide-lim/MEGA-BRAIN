@@ -8,6 +8,7 @@ import ssl
 import time
 from pathlib import Path
 import sys
+import preparation_metrics as metrics
 
 LIVE = Path(__file__).resolve().parents[1] / "reels-analysis-live"
 if str(LIVE) not in sys.path:
@@ -22,6 +23,7 @@ MAX_REQUEST_BYTES = 10_000_000
 DEADLINE_SECONDS = 120
 
 
+@metrics.measured('request')
 def request_bytes(task, media):
     if not isinstance(media, bytes) or not 0 < len(media) <= MAX_MEDIA_BYTES:
         raise ContractError("pilot media byte limit")

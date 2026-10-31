@@ -7,6 +7,7 @@ import os
 import stat
 from pathlib import Path
 import uuid
+from contextlib import nullcontext
 from common import ROOT, ContractError, canonical, parse_json, sha, validate, ensure_finite
 from semantic_payload import validate_payload
 from storage import FileStore, confined, read_bytes
@@ -606,9 +607,26 @@ def check_media_diagnostic(task, streams):
 
 class StoredMediaReader:
     """Prepared reader; exercised only on fake fixtures with subprocess stub."""
-    def __init__(self, root, expected_identity):
+    def __init__(self, root, expected_identity, *, read_only=False, metrics=None):
         self.root = Path(root)
-        self.guard = FileStore(root, expected_identity=expected_identity)
+        self.metrics = metrics
+        self.guard = FileStore(root, expected_identity=expected_identity, read_only=read_only)
+
+    def _span(self, label):
+        return self.metrics.span(label) if self.metrics is not None else nullcontext()
+
+    def _observed_snapshot(self, stream, limit):
+        with self._span('media_read'):
+            data, version = self._snapshot(stream, limit)
+            if self.metrics is not None:
+                self.metrics.count('media_reads')
+                self.metrics.count('media_bytes', len(data))
+            return data, version
+
+    def observed_bounded_read(self, path, limit):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            return self._observed_snapshot(stream, limit)[0]
 
     @staticmethod
     def _version(observed):
@@ -648,7 +666,7 @@ class StoredMediaReader:
             raise ContractError("stored video outside local 50MB guard")
         if metadata_path.stat().st_size > 2_000_000:
             raise ContractError("metadata exceeds local 2MB parse guard")
-        metadata_bytes = self._bounded_read(metadata_path, 2_000_000)
+        metadata_bytes = self.observed_bounded_read(metadata_path, 2_000_000)
         metadata_digest = sha(metadata_bytes)
         if expected_metadata != metadata_digest:
             raise ContractError("stored metadata hash mismatch")
@@ -662,20 +680,21 @@ class StoredMediaReader:
         # No shell or retry. Real execution can reach here only after external grant.
         fd = os.open(video, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
-            data, before = self._snapshot(stream, MAX_MEDIA_BYTES)
+            data, before = self._observed_snapshot(stream, MAX_MEDIA_BYTES)
             validate_mp4_bytes(data)
             # Pin ffprobe to the same open file, not a replaceable pathname.
-            probe = subprocess.run(
+            with self._span('ffprobe'):
+                probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries",
                  "format=duration,format_name:stream=codec_type,codec_name,width,height",
                  "-show_entries", "stream=profile,codec_tag_string,pix_fmt,avg_frame_rate,sample_rate,channels",
                  "-of", "json", f"/proc/self/fd/{fd}"],
                 pass_fds=(fd,), check=True, capture_output=True, timeout=15)
-            after_data, after = self._snapshot(stream, MAX_MEDIA_BYTES)
+            after_data, after = self._observed_snapshot(stream, MAX_MEDIA_BYTES)
             self.guard.assert_identity()
             if before != after or data != after_data or self._version(video.stat()) != after:
                 raise ContractError("stored video substituted during probe")
-        if self._bounded_read(metadata_path, 2_000_000) != metadata_bytes:
+        if self.observed_bounded_read(metadata_path, 2_000_000) != metadata_bytes:
             raise ContractError("stored metadata substituted during probe")
         info = parse_json(probe.stdout)
         try:
@@ -705,7 +724,8 @@ class StoredMediaReader:
             if isinstance(observed, bool) or not isinstance(observed, int) or observed <= 0:
                 raise ContractError("probe video dimensions unavailable/invalid")
         self.guard.assert_identity()
-        digest = check_media(task, data, duration, False)
+        with self._span('media_hash'):
+            digest = check_media(task, data, duration, False)
         # These are consistency checks, not declarations of Google codec support.
         numeric = {"size_bytes": len(data), "duration_seconds": duration,
                    "width": primary_video["width"], "height": primary_video["height"]}

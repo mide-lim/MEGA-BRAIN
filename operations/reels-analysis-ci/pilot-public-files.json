@@ -1,5 +1,9 @@
 {
   "files": [
+    "operations/reels-pilot/tests/test_executor_preparation_metrics.py",
+    "operations/reels-pilot/tests/test_preparation_optimization.py",
+    "operations/reels-pilot/preparation_metrics.py",
+    "operations/reels-pilot/tests/test_preparation.py",
     "operations/reels-pilot/api_token.py",
     "operations/reels-pilot/approval.py",
     "operations/reels-pilot/contracts/analysis.pilot.v1.schema.json",
@@ -12,11 +16,12 @@
     "operations/reels-pilot/tests/test_approval_ledger.py",
     "operations/reels-pilot/tests/test_governance.py",
     "operations/reels-pilot/tests/test_recurrence.py",
+    "operations/reels-pilot/tests/test_reserved_reconciliation.py",
     "operations/reels-pilot/tests/test_second_attempt.py",
     "operations/reels-pilot/tests/test_vertex_request.py",
     "operations/reels-pilot/tests/test_worker_provider.py",
     "operations/reels-pilot/worker.py",
     "operations/reels-pilot/tests/test_campaign.py"
   ],
-  "expected_tests": 181
+  "expected_tests": 255
 }

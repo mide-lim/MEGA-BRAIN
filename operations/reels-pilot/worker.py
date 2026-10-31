@@ -28,6 +28,7 @@ import provider
 import governance
 import approval
 import api_token
+import preparation_metrics as metrics
 from ledger import Ledger, LedgerDenied
 
 _spec = importlib.util.spec_from_file_location("legacy_transaction", LIVE / "worker.py")
@@ -66,7 +67,7 @@ def root_binding(path):
 def version_pins():
     names = [
         "reels-pilot/worker.py", "reels-pilot/recurrence.py", "reels-pilot/provider.py", "reels-pilot/governance.py", "reels-pilot/approval.py",
-        "reels-pilot/ledger.py", "reels-pilot/api_token.py", "reels-pilot/contracts/grant.v1.schema.json",
+        "reels-pilot/ledger.py", "reels-pilot/api_token.py", "reels-pilot/preparation_metrics.py", "reels-pilot/contracts/grant.v1.schema.json",
         "reels-pilot/contracts/analysis.pilot.v1.schema.json",
         "reels-analysis-live/worker.py", "reels-analysis-live/common.py",
         "reels-analysis-live/storage.py", "reels-analysis-live/cloud_adapter.py",
@@ -208,6 +209,7 @@ class Pipeline:
             raise approval.ApprovalDenied("authentication grant reference differs")
         return verified
 
+    @metrics.measured('media')
     def _source(self, task):
         binding = self.policy["roots"]["media_root"]
         if self.synthetic:
@@ -226,9 +228,10 @@ class Pipeline:
             raise ContractError("pilot media byte limit")
         # Existing reader confines paths, validates real SHA/metadata and bounded ffprobe.
         reader = legacy.StoredMediaReader(binding["root_id"], {
-            "device": int(binding["filesystem_id"]), "inode": int(binding["object_id"])})
+            "device": int(binding["filesystem_id"]), "inode": int(binding["object_id"])}, metrics=metrics.current())
         return reader.read(task)
 
+    @metrics.operational('Pipeline.run')
     def run(self, manifest, envelope, *, executor_id):
         check_manifest(manifest)
         if not isinstance(executor_id, str) or not executor_id.strip() or len(executor_id) > 200:
@@ -250,19 +253,23 @@ class Pipeline:
             # the one-use token byte read after the durable UNKNOWN transition.
             self.auth = token_source(self.policy).token
             self.transport = provider.DirectTransport()
-        data, duration, metadata = self._source(manifest["task"])
-        body = provider.request_bytes(manifest["task"], data)
-        if sha(body) != manifest["request_sha256"]:
-            raise ContractError("actual request differs from signed grant")
-        verified = self._verify(manifest, envelope, dt.datetime.now(dt.timezone.utc))
-        run_id = str(uuid.uuid4())
-        self.store.assert_identity()
+        with metrics.span('preparation'):
+            data, duration, metadata = self._source(manifest["task"])
+            body = provider.request_bytes(manifest["task"], data)
+            if sha(body) != manifest["request_sha256"]:
+                raise ContractError("actual request differs from signed grant")
+            with metrics.span('final_controls'):
+                verified = self._verify(manifest, envelope, dt.datetime.now(dt.timezone.utc))
+                run_id = str(uuid.uuid4())
+                self.store.assert_identity()
         self.ledger.reserve(verified, run_id=run_id)  # Atomic reservation before all network.
         self.ledger.begin_dispatch(digest, now=dt.datetime.now(dt.timezone.utc))
         try:
             token = provider.bounded_auth_token(self.auth)
             self._verify(manifest, envelope, dt.datetime.now(dt.timezone.utc))
-            response = self.transport.send(endpoint(manifest["task"]), body, token)
+            url = endpoint(manifest["task"])
+            metrics.freeze_before_send()
+            response = self.transport.send(url, body, token)
         except Exception:
             # UNKNOWN was committed before any network, including OAuth/IAM.
             # No retry, no fallback, no automatic refund, no lease-based rearm.
@@ -275,6 +282,7 @@ class Pipeline:
         self.ledger.receive(digest, canonical(capture))
         return self._persist(manifest, envelope, executor_id=executor_id)
 
+    @metrics.operational('Pipeline.recover', 'recovery')
     def recover(self, manifest, envelope, *, executor_id):
         """Persistence-only recovery. This method never reads source or calls auth/provider."""
         check_manifest(manifest)
@@ -433,6 +441,7 @@ class Pipeline:
                 "source_sha256": digest, "retry_allowed": False}
 
 
+@metrics.operational('worker.main')
 def main():
     parser = argparse.ArgumentParser(description="Externally signed one-call Reels pilot; fixed root policy.")
     parser.add_argument("command", choices=("run", "recover"))
@@ -440,6 +449,7 @@ def main():
     parser.add_argument("grant", type=Path)
     parser.add_argument("--executor-id", required=True)
     args = parser.parse_args()
+    metrics.note(kind='recovery' if args.command == 'recover' else 'new')
     try:
         policy = load_policy()
         if args.manifest.stat().st_size > 100000 or args.grant.stat().st_size > 100000:
@@ -451,6 +461,7 @@ def main():
         print(canonical(result).decode())
     except Exception as exc:
         # No credential, media, provider text or private path dump in CLI errors.
+        metrics.note(rejected=True)
         print(canonical({"status": "STOPPED", "error_type": type(exc).__name__,
                          "retry_allowed": False}).decode())
         return 1

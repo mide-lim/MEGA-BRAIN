@@ -1,9 +1,13 @@
 """Finite, explicitly authorized recurrence. No scheduler, retries, or acceptance.
 
-Only recurrence_* tables are written here; Pipeline owns its existing ledger.
+Pipeline owns attempts; explicit reconciliation appends a control event and
+releases matching slots without modifying an attempt or its accounting.
 Synthetic seams are Python-only and must use the existing fake transport.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from contextvars import copy_context
+from threading import Lock
 import copy
 import datetime as dt
 import math
@@ -15,6 +19,7 @@ import stat
 import worker
 from common import ContractError, canonical, sha
 import approval
+import preparation_metrics as metrics
 from ledger import LedgerDenied
 
 CONTROL = Path('/etc/megabrain/reels-pilot/recurrence')
@@ -154,6 +159,9 @@ class _GuardedPipeline(worker.Pipeline):
             history_required = self.__history_manifest != digest
             self.queue._authority(self.batch_id, manifest, envelope,
                                   history_required=history_required)
+            # Authority/history may block. Never authorize new IO with the
+            # caller's pre-scan timestamp; recovery keeps its durable timestamp.
+            stamp = now()
         verified = super()._verify(manifest, envelope, stamp, recovery_record=recovery_record)
         if recovery_record is None:
             # Only inventory is reused, never receipt, prior ledger or crypto.
@@ -356,6 +364,7 @@ class Queue:
         checked = approval._instant(value['checked_at']); stamp = now()
         require(checked <= stamp <= checked + dt.timedelta(hours=24), 'history attestation freshness')
 
+    @metrics.measured('history')
     def _history(self, member):
         """Read-only existing Windows/imported analysis/history, under fixed roots only.
 
@@ -371,6 +380,52 @@ class Queue:
                 return any(collision(v) for v in value)
             return isinstance(value, str) and value in forbidden
         scanned = 0
+        scan_lock = Lock()
+        identity = lambda s: (s.st_dev, s.st_ino)
+        version = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+
+        def scan(job):
+            nonlocal scanned
+            root_name, current, expected = job
+            # Reopen and check identity: no atomic snapshot of changing inventory.
+            directory = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            children = []
+            try:
+                require(identity(os.fstat(directory)) == expected, 'history directory replaced')
+                metrics.count('directories')
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        with scan_lock:
+                            scanned += 1
+                            metrics.count('entries')
+                            require(scanned <= 20000, 'history scan bound; reconcile offline')
+                        require(not entry.is_symlink(), 'symlink in inventory')
+                        if entry.is_dir(follow_symlinks=False):
+                            require(not (root_name == 'result_root' and entry.name == task['reel_id']),
+                                    'existing result directory collision')
+                            children.append((root_name, current / entry.name,
+                                             identity(entry.stat(follow_symlinks=False))))
+                        elif entry.is_file(follow_symlinks=False) and entry.name.startswith(('analysis', 'history')) and entry.name.endswith('.json'):
+                            expected_file = entry.stat(follow_symlinks=False)
+                            history = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                            with os.fdopen(history, 'rb') as stream:
+                                before = os.fstat(stream.fileno())
+                                require(version(expected_file) == version(before), 'history file replaced')
+                                require(stat.S_ISREG(before.st_mode) and before.st_size <= 1000000, 'history size/type')
+                                raw = stream.read(1000001)
+                                metrics.count('history_reads')
+                                metrics.count('history_bytes', len(raw))
+                                after = os.fstat(stream.fileno())
+                                linked = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                                require(version(before) == version(after) == version(linked) and len(raw) == before.st_size,
+                                        'history changed during read')
+                            require(len(raw) <= 1000000, 'history size')
+                            require(not collision(approval.load_json(raw)), 'Windows/analysis history collision')
+                return children
+            finally:
+                os.close(directory)
+
+        pending = []  # At most the global entry bound plus two roots.
         for root_name in ('media_root', 'result_root'):
             root = Path(self.policy['roots'][root_name]['root_id'])
             if root_name == 'media_root':
@@ -378,54 +433,208 @@ class Queue:
                     root = root / part
                     require(not root.is_symlink(), 'symlink in inventory root')
             require(root.is_dir() and not root.is_symlink(), 'history root missing')
-            pending = [root]
-            while pending:
-                # Recheck the directory at open, not just its cached entry type.
-                # This is not an atomic snapshot of the changing inventory.
-                current = pending.pop()
-                directory = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-                try:
-                    with os.scandir(directory) as entries:
-                        for entry in entries:
-                            scanned += 1
-                            require(scanned <= 20000, 'history scan bound; reconcile offline')
-                            require(not entry.is_symlink(), 'symlink in inventory')
-                            if entry.is_dir(follow_symlinks=False):
-                                require(not (root_name == 'result_root' and entry.name == task['reel_id']),
-                                        'existing result directory collision')
-                                pending.append(current / entry.name)
-                            elif entry.is_file(follow_symlinks=False) and entry.name.startswith(('analysis', 'history')) and entry.name.endswith('.json'):
-                                history = os.open(entry.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
-                                with os.fdopen(history, 'rb') as stream:
-                                    require(os.fstat(stream.fileno()).st_size <= 1000000, 'history size')
-                                    raw = stream.read(1000001)
-                                require(len(raw) <= 1000000, 'history size')
-                                require(not collision(approval.load_json(raw)), 'Windows/analysis history collision')
-                finally:
-                    os.close(directory)
+            pending.append((root_name, root, identity(root.stat())))
+        pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix='reels-history')
+        active = set()
+        try:
+            while pending or active:
+                while pending and len(active) < 16:
+                    active.add(pool.submit(copy_context().run, scan, pending.pop()))
+                done, active = wait(active, return_when=FIRST_COMPLETED)
+                for future in done:
+                    pending.extend(future.result())
+        finally:
+            for future in active:
+                future.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
 
+    def _no_dispatch_proof(self, db, source, *, applying=False):
+        """Validate a restricted Root control, never an old grant or calls=0 alone.
+
+        All evidence is fixed-location, protected, hash-bound audited material.
+        Historical markers are revalidated against the complete unchanged ledger
+        snapshot; an arbitrary event cannot waive the global uncertainty barrier.
+        """
+        attempt = db.execute('SELECT * FROM attempts WHERE source_sha256=?', (source,)).fetchone()
+        member = db.execute('SELECT * FROM recurrence_members WHERE source_sha256=?', (source,)).fetchone()
+        require(attempt is not None and member is not None, 'exact claimed attempt required')
+        a, m = dict(attempt), dict(member)
+        bid, mid = identifier(m['batch_id']), identifier(m['member_id'])
+        path = CONTROL / bid / (mid + '.reconcile.json')
+        proof, digest = protected(path)
+        require(set(proof) == {'decision', 'batch_id', 'member_id', 'source_sha256', 'grant_id', 'run_id',
+                'expected_member_state', 'expected_attempt_state', 'ledger_identity', 'batch_manifest_sha256',
+                'run_manifest_sha256', 'request_sha256', 'attempt_sha256', 'member_before', 'events',
+                'allocations', 'approved_at', 'expires_at', 'approved_by', 'process_audit', 'evidence'},
+                'reconciliation proof shape')
+        require(proof['decision'] == 'RECONCILE_EXPIRED_BEFORE_DISPATCH' and
+                proof['batch_id'] == bid and proof['member_id'] == mid and
+                proof['source_sha256'] == source and proof['grant_id'] == a['grant_id'] == m['grant_id'] and
+                proof['run_id'] == a['run_id'] and proof['ledger_identity'] == self.policy['ledger_identity'] and
+                proof['expected_member_state'] == 'RUNNING' and proof['expected_attempt_state'] == 'RESERVED' and
+                isinstance(proof['approved_by'], str) and 0 < len(proof['approved_by']) <= 200,
+                'exact reconciliation authority/identity')
+        require(a['state'] == 'RESERVED' and type(a['calls']) is int and a['calls'] == 0 and
+                all(a[k] is None for k in ('started_at', 'received_at', 'persisted_at', 'response',
+                                          'response_sha256', 'refs_json', 'problem')),
+                'only pristine undispatched reservation')
+        require(sha(canonical(a)) == proof['attempt_sha256'], 'attempt snapshot changed')
+        row, batch = self._batch(db, bid)
+        manifest = batch['members'][m['ordinal']]['manifest']
+        grant = approval.load_json(a['grant_json'])
+        envelope = approval.load_json(m['envelope_json'])
+        require(envelope['grant'] == grant and grant['grant_id'] == a['grant_id'] and
+                grant['bindings']['media']['sha256'] == source and grant['bindings']['media']['id'] == mid and
+                grant['manifest_sha256'] == m['run_manifest_sha256'] == proof['run_manifest_sha256'] == sha(canonical(manifest)) and
+                a['request_sha256'] == grant['request_sha256'] == manifest['request_sha256'] == proof['request_sha256'] and
+                row['manifest_sha256'] == proof['batch_manifest_sha256'] and
+                a['expires_at'] == grant['expires_at'], 'immutable request/manifest/grant binding')
+        expired, reserved = approval._instant(a['expires_at']), approval._instant(a['reserved_at'])
+        approved, expires = approval._instant(proof['approved_at']), approval._instant(proof['expires_at'])
+        require(expired < reserved <= approved <= now() and approved < expires <= approved + dt.timedelta(hours=1),
+                'expired before reservation and bounded fresh control')
+        events = [dict(r) for r in db.execute('SELECT sequence,event,at,details FROM events WHERE source_sha256=? ORDER BY sequence', (source,))]
+        original = proof['events']
+        require(type(original) is list and len(original) == 1 and set(original[0]) == {'sequence', 'event', 'at', 'details'} and
+                type(original[0]['sequence']) is int and original[0]['event'] == 'RESERVE_BEFORE_IO' and
+                original[0]['details'] == '{}' and reserved <= approval._instant(original[0]['at']) <= approved,
+                'exact reserve-only event snapshot')
+        require(not db.execute('SELECT 1 FROM persistence_recovery_runs WHERE source_sha256=?', (source,)).fetchone(),
+                'no recovery history')
+        allocations = [dict(r) for r in db.execute('SELECT * FROM recurrence_campaign_allocations WHERE member_id=? OR source_sha256=? OR grant_id=? ORDER BY campaign_id,member_id', (mid, source, a['grant_id']))]
+        require(allocations == proof['allocations'] and all(r['batch_id'] == bid and r['member_id'] == mid and
+                r['source_sha256'] == source and r['grant_id'] == a['grant_id'] for r in allocations), 'allocation snapshot changed')
+        evidence = {}
+        names = ('worker-result.json', 'worker.stdout', 'run-started.json', 'signed-control.json', 'token-cleanup.json', 'IAM-cleanup.json')
+        require(isinstance(proof['evidence'], dict) and set(proof['evidence']) == set(names), 'complete evidence hashes required')
+        for name in names:
+            value, bound_hash = protected(CONTROL / bid / (mid + '.reconcile-evidence') / name)
+            require(isinstance(proof['evidence'][name], str) and worker._DIGEST.fullmatch(proof['evidence'][name]) and
+                    bound_hash == proof['evidence'][name], 'evidence hash mismatch')
+            evidence[name] = value
+        result, stdout = evidence['worker-result.json'], evidence['worker.stdout']
+        stopped = {'error_type': 'LedgerDenied', 'retry_allowed': False, 'state': 'STOPPED'}
+        require(result['result'] == stdout == stopped and type(result['exit']) is int and result['exit'] == 1 and
+                result['automatic_retry'] is False and result['timed_out'] is False and
+                type(result['worker_pid']) is int and result['worker_pid'] > 1, 'coherent failed-before-send exit')
+        finished = approval._instant(result['finished_at'])
+        start, signed = evidence['run-started.json'], evidence['signed-control.json']
+        require(start['grant_id'] == signed['grant_id'] == a['grant_id'] and start['retry'] is False and
+                approval._instant(start['started_at']) <= expired < reserved <= finished <= approved and
+                signed['expires_at'] == a['expires_at'] and signed['grant_signature_verified'] is True and
+                signed['token_bytes_read'] is False and type(signed['new_generateContent_POSTs']) is int and
+                signed['new_generateContent_POSTs'] == 0 and
+                isinstance(signed['policy_sha256'], str) and worker._DIGEST.fullmatch(signed['policy_sha256']) and
+                expired <= approval._instant(signed['token_expires_at']) <= finished, 'signed no-send evidence/order')
+        token, iam = evidence['token-cleanup.json'], evidence['IAM-cleanup.json']
+        require(all(token[k] is True for k in ('encrypted_envelope_removed', 'private_key_removed', 'token_copy_removed')) and
+                all(iam[k] is True for k in ('SDK_cleanup_verified', 'creator_removed', 'inference_binding_removed', 'other_bindings_preserved')) and
+                iam['member_id'] == mid and isinstance(iam['operation_id'], str) and iam['operation_id'] and
+                finished <= approval._instant(iam['checked_at']) <= approved, 'audited token/IAM cleanup')
+        audit = proof['process_audit']
+        require(set(audit) == {'complete', 'no_active_consumers', 'exclusive_operator_maintenance', 'worker_pid', 'checked_at'} and
+                all(audit[k] is True for k in ('complete', 'no_active_consumers', 'exclusive_operator_maintenance')) and
+                audit['worker_pid'] == result['worker_pid'] and
+                finished <= approval._instant(audit['checked_at']) <= approved, 'protected complete quiescence audit')
+        before = proof['member_before']
+        require(isinstance(before, dict) and before['state'] == 'RUNNING' and before['cleanup'] == before['persisted'] == before['review'] == 0 and
+                all(before[k] is None for k in ('result_json', 'result_at', 'cleanup_path', 'cleanup_sha256')),
+                'pristine running member snapshot')
+        outcome = {'state': 'BLOCKED', 'kind': 'NO_DISPATCH_RECONCILED', 'provider_io': 'NOT_STARTED',
+                   'provider_calls': 0, 'retry_allowed': False, 'grant_id': a['grant_id'], 'run_id': a['run_id']}
+        after = dict(before, state='BLOCKED', cleanup=1, result_json=canonical(outcome).decode(),
+                     result_at=proof['approved_at'], cleanup_path=str(path), cleanup_sha256=digest)
+        details = {'receipt_sha256': digest, 'attempt_sha256': proof['attempt_sha256'],
+                   'member_after_sha256': sha(canonical(after)), 'batch_id': bid, 'member_id': mid,
+                   'grant_id': a['grant_id'], 'run_id': a['run_id']}
+        if applying:
+            require(approved <= now() < expires and now() - approval._instant(audit['checked_at']) <= dt.timedelta(minutes=5),
+                    'control/quiescence audit expired')
+            require(not (Path('/proc') / str(result['worker_pid'])).exists(), 'worker active or PID reused')
+            require(Path('/proc/self/stat').is_file(), 'process inspection unavailable')
+            for proc in Path('/proc').iterdir():
+                if not proc.name.isdigit() or int(proc.name) == os.getpid():
+                    continue
+                try:
+                    command = (proc / 'cmdline').read_bytes()
+                except FileNotFoundError:
+                    continue
+                # Permission/inspection errors propagate: never infer quiescence.
+                require(not any(name in command for name in
+                        (b'/opt/megabrain/reels-pilot/releases/', b'campaign-control.py',
+                         b'prepare-member.py', b'recurrence.py')), 'active consumer')
+            require(m == before and events == original, 'member/event snapshot changed')
+            require([tuple(r) for r in db.execute('SELECT * FROM pilot_slot')] == [(1, source)] and
+                    [tuple(r) for r in db.execute('SELECT * FROM recurrence_slot')] == [(1, bid, mid)], 'exact held slots required')
+        else:
+            require(m == after and len(events) == 2 and events[:1] == original and
+                    events[-1]['event'] == 'NO_DISPATCH_RECONCILED' and
+                    events[-1]['at'] == proof['approved_at'] and events[-1]['details'] == canonical(details).decode() and
+                    events[-1]['sequence'] > original[0]['sequence'], 'fully matching terminal control required')
+            require(not db.execute('SELECT 1 FROM pilot_slot WHERE source_sha256=?', (source,)).fetchone() and
+                    not db.execute('SELECT 1 FROM recurrence_slot WHERE batch_id=? AND member_id=?', (bid, mid)).fetchone(),
+                    'reconciled slots changed')
+        # Recheck every protected byte while holding the same ledger transaction.
+        require(protected(path) == (proof, digest), 'control changed during reconciliation')
+        for name in names:
+            require(protected(CONTROL / bid / (mid + '.reconcile-evidence') / name) ==
+                    (evidence[name], proof['evidence'][name]), 'evidence changed during reconciliation')
+        return outcome, after, details
+
+    def reconcile_no_dispatch(self, batch_id, member_id, *, source_sha256, grant_id, run_id,
+                              expected_member_state, expected_attempt_state):
+        """Explicit no-IO control; preserve attempt, allocation and reservation money."""
+        identifier(batch_id); identifier(member_id)
+        with self.ledger._transaction() as db:
+            row = db.execute('SELECT * FROM recurrence_members WHERE batch_id=? AND member_id=?', (batch_id, member_id)).fetchone()
+            attempt = db.execute('SELECT * FROM attempts WHERE source_sha256=?', (source_sha256,)).fetchone()
+            require(row is not None and attempt is not None and row['source_sha256'] == source_sha256 and
+                    row['grant_id'] == attempt['grant_id'] == grant_id and attempt['run_id'] == run_id and
+                    expected_member_state == 'RUNNING' and expected_attempt_state == 'RESERVED', 'explicit exact control selectors')
+            repeat = bool(row['cleanup'])
+            outcome, after, details = self._no_dispatch_proof(db, source_sha256, applying=not repeat)
+            if repeat:
+                return outcome
+            db.execute('UPDATE recurrence_members SET state=?,cleanup=?,result_json=?,result_at=?,cleanup_path=?,cleanup_sha256=? WHERE batch_id=? AND member_id=?',
+                       (after['state'], after['cleanup'], after['result_json'], after['result_at'], after['cleanup_path'], after['cleanup_sha256'], batch_id, member_id))
+            db.execute('INSERT INTO events(source_sha256,event,at,details) VALUES(?,?,?,?)',
+                       (source_sha256, 'NO_DISPATCH_RECONCILED', after['result_at'], canonical(details).decode()))
+            db.execute('DELETE FROM pilot_slot WHERE singleton=1 AND source_sha256=?', (source_sha256,))
+            db.execute('DELETE FROM recurrence_slot WHERE singleton=1 AND batch_id=? AND member_id=?', (batch_id, member_id))
+            return outcome
+
+    @metrics.measured('prior')
     def _prior(self, db, member, *, current_grant=None):
         task = member['manifest']['task']; source = task['source']
         for table in ('attempts', 'second_attempts'):
             if not db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
                 continue
             for row in db.execute('SELECT source_sha256,grant_json,refs_json,state FROM ' + table):
+                metrics.count('prior_rows')
                 grant = approval.load_json(row['grant_json'])
                 if (current_grant is not None and table == 'attempts' and
                         row['source_sha256'] == source['source_video_sha256'] and
                         grant['grant_id'] == current_grant):
                     continue
-                require(row['state'] == 'PERSISTED', 'old uncertain attempt')
+                if row['state'] != 'PERSISTED':
+                    require(isinstance(self, Queue), 'old uncertain attempt')
+                    require(table == 'attempts', 'old uncertain successor')
+                    _, closed, _ = self._no_dispatch_proof(db, row['source_sha256'])
+                    require(row['source_sha256'] != source['source_video_sha256'] and
+                            closed['member_id'] != task['reel_id'] and
+                            closed['metadata_sha256'] != source['metadata_sha256'], 'reconciled source forever consumed')
+                    continue
                 refs = approval.load_json(row['refs_json'])
                 require(isinstance(refs, dict) and isinstance(refs.get('artifact_prefix'), str) and
                         isinstance(refs.get('manifest_sha256'), str), 'historical refs required')
-                store = worker.FileStore(self.policy['roots']['result_root']['root_id'])
+                store = worker.FileStore(self.policy['roots']['result_root']['root_id'],
+                                         read_only=getattr(self, 'read_only', False), metrics=metrics.current())
                 prefix = refs['artifact_prefix']
-                store.verify(prefix)
-                require(sha(store.get(prefix + '/manifest.json')) == refs['manifest_sha256'],
+                verified = store.verify_selected(prefix, ('analysis.v1.json', 'provenance.json'))
+                require(verified['manifest_sha256'] == refs['manifest_sha256'],
                         'historical immutable manifest differs')
-                analysis = approval.load_json(store.get(prefix + '/analysis.v1.json'))
-                provenance = approval.load_json(store.get(prefix + '/provenance.json'))
+                analysis = approval.load_json(verified['selected']['analysis.v1.json'])
+                provenance = approval.load_json(verified['selected']['provenance.json'])
                 reference = analysis['identity']['source_metadata_reference']
                 metadata = provenance['metadata_sha256']
                 require(isinstance(metadata, str) and worker._DIGEST.fullmatch(metadata) and
@@ -589,6 +798,8 @@ class Queue:
             row = db.execute('SELECT member_id,state FROM recurrence_members WHERE batch_id=? AND cleanup=0 ORDER BY ordinal LIMIT 1', (batch_id,)).fetchone()
             return dict(row) if row else None
 
+    @metrics.operational('Queue.run_one')
+    @metrics.measured('coordination')
     def run_one(self, batch_id, envelope, *, executor_id, transport=None, writer_hook=None):
         with self.ledger._transaction() as db:
             _, batch = self._batch(db, batch_id)
@@ -604,14 +815,43 @@ class Queue:
             require(not db.execute('SELECT 1 FROM recurrence_slot').fetchone() and not db.execute('SELECT 1 FROM pilot_slot').fetchone(), 'global WIP1')
             for table in ('attempts', 'second_attempts'):
                 if db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone():
-                    require(not db.execute("SELECT 1 FROM " + table + " WHERE state!='PERSISTED'").fetchone(), 'old uncertain attempt')
+                    for uncertain in db.execute("SELECT source_sha256 FROM " + table + " WHERE state!='PERSISTED'"):
+                        require(table == 'attempts', 'old uncertain successor')
+                        self._no_dispatch_proof(db, uncertain['source_sha256'])
             self._prior(db, batch['members'][row['ordinal']])
             self._reserve_campaign(db, batch, batch['members'][row['ordinal']], envelope)
             db.execute('INSERT INTO recurrence_slot VALUES(1,?,?)', (batch_id, row['member_id']))
             db.execute("UPDATE recurrence_members SET state='RUNNING',envelope_json=?,run_manifest_sha256=?,grant_id=? WHERE batch_id=? AND ordinal=?",
                        (canonical(envelope).decode(), sha(canonical(manifest)), envelope['grant']['grant_id'], batch_id, row['ordinal']))
-        result = pipeline.run(manifest, envelope, executor_id=executor_id)
+        try:
+            result = pipeline.run(manifest, envelope, executor_id=executor_id)
+        except Exception as exc:
+            self._save_exception(batch_id, row['member_id'], row['source_sha256'], exc)
+            raise
         return self._save(batch_id, row['member_id'], result)
+
+    def _save_exception(self, batch_id, member_id, digest, exc):
+        """Control evidence only, never a provider result or permission to retry."""
+        with self.ledger._transaction() as db:
+            record = db.execute('SELECT state,calls,started_at,response,response_sha256 FROM attempts WHERE source_sha256=?',
+                                (digest,)).fetchone()
+            known_zero = record is None or (
+                record['state'] == 'RESERVED' and record['calls'] == 0 and
+                record['started_at'] is None and record['response'] is None and
+                record['response_sha256'] is None)
+            # Do not persist exception messages (which may contain credentials).
+            kind = type(exc).__name__
+            kind = kind if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,79}', kind) else 'Exception'
+            control = {'state': 'BLOCKED', 'kind': 'exception_control',
+                       'phase': 'pipeline_run', 'exception_type': kind,
+                       'provider_io': 'NOT_STARTED' if known_zero else 'MAY_HAVE_STARTED',
+                       'retry_allowed': False}
+            if known_zero:
+                control['provider_calls'] = 0
+            # Atomic metadata/state update; leave reservations, counters and both
+            # slots untouched, including durable UNKNOWN/response states.
+            db.execute("UPDATE recurrence_members SET state='BLOCKED',result_json=?,result_at=? WHERE batch_id=? AND member_id=? AND cleanup=0",
+                       (canonical(control).decode(), now().isoformat(), batch_id, member_id))
 
     def _save(self, batch_id, member_id, result):
         encoded = canonical(result).decode()
@@ -625,6 +865,7 @@ class Queue:
                        ('PERSISTED' if persisted else 'BLOCKED', batch_id, member_id))
         return result
 
+    @metrics.operational('Queue.recover', 'recovery')
     def recover(self, batch_id, member_id, *, executor_id, transport=None):
         with self.ledger._transaction() as db:
             _, batch = self._batch(db, batch_id)
@@ -676,13 +917,18 @@ class Queue:
             db.execute('DELETE FROM recurrence_slot WHERE batch_id=? AND member_id=?', (batch_id, member_id))
 
 
+@metrics.operational('recurrence.main', 'control')
 def main():
     parser = argparse.ArgumentParser(description='Finite on-demand queue; fixed Root policy and control files. No automatic next call.')
-    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'run-one', 'recover', 'cleanup', 'close'))
+    parser.add_argument('command', choices=('bootstrap', 'prepare', 'status', 'next', 'authorize', 'run-one', 'recover', 'cleanup', 'close', 'reconcile-no-dispatch'))
     parser.add_argument('batch_id', nargs='?')
     parser.add_argument('--member-id')
     parser.add_argument('--executor-id')
+    for field in ('source-sha256', 'grant-id', 'run-id', 'expected-member-state', 'expected-attempt-state'):
+        parser.add_argument('--' + field)
     args = parser.parse_args()
+    metrics.note(kind=('new' if args.command == 'run-one' else
+                       'recovery' if args.command == 'recover' else 'control'))
     try:
         policy = worker.load_policy()
         if args.command == 'bootstrap':
@@ -699,6 +945,11 @@ def main():
             result = {'manifest_sha256': queue.prepare(batch), 'state': 'PENDING'}
         elif args.command == 'authorize':
             queue.authorize(args.batch_id, base / 'approval.json'); result = {'state': 'AUTHORIZED'}
+        elif args.command == 'reconcile-no-dispatch':
+            require(args.executor_id is None, 'control takes no executor')
+            result = queue.reconcile_no_dispatch(args.batch_id, args.member_id,
+                    source_sha256=args.source_sha256, grant_id=args.grant_id, run_id=args.run_id,
+                    expected_member_state=args.expected_member_state, expected_attempt_state=args.expected_attempt_state)
         elif args.command in ('status', 'next'):
             result = getattr(queue, args.command)(args.batch_id)
         else:
@@ -720,6 +971,7 @@ def main():
         return 0
     except Exception as exc:
         print(canonical({'state': 'STOPPED', 'error_type': type(exc).__name__, 'retry_allowed': False}).decode())
+        metrics.note(rejected=True)
         return 1
 
 
